@@ -186,13 +186,10 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '- number: number，章节序号',
   '- title: string，章节标题',
   '- synopsis: string，200–400 字的具体剧情梗概：写清谁在什么处境、做了什么、发生了什么、结果如何；不要拆成目标/冲突/转折/结果等标签',
-  '- hook: string，可选的章末钩子',
-  '- cast: string[]，可选的出场人物',
-  '- place: string，可选的地点',
-  '- time: string，可选的故事内时间',
   '- wordBudget: number，可选的目标字数',
   '要求：章节序号连续；每章只写一个完整、具体的剧情事件链；与已确认的构思、文风契约、相邻章节保持一致；只输出请求范围内的章节。',
   '章纲是给正文写作的剧情提要，不是谜面，也不要强行套结构：不要用“关系变化”“有事发生”“被卷入”之类空话，也不要为了填字段把剧情拆成抽象分类。',
+  '每章 synopsis 的结尾必须落在一个下一章能直接承接的具体状态：人物在哪里、刚做了什么决定或发生了什么；下一章从这个状态继续，不要跳空、不要重复交代。',
   '写人数、身份和在场关系必须精确：明确总人数、谁包含在内、谁不在场、被关在哪里；不要用“几个姑娘”“其中一人”这类模糊复数，造成前后总数不一致。',
   '涉及亲密关系或敏感情节的章节，必须写明人物关系的变化、边界和后果；没有发生就明确写“没有发生”，不要用模糊说法带过，也不要在章纲中写露骨细节。',
   '用户本次额外要求优先于默认结构模板；如果与通用要求冲突，以额外要求为准。',
@@ -208,7 +205,7 @@ export function buildOutlineUserPrompt(input) {
   if (input.instruction) {
     lines.push(
       '',
-      '【本次额外要求（优先级最高，必须落实到章节标题、剧情梗概或钩子中）】',
+      '【本次额外要求（优先级最高，必须落实到章节标题或剧情梗概中）】',
       input.instruction,
       '',
     )
@@ -231,7 +228,7 @@ export function buildOutlineUserPrompt(input) {
   if (input.volume) {
     lines.push('【本卷舞台与节奏控制（必须遵守）】')
     lines.push(`卷名：${input.volume.title || '未命名卷'}`)
-    lines.push(`本地地图：${input.volume.map || '未设置。必须先根据上一卷结尾和升级目标确定新地图，不得沿用上一卷地图；第一章的 place 必须使用新地图。'}`)
+    lines.push(`本地地图：${input.volume.map || '未设置。必须先根据上一卷结尾和升级目标确定新地图，不得沿用上一卷地图；synopsis 中的地点必须使用新地图。'}`)
     lines.push(`本卷目标：${input.volume.goal || '未设置；由本章纲自行收束成一个完整的本地主线。'}`)
     lines.push(`本地战力天花板：${input.volume.powerCeiling || '未设置；按已确认的战力体系设置本卷上限。'}`)
     lines.push(`离卷条件：${input.volume.exitCriteria || '本地主线收束且主角压过本地战力天花板后，本卷结束并准备下一张地图。'}`)
@@ -243,9 +240,18 @@ export function buildOutlineUserPrompt(input) {
     lines.push(`上一卷离卷条件：${input.previousVolume.exitCriteria || '—'}`)
     if (input.previousVolume.lastChapter) {
       const last = input.previousVolume.lastChapter
-      lines.push(`上一卷末章：第${last.number}章 ${last.title || ''}；地点=${last.place || '—'}；剧情=${last.synopsis || last.outcome || '—'}；钩子=${last.hook || '—'}`)
+      lines.push(`上一卷末章：第${last.number}章 ${last.title || ''}；剧情=${last.synopsis || '—'}`)
     }
     lines.push('本卷必须从上一卷末章的离卷结果继续，换到新的本地地图；不要把新章写成上一卷地图里的加时赛。')
+  }
+  if (input.previousAnchor) {
+    const anchor = input.previousAnchor
+    lines.push('【上一章落点（下一章必须承接）】')
+    lines.push(`第${anchor.number}章 ${anchor.title || ''}`)
+    if (anchor.synopsis) lines.push(`计划剧情：${anchor.synopsis}`)
+    if (anchor.summary) lines.push(`已写正文摘要：${anchor.summary}`)
+    if (anchor.ending) lines.push(`已写正文结尾：${anchor.ending}`)
+    lines.push('下一章的 synopsis 必须从这个落点自然继续：人物在同一个地方/同一段行动之后，承接上一章最后的选择、动作或后果；不要跳空、不要重复上一章已经写完的过程。')
   }
   if (input.bible) {
     lines.push('【既有设定（必须遵守）】', JSON.stringify(input.bible))
@@ -300,7 +306,8 @@ export function buildBibleUserPrompt(input) {
 
 export const CHAPTER_SYSTEM_PROMPT = [  '你是中文长篇小说写作助手，负责按章纲写出可直接阅读的正文。',
   '要求：',
-  '- 严格贴合章纲的剧情梗概与章末钩子；',
+  '- 严格贴合章纲的剧情梗概；',
+  '- 结尾停在一个人物、动作或决定的具体状态上，让下一章可以直接承接；不要用总结式收束。',
   '- 遵守文风契约中的视角、时态、句长、段落长度、对话占比、禁用词与额外要求；',
   '- 与前文结尾自然衔接，不复述前情；',
   '- 只输出正文，不要章节标题、说明、Markdown 代码围栏或分点提纲；',

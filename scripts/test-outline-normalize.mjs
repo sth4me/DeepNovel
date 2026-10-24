@@ -10,7 +10,7 @@ const explicit = service.normalizeOutlineChapter(
   { wordBudget: 3000, inputs },
 )
 assert.equal(explicit.synopsis, '他推门进去，屋里没人。')
-assert.equal(explicit.goal, '')
+assert.equal(explicit.title, '一')
 
 const legacy = service.normalizeOutlineChapter(
   { title: '二', goal: '拿回刀', conflict: '被拦', turn: '旧友出现', outcome: '刀断人走' },

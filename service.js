@@ -2608,20 +2608,6 @@ export class NovelWriterService {
       status: 'candidate',
       title: String(raw.title ?? ''),
       synopsis,
-      goal: String(raw.goal ?? ''),
-      conflict: String(raw.conflict ?? ''),
-      turn: String(raw.turn ?? ''),
-      outcome: String(raw.outcome ?? ''),
-      pov: String(raw.pov ?? ''),
-      time: String(raw.time ?? ''),
-      place: String(raw.place ?? ''),
-      cast: Array.isArray(raw.cast) ? raw.cast.map(String) : [],
-      beats: Array.isArray(raw.beats) ? raw.beats.map(String) : [],
-      foreshadow: {
-        plant: Array.isArray(raw.foreshadow?.plant) ? raw.foreshadow.plant.map(String) : [],
-        payoff: Array.isArray(raw.foreshadow?.payoff) ? raw.foreshadow.payoff.map(String) : [],
-      },
-      hook: String(raw.hook ?? ''),
       wordBudget: Number(raw.wordBudget ?? wordBudget) || wordBudget,
       inputs: {
         premise: inputs.premiseHash,
@@ -2703,6 +2689,22 @@ export class NovelWriterService {
     const previousLastChapter = previousVolume
       ? (previousVolume.chapters ?? []).slice().sort((a, b) => Number(b.number) - Number(a.number))[0] ?? null
       : null
+    const anchorChapter = existing.find((chapter) => Number(chapter.number) === fromChapter - 1) || previousLastChapter
+    let previousAnchor = null
+    if (anchorChapter) {
+      const anchorSummary = await this.readChapterSummary(agent, anchorChapter.number).catch(() => null)
+      const anchorPaths = this.chapterPaths(anchorChapter.number)
+      const anchorText = (await this.readText(agent, anchorPaths.final).catch(() => null)) ??
+        (await this.readText(agent, anchorPaths.draft).catch(() => null)) ??
+        ''
+      previousAnchor = {
+        number: anchorChapter.number,
+        title: anchorChapter.title,
+        synopsis: anchorChapter.synopsis || anchorChapter.outcome || '',
+        summary: anchorSummary?.summary ?? '',
+        ending: anchorText.trim().slice(-600),
+      }
+    }
     const userText = buildOutlineUserPrompt({
       title: project.title,
       language: project.language ?? 'zh',
@@ -2742,11 +2744,9 @@ export class NovelWriterService {
           number: previousLastChapter.number,
           title: previousLastChapter.title,
           synopsis: previousLastChapter.synopsis,
-          outcome: previousLastChapter.outcome,
-          hook: previousLastChapter.hook,
-          place: previousLastChapter.place,
         } : null,
       } : null,
+      previousAnchor,
       contextChapters,
       instruction: options.instruction,
       writingNotes: this.writingNotesFor(project, 'outline'),
@@ -5375,7 +5375,7 @@ ${sections.join('\n')}
     const system = [
       '你是长篇小说的结构编辑。根据列出的逻辑冲突，修订受影响的章纲。',
       '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"chapters":[{"number":N,"title":"","synopsis":"","hook":"","time":"","place":"","cast":[],"foreshadow":{"plant":[],"payoff":[]}}]}。',
+      '格式：{"chapters":[{"number":N,"title":"","synopsis":""}]}。',
       'synopsis 只写具体剧情梗概，不要拆成目标/冲突/转折/结果等标签。',
       '只输出列出的受影响章；只做消除冲突所需的最小改动；保留原有情节、人物与已埋伏笔；时间线与因果链必须前后衔接；不得无铺垫提升角色境界；不要评价文笔。',
     ].join('\n')
