@@ -3590,7 +3590,6 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-muted nw-clamp' }, item.synopsis || item.goal || '还没有剧情梗概'),
             h('div', { className: 'nw-row' },
               h('span', { className: 'nw-muted' }, `${item.wordBudget ?? 0} 字`),
-              h('span', { className: 'nw-muted' }, item.time || ''),
               onOpenChapter
                 ? h('button', {
                     type: 'button',

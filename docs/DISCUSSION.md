@@ -20,7 +20,7 @@
 `actions` 是**可直接落盘的修改**，不是新的待办列表：
 
 - 章节讨论：`chapter-instruction`，写入本章修订要求。
-- 章纲讨论：`outline-update`，只允许 title/goal/conflict/turn/outcome/hook。
+- 章纲讨论：`outline-update`，只允许 title/synopsis/wordBudget。
 - 设定讨论：`bible-update`，只允许 name/role/description。
 - 文风讨论：`style-update`，只允许文风契约字段。
 - 构思讨论：`premise-candidate-update`，只改当前候选/已选构思字段。

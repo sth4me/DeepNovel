@@ -5615,7 +5615,7 @@ ${sections.join('\n')}
     const allowed = kind === 'chapter'
       ? ['chapter-instruction（把可执行修订要求写入本章）']
       : kind === 'outline'
-        ? ['outline-update（只改当前章纲的 title/goal/conflict/turn/outcome/hook）']
+        ? ['outline-update（只改当前章纲的 title/synopsis/wordBudget）']
         : kind === 'bible'
           ? ['bible-update（只改当前设定条目的 name/role/description）']
           : kind === 'style'
@@ -5654,7 +5654,7 @@ ${sections.join('\n')}
               ? 'premise'
               : 'other'
     const allowedFields = {
-      outline: ['title', 'goal', 'conflict', 'turn', 'outcome', 'hook'],
+      outline: ['title', 'synopsis', 'wordBudget'],
       bible: ['name', 'role', 'description'],
       style: ['pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity', 'bannedWords', 'chapterTitleStyle', 'notes'],
       premise: ['logline', 'hook', 'protagonist', 'conflict', 'antagonist', 'ending', 'audience', 'boundaries', 'genre'],
