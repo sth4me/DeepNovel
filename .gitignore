@@ -1,0 +1,21 @@
+# DSH / Node
+node_modules/
+dist/
+*.log
+
+# 插件运行态（可重建，不强制入库）
+.dsh-writing/
+
+# 用户小说数据与导出（不属于插件仓库）
+story/
+exports/
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本地环境
+.env
+.env.*

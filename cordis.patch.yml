@@ -1,0 +1,14 @@
+- insert:
+    - id: deepnovel
+      name: '@sth4me/deepnovel'
+      config: {}
+    - id: preset-deepnovel
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: novel-writer
+        order: 20
+        name: DeepNovel 写作
+        description: 长篇小说写作工作台：固定流程、设定/章节上下文、质检修复与按任务模型配置。
+        plugins:
+          - id: deepnovel-agent
+            name: '@sth4me/deepnovel/agent'

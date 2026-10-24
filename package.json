@@ -1,0 +1,48 @@
+{
+  "name": "@sth4me/deepnovel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 长篇小说写作插件：主面板写作台、固定流程、设定/章节上下文、质检修复与按任务模型配置。",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sth4me/DeepNovel.git"
+  },
+  "homepage": "https://github.com/sth4me/DeepNovel",
+  "exports": {
+    ".": "./index.js",
+    "./agent": "./agent.js",
+    "./client": "./client.js",
+    "./service": "./service.js",
+    "./templates": "./templates.js",
+    "./runtime": "./runtime.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "agent.js",
+    "client.js",
+    "service.js",
+    "runtime.js",
+    "templates.js",
+    "lock-rules.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "license": "MIT"
+}
