@@ -135,7 +135,7 @@ exports/                    # 导出的 md/html/epub/docx（不属于插件仓�
 
 `id / number / status / title / synopsis / wordBudget / inputs / generatedAt / confirmedAt`。
 
-`synopsis` 是唯一的内容字段；旧版章纲里的 goal/conflict/turn/outcome 等字段只做兼容读取。
+`synopsis` 是唯一的内容字段。
 
 ## chapters/NNN
 
