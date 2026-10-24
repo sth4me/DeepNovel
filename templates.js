@@ -263,7 +263,7 @@ export function buildOutlineUserPrompt(input) {
     lines.push('相邻/已有章节摘要（保持衔接）：')
     for (const chapter of input.contextChapters) {
       lines.push(
-        `- 第${chapter.number}章 ${chapter.title || ''}：${chapter.synopsis || chapter.outcome || chapter.goal || '—'}`,
+        `- 第${chapter.number}章 ${chapter.title || ''}：${chapter.synopsis || '—'}`,
       )
     }
   }
@@ -295,7 +295,7 @@ export function buildBibleUserPrompt(input) {
   if (input.outlineChapters?.length) {
     lines.push('已有章纲摘要：')
     for (const chapter of input.outlineChapters.slice(0, 8)) {
-      lines.push(`- 第${chapter.number}章 ${chapter.title || ''}：${chapter.synopsis || chapter.outcome || chapter.goal || '—'}`)
+      lines.push(`- 第${chapter.number}章 ${chapter.title || ''}：${chapter.synopsis || '—'}`)
     }
   }
   if (input.instruction) lines.push(`额外要求：${input.instruction}`)

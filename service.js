@@ -1689,9 +1689,7 @@ export class NovelWriterService {
       })
     }
     const missingFields = chapters.filter((chapter) => {
-      const synopsis = String(chapter.synopsis ?? '').trim() ||
-        [chapter.goal, chapter.conflict, chapter.turn, chapter.outcome].filter(Boolean).join('；')
-      return !String(chapter.title ?? '').trim() || !synopsis
+      return !String(chapter.title ?? '').trim() || !String(chapter.synopsis ?? '').trim()
     })
     if (missingFields.length) {
       issues.push({
@@ -1945,7 +1943,7 @@ export class NovelWriterService {
         type: 'text',
         text: [
           `项目：${premise?.chosen?.logline ?? ''}`,
-          `已有章纲：${JSON.stringify(chapters.slice(-6).map((chapter) => ({ number: chapter.number, title: chapter.title, goal: chapter.goal })))}`,
+          `已有章纲：${JSON.stringify(chapters.slice(-6).map((chapter) => ({ number: chapter.number, title: chapter.title, synopsis: chapter.synopsis })))}`,
           `文风要点：${String(style?.fields?.notes ?? '').slice(0, 600)}`,
           topic ? `本次主题/要求：${topic}` : '',
           Array.isArray(options.history) && options.history.length
@@ -2229,9 +2227,7 @@ export class NovelWriterService {
     const facts = {
       bible: {
         characters: bible.characters.filter(match).slice(0, 12),
-        locations: bible.locations
-          .filter((entry) => match(entry) || (chapter.place && String(chapter.place).includes(entry.name)))
-          .slice(0, 6),
+        locations: bible.locations.filter(match).slice(0, 6),
         rules: bible.rules.slice(0, 8),
         factions: bible.factions.filter(match).slice(0, 4),
         items: bible.items.filter(match).slice(0, 4),
@@ -2273,9 +2269,7 @@ export class NovelWriterService {
     const chosen = premise?.chosen ?? {}
     const bibleContext = {
       characters: bible.characters.filter(matches).slice(0, config.maxBibleCharacters),
-      locations: bible.locations
-        .filter((entry) => matches(entry) || (chapter.place && String(chapter.place).includes(entry.name)))
-        .slice(0, 6),
+      locations: bible.locations.filter(matches).slice(0, 6),
       rules: bible.rules.slice(0, config.maxRules),
       factions: bible.factions.filter(matches).slice(0, 6),
       items: bible.items.filter(matches).slice(0, 6),
@@ -2284,7 +2278,9 @@ export class NovelWriterService {
       bibleContext.characters = bible.characters.slice(0, Math.min(4, config.maxBibleCharacters))
     }
 
-    const castNames = new Set((chapter.cast ?? []).map(String))
+    const castNames = new Set(
+      bible.characters.filter(matches).map((entry) => String(entry.name)),
+    )
     const relations = await this.readRelations(agent).catch(() => null)
     const relationList = (relations?.relations ?? [])
       .filter((relation) =>
@@ -2337,15 +2333,10 @@ export class NovelWriterService {
       recent.push({
         number: previousNumber,
         title: previousChapter.title,
-        time: previousChapter.time,
-        place: previousChapter.place,
-        cast: previousChapter.cast ?? [],
-        synopsis: previousChapter.synopsis || previousChapter.outcome || '',
-        outcome: previousChapter.outcome,
-        hook: previousChapter.hook,
+        synopsis: previousChapter.synopsis || '',
         summary: summary?.summary ?? state?.summary ?? (
-          (previousChapter.synopsis || previousChapter.outcome)
-            ? `（本章尚未定稿，以下为章纲剧情）${previousChapter.synopsis || previousChapter.outcome}`
+          previousChapter.synopsis
+            ? `（本章尚未定稿，以下为章纲剧情）${previousChapter.synopsis}`
             : null
         ),
       })
@@ -2354,11 +2345,6 @@ export class NovelWriterService {
     const queryText = [
       chapter.title,
       chapter.synopsis,
-      chapter.goal,
-      chapter.conflict,
-      chapter.turn,
-      chapter.place,
-      (chapter.cast ?? []).join(' '),
     ].filter(Boolean).join(' ')
     const queryTerms = new Set()
     for (let index = 0; index < queryText.length - 1; index += 1) {
@@ -2378,7 +2364,7 @@ export class NovelWriterService {
     for (const { chapter: previousChapter, summary } of previousSummaries) {
       if (!summary?.summary) continue
       let score = 0
-      for (const name of previousChapter.cast ?? []) {
+      for (const name of summary.characters ?? []) {
         if (queryText.includes(name)) score += 8
       }
       for (const term of queryTerms) {
@@ -2441,8 +2427,6 @@ export class NovelWriterService {
       .map((item) => ({
         number: Number(item.number),
         title: item.title,
-        time: item.time,
-        place: item.place,
         status: item.status,
       }))
 
@@ -2700,7 +2684,7 @@ export class NovelWriterService {
       previousAnchor = {
         number: anchorChapter.number,
         title: anchorChapter.title,
-        synopsis: anchorChapter.synopsis || anchorChapter.outcome || '',
+        synopsis: anchorChapter.synopsis || '',
         summary: anchorSummary?.summary ?? '',
         ending: anchorText.trim().slice(-600),
       }
@@ -2985,24 +2969,8 @@ export class NovelWriterService {
     if (!target) throw new Error(`找不到章纲节点：${options.chapterId ?? options.number}`)
 
     const fields = options.fields ?? {}
-    for (const key of ['title', 'synopsis', 'goal', 'conflict', 'turn', 'outcome', 'pov', 'time', 'place', 'hook']) {
-      if (fields[key] !== undefined) target[key] = String(fields[key])
-    }
-    for (const key of ['cast', 'beats']) {
-      if (fields[key] !== undefined) {
-        target[key] = Array.isArray(fields[key]) ? fields[key].map(String) : target[key]
-      }
-    }
-    if (fields.foreshadow !== undefined) {
-      target.foreshadow = {
-        plant: Array.isArray(fields.foreshadow?.plant)
-          ? fields.foreshadow.plant.map(String)
-          : target.foreshadow?.plant ?? [],
-        payoff: Array.isArray(fields.foreshadow?.payoff)
-          ? fields.foreshadow.payoff.map(String)
-          : target.foreshadow?.payoff ?? [],
-      }
-    }
+    if (fields.title !== undefined) target.title = String(fields.title)
+    if (fields.synopsis !== undefined) target.synopsis = String(fields.synopsis)
     if (fields.wordBudget !== undefined) {
       target.wordBudget = Number(fields.wordBudget) || target.wordBudget || 3000
     }
@@ -3424,10 +3392,8 @@ export class NovelWriterService {
     const timeline = chapters.map((chapter) => ({
       number: Number(chapter.number),
       title: chapter.title ?? '',
-      time: chapter.time ?? '',
-      place: chapter.place ?? '',
+      synopsis: chapter.synopsis ?? '',
       status: chapter.status ?? 'candidate',
-      cast: Array.isArray(chapter.cast) ? chapter.cast : [],
     }))
     const foreshadowing = []
     for (const chapter of chapters) {
@@ -3575,11 +3541,7 @@ export class NovelWriterService {
       const title = `第 ${number} 章 ${chapter.title || ''}`.trim()
       add('outline', title, [
         chapter.title,
-        chapter.goal,
-        chapter.conflict,
-        chapter.turn,
-        chapter.outcome,
-        chapter.hook,
+        chapter.synopsis,
       ].filter(Boolean).join(' '), { number })
       const paths = this.chapterPaths(number)
       const final = await this.readText(agent, paths.final).catch(() => null)
@@ -3898,11 +3860,6 @@ export class NovelWriterService {
         title: chapter.title,
         outline: {
           synopsis: chapter.synopsis,
-          goal: chapter.goal,
-          outcome: chapter.outcome,
-          time: chapter.time,
-          place: chapter.place,
-          cast: chapter.cast,
         },
         summary: summary?.summary ?? null,
         characters: summary?.characters ?? [],
@@ -5096,7 +5053,10 @@ ${sections.join('\n')}
       entry.sources.add(source)
     }
     for (const chapter of chapters) {
-      for (const name of chapter.cast ?? []) add(name, chapter.number, 'outline')
+      const text = String(chapter.synopsis ?? '')
+      for (const character of bible.characters ?? []) {
+        if (text.includes(String(character.name ?? ''))) add(character.name, chapter.number, 'outline')
+      }
       const summary = await this.readChapterSummary(agent, chapter.number)
       for (const name of summary?.characters ?? []) add(name, chapter.number, 'summary')
     }
@@ -5125,12 +5085,6 @@ ${sections.join('\n')}
     const push = (level, code, message, extra = {}) => issues.push({ level, code, message, ...extra })
 
     const textParagraphs = String(text).split(/\n+/).map((paragraph) => paragraph.trim()).filter(Boolean)
-    for (const name of detail.chapter.cast ?? []) {
-      if (name && text && !text.includes(name)) {
-        push('warn', 'CAST_MISSING', `章纲出场人物「${name}」没有出现在正文中`)
-      }
-    }
-
     for (const chapter of allChapters.filter((item) => Number(item.number) < number)) {
       const summary = await this.readChapterSummary(agent, chapter.number)
       if (!summary) {
@@ -5289,12 +5243,7 @@ ${sections.join('\n')}
     const slim = (chapter) => ({
       number: chapter.number,
       title: chapter.title,
-      synopsis: chapter.synopsis || [chapter.goal, chapter.conflict, chapter.turn, chapter.outcome].filter(Boolean).join('；'),
-      cast: chapter.cast,
-      time: chapter.time,
-      place: chapter.place,
-      hook: chapter.hook,
-      foreshadow: chapter.foreshadow,
+      synopsis: chapter.synopsis || '',
     })
     const system = [
       '你是长篇小说的结构编辑，负责检查章纲之间的逻辑一致性。',
@@ -5365,12 +5314,7 @@ ${sections.join('\n')}
     const slim = (chapter) => ({
       number: chapter.number,
       title: chapter.title,
-      synopsis: chapter.synopsis || [chapter.goal, chapter.conflict, chapter.turn, chapter.outcome].filter(Boolean).join('；'),
-      cast: chapter.cast,
-      time: chapter.time,
-      place: chapter.place,
-      hook: chapter.hook,
-      foreshadow: chapter.foreshadow,
+      synopsis: chapter.synopsis || '',
     })
     const system = [
       '你是长篇小说的结构编辑。根据列出的逻辑冲突，修订受影响的章纲。',
@@ -5412,16 +5356,8 @@ ${sections.join('\n')}
     for (const patch of patches) {
       const target = chapters.find((chapter) => Number(chapter.number) === Number(patch.number))
       if (!target) continue
-      for (const key of ['title', 'synopsis', 'goal', 'conflict', 'turn', 'outcome', 'hook', 'time', 'place']) {
+      for (const key of ['title', 'synopsis']) {
         if (typeof patch[key] === 'string' && patch[key].trim()) target[key] = patch[key]
-      }
-      if (Array.isArray(patch.cast)) target.cast = patch.cast.map(String)
-      if (Array.isArray(patch.beats)) target.beats = patch.beats.map(String)
-      if (patch.foreshadow && typeof patch.foreshadow === 'object') {
-        target.foreshadow = {
-          plant: Array.isArray(patch.foreshadow.plant) ? patch.foreshadow.plant.map(String) : target.foreshadow?.plant ?? [],
-          payoff: Array.isArray(patch.foreshadow.payoff) ? patch.foreshadow.payoff.map(String) : target.foreshadow?.payoff ?? [],
-        }
       }
       target.status = 'candidate'
       target.editedAt = now()
@@ -6021,11 +5957,7 @@ ${sections.join('\n')}
       title: chapter.title ?? '',
       status: 'approved',
       wordCount: meta?.wordCount ?? 0,
-      summary: String(options.summary ?? '').trim() || [chapter.synopsis, chapter.outcome, chapter.hook].filter(Boolean).join(' ').slice(0, 420),
-      cast: Array.isArray(chapter.cast) ? chapter.cast : [],
-      time: chapter.time ?? '',
-      place: chapter.place ?? '',
-      hook: chapter.hook ?? '',
+      summary: String(options.summary ?? '').trim() || String(chapter.synopsis ?? '').slice(0, 420),
       approvedAt: meta?.approvedAt ?? now(),
       finalPath: paths.final,
     }
@@ -6042,10 +5974,6 @@ ${sections.join('\n')}
       outline: chapter,
       meta,
       summary: entry.summary,
-      cast: entry.cast,
-      time: entry.time,
-      place: entry.place,
-      hook: entry.hook,
       approvedAt: entry.approvedAt,
     })
     return entry

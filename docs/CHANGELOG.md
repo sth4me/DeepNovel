@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.1.3
+
+- 不再兼容旧章纲字段：只保留 title/synopsis/wordBudget，更新接口也只接受这三个字段。
+- 上下文、角色索引、摘要回退、审校与状态快照全部改用 synopsis，不再读取旧的 goal/conflict/turn/outcome/hook。
+- 生成章纲时强制带上一章的计划梗概、已写摘要和正文结尾，要求下一章从该落点继续。
+
 ## 0.1.2
 
 - 章纲讨论允许修改的字段同步为 title/synopsis/wordBudget。

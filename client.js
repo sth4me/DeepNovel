@@ -3571,7 +3571,7 @@ window.__ModuleLoader__.load({
       useEffect(() => { setFields(chapter ?? {}) }, [chapter?.id, chapter?.editedAt, chapter?.status, chapter?.title])
       const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }))
       const dirty = chapter
-        ? ['title', 'synopsis', 'goal', 'conflict', 'turn', 'outcome', 'hook', 'pov', 'time', 'place', 'wordBudget']
+        ? ['title', 'synopsis', 'wordBudget']
             .some((key) => String(fields[key] ?? '') !== String(chapter[key] ?? ''))
         : false
       const cardsView = h('div', { className: 'nw-cards' },
