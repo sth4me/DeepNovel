@@ -3472,13 +3472,8 @@ window.__ModuleLoader__.load({
         if (!list) return
         const active = list.querySelector('.nw-list-item.active')
         if (!active) return
-        const listRect = list.getBoundingClientRect()
-        const itemRect = active.getBoundingClientRect()
-        if (itemRect.top < listRect.top) {
-          list.scrollTop -= listRect.top - itemRect.top + 4
-        } else if (itemRect.bottom > listRect.bottom) {
-          list.scrollTop += itemRect.bottom - listRect.bottom + 4
-        }
+        const target = active.offsetTop - (list.clientHeight - active.clientHeight) / 2
+        list.scrollTop = Math.max(0, target)
       }, [selected])
       const [instruction, setInstruction] = usePersistedInput(state?.cwd, 'outlineInstruction')
       const [view, setView] = useState('cards')
@@ -3782,7 +3777,19 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-card' },
           h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
             h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready, onClick: async () => { const result = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, busy ? '生成中…' : '生成后 3 章'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !ready, onClick: async () => { const result = await run('outline-generate', { count: 6, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, '生成后 6 章'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy || !ready,
+              title: '分两批各生成 3 章，降低单次输出过长导致的失败率',
+              onClick: async () => {
+                const first = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true })
+                if (!first) return
+                afterGenerate(first)
+                const second = await run('outline-generate', { count: 3, fromChapter: first.toChapter + 1, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true })
+                if (second) afterGenerate(second)
+              },
+            }, '生成后 6 章（分两批）'),
             h('button', {
               type: 'button',
               className: 'nw-btn',
@@ -4025,13 +4032,8 @@ window.__ModuleLoader__.load({
         if (!list) return
         const active = list.querySelector('.nw-list-item.active')
         if (!active) return
-        const listRect = list.getBoundingClientRect()
-        const itemRect = active.getBoundingClientRect()
-        if (itemRect.top < listRect.top) {
-          list.scrollTop -= listRect.top - itemRect.top + 4
-        } else if (itemRect.bottom > listRect.bottom) {
-          list.scrollTop += itemRect.bottom - listRect.bottom + 4
-        }
+        const target = active.offsetTop - (list.clientHeight - active.clientHeight) / 2
+        list.scrollTop = Math.max(0, target)
       }, [selected, volumeFilter])
       useEffect(() => {
         if (chapters.length > 0 && !chapters.some((item) => Number(item.number) === Number(selected))) {

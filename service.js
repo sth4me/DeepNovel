@@ -2912,7 +2912,7 @@ export class NovelWriterService {
       system,
       messages,
       signal,
-      maxTokens: Math.min(16000, 6000 + range.length * 2500),
+      maxTokens: Math.min(24000, 6000 + range.length * 2500),
       temperature: 0.6,
       inputHash: this.hashInputs({
         premise: inputs.premiseHash,
