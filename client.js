@@ -3994,13 +3994,6 @@ window.__ModuleLoader__.load({
       const volumes = state.volumes ?? []
       const [volumeFilter, setVolumeFilter] = useState('all')
       const [runDetail, setRunDetail] = useState(null)
-      const listRef = useRef(null)
-      useEffect(() => {
-        const list = listRef.current
-        if (!list) return
-        const active = list.querySelector('.nw-list-item.active')
-        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-      }, [selected, volumeFilter])
       const chapters = volumeFilter === 'all'
         ? allChapters
         : allChapters.filter((item) => item.volumeId === volumeFilter)
@@ -4019,6 +4012,13 @@ window.__ModuleLoader__.load({
           ? storedChapter
           : chapters[0]?.number ?? null
       })
+      const listRef = useRef(null)
+      useEffect(() => {
+        const list = listRef.current
+        if (!list) return
+        const active = list.querySelector('.nw-list-item.active')
+        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }, [selected, volumeFilter])
       useEffect(() => {
         if (chapters.length > 0 && !chapters.some((item) => Number(item.number) === Number(selected))) {
           setSelected(chapters[0].number)
