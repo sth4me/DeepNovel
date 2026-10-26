@@ -1752,12 +1752,19 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const discussionAutoConfirmKey = (topicId) => `dsh.novelWriter.discussionAutoConfirm.${encodeURIComponent(root ?? '')}.${topicId}`
+      const readDiscussionAutoConfirm = (topicId) => {
+        try { return localStorage.getItem(discussionAutoConfirmKey(topicId)) === '1' } catch { return false }
+      }
+      const storeDiscussionAutoConfirm = (topicId, value) => {
+        try { localStorage.setItem(discussionAutoConfirmKey(topicId), value ? '1' : '0') } catch { /* ignore */ }
+      }
       const openDiscussion = async (topicId, topic, item) => {
         setInspTab('discuss')
-        setDiscussion({ topicId, topic, item, messages: [], loading: true, error: null, context: '' })
+        setDiscussion({ topicId, topic, item, messages: [], loading: true, error: null, context: '', autoConfirm: readDiscussionAutoConfirm(topicId) })
         try {
           const thread = await fetchDiscussion(root, topicId)
-          setDiscussion({ topicId, topic, item, messages: thread.messages ?? [], loading: false, error: null, context: '' })
+          setDiscussion({ topicId, topic, item, messages: thread.messages ?? [], loading: false, error: null, context: '', autoConfirm: readDiscussionAutoConfirm(topicId) })
         } catch (err) {
           setDiscussion((prev) => (prev ? { ...prev, loading: false, error: String(err?.message ?? err) } : prev))
         }
@@ -1806,8 +1813,12 @@ window.__ModuleLoader__.load({
         discussionAbortRef.current = null
       }
 
-      const applyDiscussionResult = async (action, currentDiscussion, message) => {
+      const applyDiscussionResult = async (action, currentDiscussion, message, selectedIndexes = null, autoConfirm = false) => {
         try {
+          const allActions = Array.isArray(message.result?.actions) ? message.result.actions : []
+          const selectedActions = Array.isArray(selectedIndexes)
+            ? allActions.filter((_, index) => selectedIndexes.includes(index))
+            : allActions
           const number =
             currentDiscussion.item?.number ??
             Number(String(currentDiscussion.topicId).match(/chapter-(\d+)/)?.[1]) ??
@@ -1815,9 +1826,16 @@ window.__ModuleLoader__.load({
           const suggestions = Array.isArray(message.result?.suggestions)
             ? message.result.suggestions.map((item) => String(item)).filter(Boolean)
             : []
+          const actionInstructions = selectedActions
+            .filter((item) => item?.type === 'chapter-instruction')
+            .map((item) => String(item.instruction ?? '').trim())
+            .filter(Boolean)
           const detailText = suggestions.length
             ? `${message.result?.conclusion ? `结论：${message.result.conclusion}\n\n` : ''}具体改法：\n${suggestions.map((item) => `- ${item}`).join('\n')}`
             : (message.result?.conclusion || cleanDiscussionText(message.text))
+          const revisionInstruction = actionInstructions.length
+            ? actionInstructions.join('\n')
+            : detailText
           const data = await postDiscussionApply(root, {
             action,
             topicId: currentDiscussion.topicId,
@@ -1825,9 +1843,9 @@ window.__ModuleLoader__.load({
             reply: message.text,
             result: message.result ?? {},
             item: currentDiscussion.item,
-            actions: message.result?.actions ?? [],
+            actions: selectedActions,
             number,
-            instruction: detailText,
+            instruction: action === 'instruction' ? revisionInstruction : detailText,
           })
           if (action === 'actions') {
             await load()
@@ -1849,6 +1867,24 @@ window.__ModuleLoader__.load({
               } : prev))
             }
             setToast(`已应用 ${data.appliedCount ?? 0} 项：${landed || '见讨论记录'}${data.errors?.length ? `（${data.errors.length} 项失败）` : ''}`)
+            const chapterActions = selectedActions.filter((item) => item.type === 'chapter-instruction')
+            if (autoConfirm) {
+              storeDiscussionAutoConfirm(currentDiscussion.topicId, true)
+              setDiscussion((prev) => (prev ? { ...prev, autoConfirm: true } : prev))
+            }
+            const revisions = new Map()
+            for (const actionItem of chapterActions) {
+              const targetNumber = Number(actionItem.target?.number ?? number)
+              const instruction = String(actionItem.instruction ?? '').trim()
+              if (!Number.isFinite(targetNumber) || !instruction) continue
+              revisions.set(targetNumber, revisions.has(targetNumber) ? `${revisions.get(targetNumber)}\n${instruction}` : instruction)
+            }
+            for (const [targetNumber, instruction] of revisions) {
+              const chapterInfo = (state?.chapters ?? []).find((item) => Number(item.number) === Number(targetNumber))
+              if (chapterInfo?.hasDraft || chapterInfo?.hasFinal) {
+                await run('chapter-revise', { number: targetNumber, instruction }, { toast: `第 ${targetNumber} 章已按讨论结果重写` })
+              }
+            }
             try {
               window.dispatchEvent(new CustomEvent('nw-chapters-refresh'))
             } catch {
@@ -2180,7 +2216,12 @@ window.__ModuleLoader__.load({
                 onSend: sendDiscussion,
                 onApplyInstruction: (message) => applyDiscussionResult('instruction', discussion, message),
                 onSaveNote: (message) => applyDiscussionResult('note', discussion, message),
-                onApplyActions: (message) => applyDiscussionResult('actions', discussion, message),
+                onApplyActions: (message, selectedIndexes, autoConfirm) => applyDiscussionResult('actions', discussion, message, selectedIndexes, autoConfirm),
+                onToggleAutoConfirm: () => {
+                  const next = !discussion?.autoConfirm
+                  if (discussion?.topicId) storeDiscussionAutoConfirm(discussion.topicId, next)
+                  setDiscussion((prev) => (prev ? { ...prev, autoConfirm: next } : prev))
+                },
                 onUndoApply: undoDiscussionApply,
                 onCopy: copyDiscussionText,
                 onStop: stopDiscussion,
@@ -2309,10 +2350,12 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DiscussionPanel({ discussion, onSend, onApplyInstruction, onSaveNote, onApplyActions, onUndoApply, onCopy, onClose, onStop }) {
+    function DiscussionPanel({ discussion, onSend, onApplyInstruction, onSaveNote, onApplyActions, onUndoApply, onCopy, onClose, onStop, onToggleAutoConfirm }) {
       const [text, setText] = useState('')
       const [pendingMessage, setPendingMessage] = useState(null)
-      useEffect(() => { setText(''); setPendingMessage(null) }, [discussion?.topicId])
+      const [pendingSelected, setPendingSelected] = useState([])
+      const [autoConfirmNext, setAutoConfirmNext] = useState(false)
+      useEffect(() => { setText(''); setPendingMessage(null); setPendingSelected([]); setAutoConfirmNext(false) }, [discussion?.topicId])
       if (!discussion) {
         return h('div', { className: 'nw-empty' },
           h('div', { className: 'nw-empty-icon' }, h(QuillIcon)),
@@ -2329,12 +2372,23 @@ window.__ModuleLoader__.load({
           items.slice(0, 6).map((item, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${item}`)),
         )
       }
+      const targetLabel = (action) => {
+        const target = action.target
+        if (!target) return ''
+        if (target.kind === 'chapter') return `第 ${target.number ?? '?'} 章`
+        if (target.kind === 'outline') return `第 ${target.number ?? target.id ?? '?'} 章章纲`
+        if (target.kind === 'bible') return `设定 ${target.category ?? ''}${target.id ? ` · ${target.id}` : ''}`
+        if (target.kind === 'style') return '文风'
+        if (target.kind === 'premise') return `构思 ${target.id ?? ''}`
+        return ''
+      }
       const actionSummary = (action) => {
-        if (action.type === 'chapter-instruction') return `写入修订要求：${String(action.instruction ?? '').slice(0, 80)}`
-        if (action.type === 'outline-update') return `修改章纲：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'bible-update') return `修改设定：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'style-update') return `修改文风：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'premise-candidate-update') return `修改构思：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
+        const prefix = targetLabel(action) ? `[${targetLabel(action)}] ` : ''
+        if (action.type === 'chapter-instruction') return `${prefix}重写正文：${String(action.instruction ?? '').slice(0, 100)}`
+        if (action.type === 'outline-update') return `${prefix}修改章纲：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
+        if (action.type === 'bible-update') return `${prefix}修改设定：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
+        if (action.type === 'style-update') return `${prefix}修改文风：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
+        if (action.type === 'premise-candidate-update') return `${prefix}修改构思：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
         return action.type
       }
       const formatFieldValue = (value) => {
@@ -2351,7 +2405,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-discuss-head' },
           h('div', { className: 'nw-eyebrow' }, '讨论'),
           h('div', { className: 'nw-h3' }, discussion.topic),
-          h('div', { className: 'nw-muted' }, '讨论只针对这个对象。结论的落点：本章修订要求（打开章节自动载入）、章纲/设定/文风/构思字段（「应用这些修改」）、备注文件（.dsh-writing/notes/）；线程保存在 .dsh-writing/discussions/。'),
+          h('div', { className: 'nw-muted' }, '讨论只针对这个对象。确认应用后：章节会写入修订要求并重写正文，章纲/设定/文风/构思会直接更新字段；「仅存备注」只存档，不改文件。'),
+          discussion.autoConfirm
+            ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } },
+                h('span', { style: { flex: 1 } }, '本线程已开启自动确认：后续讨论产生的修改会直接执行。'),
+                h('button', { type: 'button', className: 'nw-btn', onClick: () => onToggleAutoConfirm?.() }, '关闭自动确认'),
+              )
+            : null,
           discussion.context
             ? h('details', { className: 'nw-qa-details', style: { marginTop: '5px' } },
                 h('summary', { className: 'nw-qa-summary-line' }, '查看本次注入的上下文'),
@@ -2374,6 +2434,8 @@ window.__ModuleLoader__.load({
             : (discussion.messages ?? []).map((message, index) => {
                 const result = message.result ?? {}
                 const hasResult =
+                  result.question ||
+                  (result.options ?? []).length ||
                   result.conclusion ||
                   (result.suggestions ?? []).length ||
                   (result.todos ?? []).length ||
@@ -2381,6 +2443,27 @@ window.__ModuleLoader__.load({
                 return h('div', { key: index, className: `nw-msg ${message.role === 'assistant' ? 'assistant' : 'user'}` },
                   h('div', { className: 'nw-msg-role' }, message.role === 'assistant' ? '助手' : '你'),
                   h('div', { className: 'nw-msg-text' }, message.text),
+                  message.role === 'assistant' && (result.question || (result.options ?? []).length)
+                    ? h('div', { className: 'nw-result-actions' },
+                        result.question ? h('div', { className: 'nw-result-conclusion' }, result.question) : null,
+                        (result.options ?? []).length
+                          ? h('div', { className: 'nw-actions' },
+                              (result.options ?? []).map((option, optionIndex) =>
+                                h('button', {
+                                  key: optionIndex,
+                                  type: 'button',
+                                  className: 'nw-btn',
+                                  disabled: discussion.loading,
+                                  onClick: () => onSend?.(option),
+                                }, option),
+                              ),
+                            )
+                          : null,
+                        result.allowCustom !== false
+                          ? h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, '也可以直接在下方输入你自己的答案。')
+                          : null,
+                      )
+                    : null,
                   hasResult
                     ? h('div', { className: 'nw-result' },
                         result.conclusion ? h('div', { className: 'nw-result-conclusion' }, result.conclusion) : null,
@@ -2395,7 +2478,20 @@ window.__ModuleLoader__.load({
                         result.actions.map((action, actionIndex) =>
                           h('div', { key: actionIndex, className: 'nw-result-item' }, `· ${actionSummary(action)}`),
                         ),
-                        h('button', { type: 'button', className: 'nw-btn primary', onClick: () => setPendingMessage(message) }, `应用这些修改（${result.actions.length}）`),
+                        h('button', {
+                          type: 'button',
+                          className: 'nw-btn primary',
+                          onClick: () => {
+                            const all = result.actions.map((_, actionIndex) => actionIndex)
+                            if (discussion.autoConfirm) {
+                              onApplyActions?.(message, all, true)
+                              return
+                            }
+                            setPendingSelected(all)
+                            setAutoConfirmNext(false)
+                            setPendingMessage(message)
+                          },
+                        }, `应用这些修改（${result.actions.length}）`),
                       )
                     : null,
                   message.role === 'assistant'
@@ -2405,7 +2501,7 @@ window.__ModuleLoader__.load({
                           ? h('button', { type: 'button', className: 'nw-btn', onClick: () => onApplyInstruction?.(message) }, '用作修订要求')
                           : null,
                         hasResult
-                          ? h('button', { type: 'button', className: 'nw-btn', onClick: () => onSaveNote?.(message) }, '保存为备注')
+                          ? h('button', { type: 'button', className: 'nw-btn', onClick: () => onSaveNote?.(message) }, '仅存备注')
                           : null,
                       )
                     : null,
@@ -2449,30 +2545,48 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'nw-modal-backdrop' },
               h('div', { className: 'nw-modal', style: { maxWidth: '560px' } },
                 h('h3', { className: 'nw-h3' }, '应用讨论修改'),
-                h('p', { className: 'nw-muted' }, '确认后会直接写入对应文件；章节只写修订要求，不改正文。'),
+                h('p', { className: 'nw-muted' }, canApplyInstruction
+                  ? '确认后会先写入修改字段；如果包含章节修订建议，会直接按建议重写本章正文。没有草稿时只写入修订要求。'
+                  : '确认后直接写入对应字段，刷新后会看到修改结果。'),
                 (pendingMessage.result?.actions ?? []).map((action, index) =>
                   h('div', { key: index, style: { marginTop: '8px' } },
-                    h('div', { className: 'nw-label' }, actionSummary(action)),
-                    action.type === 'chapter-instruction'
-                      ? h('div', { className: 'nw-p' }, action.instruction)
-                      : Object.entries(action.fields ?? {}).map(([key, value]) =>
-                          h('div', { key, className: 'nw-kv' },
-                            h('span', { className: 'nw-muted' }, key),
-                            h('span', null, `${formatFieldValue(currentFieldValue(action, key))} → ${formatFieldValue(value)}`),
-                          ),
-                        ),
+                    h('label', { className: 'nw-row', style: { gap: '8px', alignItems: 'flex-start', cursor: 'pointer' } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: pendingSelected.includes(index),
+                        onChange: (event) => setPendingSelected((prev) => (
+                          event.target.checked ? [...new Set([...prev, index])] : prev.filter((item) => item !== index)
+                        )),
+                      }),
+                      h('div', null,
+                        h('div', { className: 'nw-label' }, actionSummary(action)),
+                        action.type === 'chapter-instruction'
+                          ? h('div', { className: 'nw-p' }, action.instruction)
+                          : Object.entries(action.fields ?? {}).map(([key, value]) =>
+                              h('div', { key, className: 'nw-kv' },
+                                h('span', { className: 'nw-muted' }, key),
+                                h('span', null, `${formatFieldValue(currentFieldValue(action, key))} → ${formatFieldValue(value)}`),
+                              ),
+                            ),
+                      ),
+                    ),
                   ),
+                ),
+                h('label', { className: 'nw-row', style: { gap: '8px', marginTop: '10px', cursor: 'pointer' } },
+                  h('input', { type: 'checkbox', checked: autoConfirmNext, onChange: (event) => setAutoConfirmNext(event.target.checked) }),
+                  h('span', { className: 'nw-muted' }, '本线程不再询问，后续同类修改直接执行'),
                 ),
                 h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
                   h('button', { type: 'button', className: 'nw-btn', onClick: () => setPendingMessage(null) }, '取消'),
                   h('button', {
                     type: 'button',
                     className: 'nw-btn primary',
+                    disabled: pendingSelected.length === 0,
                     onClick: () => {
-                      onApplyActions?.(pendingMessage)
+                      onApplyActions?.(pendingMessage, pendingSelected, autoConfirmNext)
                       setPendingMessage(null)
                     },
-                  }, '确认应用'),
+                  }, canApplyInstruction ? '确认并重写正文' : '确认执行'),
                 ),
               ),
             )
@@ -6120,6 +6234,9 @@ window.__ModuleLoader__.load({
               h('label', { className: 'nw-label' }, '上下文总字符上限'),
               h('input', { className: 'nw-input', type: 'number', min: '4000', max: '60000', step: '1000', value: contextConfig.maxContextChars ?? 16000, disabled: busy, onChange: (e) => updateContext('maxContextChars', Number(e.target.value) || 16000) }),
             ),
+          ),
+          h('p', { className: 'nw-muted', style: { marginTop: '6px' } },
+            '「上一章结尾字符数」控制续写时提供给模型的上一章原文量：0=不给；1200=只给结尾；3000 以上接近整章。它用于让下一章接住动作和情绪，避免重复上一章。',
           ),
           h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '6px' } },
             h('input', { type: 'checkbox', checked: contextConfig.includeForeshadowing !== false, disabled: busy, onChange: (e) => updateContext('includeForeshadowing', e.target.checked) }),
