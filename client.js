@@ -3471,7 +3471,14 @@ window.__ModuleLoader__.load({
         const list = listRef.current
         if (!list) return
         const active = list.querySelector('.nw-list-item.active')
-        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        if (!active) return
+        const listRect = list.getBoundingClientRect()
+        const itemRect = active.getBoundingClientRect()
+        if (itemRect.top < listRect.top) {
+          list.scrollTop -= listRect.top - itemRect.top + 4
+        } else if (itemRect.bottom > listRect.bottom) {
+          list.scrollTop += itemRect.bottom - listRect.bottom + 4
+        }
       }, [selected])
       const [instruction, setInstruction] = usePersistedInput(state?.cwd, 'outlineInstruction')
       const [view, setView] = useState('cards')
@@ -4017,7 +4024,14 @@ window.__ModuleLoader__.load({
         const list = listRef.current
         if (!list) return
         const active = list.querySelector('.nw-list-item.active')
-        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        if (!active) return
+        const listRect = list.getBoundingClientRect()
+        const itemRect = active.getBoundingClientRect()
+        if (itemRect.top < listRect.top) {
+          list.scrollTop -= listRect.top - itemRect.top + 4
+        } else if (itemRect.bottom > listRect.bottom) {
+          list.scrollTop += itemRect.bottom - listRect.bottom + 4
+        }
       }, [selected, volumeFilter])
       useEffect(() => {
         if (chapters.length > 0 && !chapters.some((item) => Number(item.number) === Number(selected))) {
