@@ -3483,6 +3483,12 @@ window.__ModuleLoader__.load({
       const [regenTo, setRegenTo] = useState(1)
       const afterGenerate = async (result) => {
         if (!result) return
+        if (result.nextVolumeId) {
+          setVolumeId(result.nextVolumeId)
+          setToast('本卷阶段收束，已自动开启下一卷')
+        } else if (result.volumeEnded) {
+          setToast('本卷阶段收束（自动分卷已关闭，可手动新建下一卷）')
+        }
         if (result.partial) {
           setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章，缺 ${result.missing?.length ?? 0} 章（可再点生成补齐）`)
         } else {
@@ -6050,6 +6056,14 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '连续写章默认数量'),
               h('input', { className: 'nw-input', type: 'number', min: '1', max: '10', value: automation.batchCount ?? 3, disabled: busy, onChange: (e) => updateAutomation('batchCount', Number(e.target.value) || 1) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '每卷参考章数（不强制分卷）'),
+              h('input', { className: 'nw-input', type: 'number', min: '3', max: '30', value: automation.volumeChapters ?? 10, disabled: busy, onChange: (e) => updateAutomation('volumeChapters', Number(e.target.value) || 10) }),
+            ),
+            h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } },
+              h('input', { type: 'checkbox', checked: automation.autoNextVolume !== false, disabled: busy, onChange: (e) => updateAutomation('autoNextVolume', e.target.checked) }),
+              h('span', { className: 'nw-label', style: { margin: 0 } }, '本卷满后自动开启下一卷'),
             ),
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '全书目标字数（0=不设）'),

@@ -1181,7 +1181,7 @@ export class NovelWriterService {
       system,
       messages,
       signal,
-      maxTokens: options.maxTokens ?? 3000,
+      maxTokens: options.maxTokens ?? 256000,
       temperature: options.temperature ?? 0.9,
       onDelta: options.onDelta,
       inputHash: this.hashInputs({
@@ -2755,6 +2755,7 @@ export class NovelWriterService {
       title: String(raw.title ?? ''),
       synopsis,
       wordBudget: Number(raw.wordBudget ?? wordBudget) || wordBudget,
+      ...(raw?.volumeEnd === true ? { volumeEnd: true } : {}),
       inputs: {
         premise: inputs.premiseHash,
         style: inputs.styleHash,
@@ -2880,6 +2881,7 @@ export class NovelWriterService {
         map: volume.map,
         powerCeiling: volume.powerCeiling,
         exitCriteria: volume.exitCriteria,
+        targetChapters: volume.targetChapters ?? project.automation?.volumeChapters ?? 10,
       },
       previousVolume: previousVolume ? {
         title: previousVolume.title,
@@ -3063,6 +3065,30 @@ export class NovelWriterService {
 
     const runId = generated.runId
     const updatedAt = now()
+    // 自动分卷：只有模型标记“阶段收束章”（volumeEnd: true）才开启下一卷；章数只作参考，不强制分卷。
+    const targetChapters = Math.max(3, Number(options.targetChapters ?? project.automation?.volumeChapters ?? 10) || 10)
+    const volumeEnded = normalized.some((chapter) => chapter.volumeEnd === true)
+    let nextVolumeId = null
+    const autoNext = options.autoNextVolume !== false && project.automation?.autoNextVolume !== false
+    if (autoNext && volumeEnded) {
+      const maxVol = volumes.reduce((max, item) => {
+        const number = Number(String(item.id ?? '').replace(/\D+/g, '')) || 0
+        return Math.max(max, number)
+      }, 0)
+      const already = volumes.some((item) => item.id === `vol-${maxVol + 1}`)
+      if (!already) {
+        const nextVolume = {
+          id: `vol-${maxVol + 1}`,
+          title: `第 ${maxVol + 1} 卷`,
+          goal: '',
+          map: '',
+          targetChapters,
+          chapters: [],
+        }
+        volumes.push(nextVolume)
+        nextVolumeId = nextVolume.id
+      }
+    }
     const next = {
       ...outline,
       status: 'candidate',
@@ -3088,6 +3114,8 @@ export class NovelWriterService {
         deferred: true,
         partial,
         missing: missingList,
+        nextVolumeId,
+        volumeEnded,
       }
     }
 
@@ -3133,6 +3161,8 @@ export class NovelWriterService {
       rolledBack,
       partial,
       missing: missingList,
+      nextVolumeId,
+      volumeEnded,
     }
   }
 

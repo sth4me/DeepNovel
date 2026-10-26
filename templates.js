@@ -198,7 +198,10 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '出场人物、身份和场景状态要前后一致；不要用模糊数量或含糊指代造成前后矛盾。',
   '用户本次额外要求优先于默认结构模板；如果与通用要求冲突，以额外要求为准。',
   '能力体系必须按既定层级推进：不得让角色无铺垫跨级；若本章涉及能力变化，在 synopsis 中写明旧层级→新层级、变化原因与影响。',
-  '分卷生成时以【本卷舞台与节奏控制】为准：章节地点必须属于本卷本地地图；不得把新卷写成上一卷地图的加时赛；本地主线收束且主角压过本地战力天花板后，本卷就应结束。',
+  '分卷生成时以【本卷阶段控制】为准：本卷章节只能发生在“本卷舞台”（按题材：武侠/修真用地图，言情用场所与关系阶段，悬疑用案发地与调查范围）；本卷阶段目标达成、舞台迁移、主要对手更替或大事件收束，任一满足即可结束本卷并留钩子；战力天花板只是武侠/修真题材的可选参考，不要求每卷升级；每卷 8–12 章是参考，不是硬性章数。',
+  '分卷标记：只有当本章是“阶段收束章”（阶段目标达成、大事件收束、主要对手更替或舞台迁移）时，才在该章对象里加 "volumeEnd": true；其余章不加。不要为了凑章数强行标记收束；也不要在 12 章后仍不收束却继续原地打转。',
+  'synopsis 写法：synopsis 是给正文用的结构说明，不是正文；用平实、明确的叙述写清时间/地点、本章谁要做什么、起因与冲突如何推进、结果、结尾状态、下一章钩子；不要用半文半白的文风，不要写对话台词，不要写场面细节的完整过程；场景要点只标类型、对象、方式、篇幅要求，细节留给正文发挥。',
+  '文风契约与 notes 只约束正文，不约束 synopsis 的写法（不要因为文风契约把 synopsis 写成半文半白）。',
 ].join('\n')
 
 export function buildOutlineUserPrompt(input) {
@@ -222,31 +225,35 @@ export function buildOutlineUserPrompt(input) {
   )
   // 通用机制：把文风 notes 原文单独展示，避免被长 JSON 淹没。
   // 具体题材要求由用户写在 notes / 提示词注入 / 本次额外要求里，插件不内置。
+  // notes 只约束正文；synopsis 按结构写，不模仿语体（见 system 的 synopsis 写法）。
   const notes = String(input.styleFields?.notes ?? '').trim()
   if (notes) {
-    lines.push('【文风补充要求（来自文风契约 notes，必须遵守）】', notes)
+    lines.push('【文风补充要求（仅约束正文，synopsis 不模仿其语体）】', notes)
   }
   if (input.writingNotes) {
     lines.push('【项目写作要求（必须遵守）】', String(input.writingNotes))
   }
   if (input.volume) {
-    lines.push('【本卷舞台与节奏控制（必须遵守）】')
+    lines.push('【本卷阶段控制（必须遵守）】')
     lines.push(`卷名：${input.volume.title || '未命名卷'}`)
-    lines.push(`本地地图：${input.volume.map || '未设置。必须先根据上一卷结尾和升级目标确定新地图，不得沿用上一卷地图；synopsis 中的地点必须使用新地图。'}`)
-    lines.push(`本卷目标：${input.volume.goal || '未设置；由本章纲自行收束成一个完整的本地主线。'}`)
-    lines.push(`本地战力天花板：${input.volume.powerCeiling || '未设置；按已确认的战力体系设置本卷上限。'}`)
-    lines.push(`离卷条件：${input.volume.exitCriteria || '本地主线收束且主角压过本地战力天花板后，本卷结束并准备下一张地图。'}`)
-    lines.push('硬规则：本卷章节只能发生在“本地地图”；不得让主角在本卷中途回到上一卷地图、旧镇子或旧势力范围。只有明确写离卷过渡的章节才能改变地点。本卷结尾必须让本地主线收束，并达到离卷条件。')
+    lines.push(`本卷舞台（地图/场所/关系阶段，按题材设定）：${input.volume.map || '未设置；武侠/修真用地图，言情用场所与关系阶段，悬疑用案发地与调查范围。本卷 synopsis 的地点/场所必须属于本卷舞台，不得中途回到上一卷舞台。'}`)
+    lines.push(`本卷阶段目标：${input.volume.goal || '未设置；由本章纲自行收束成一个完整的阶段事件。'}`)
+    if (input.volume.powerCeiling) {
+      lines.push(`本地战力参考（仅武侠/修真题材适用）：${input.volume.powerCeiling}`)
+    }
+    lines.push(`离卷条件：${input.volume.exitCriteria || '阶段目标达成、舞台迁移、主要对手更替或大事件收束，任一满足即可结束本卷；不要求战力提升，也不要求每卷换地图。'}`)
+    lines.push(`本卷章数：约 ${input.volume.targetChapters || 10} 章（参考值，不是硬性章数；阶段收束优先）`)
+    lines.push('硬规则：本卷章节只能发生在“本卷舞台”；中途不得回到上一卷舞台；只有明确写离卷过渡的章节才能迁移舞台。')
   }
   if (input.previousVolume) {
-    lines.push('【上一卷收束点（只用于衔接，不得把本卷拉回旧地图）】')
-    lines.push(`上一卷：${input.previousVolume.title || '上一卷'}；地图：${input.previousVolume.map || '未设置'}；目标：${input.previousVolume.goal || '—'}`)
+    lines.push('【上一卷收束点（只用于衔接，不得把本卷拉回旧舞台）】')
+    lines.push(`上一卷：${input.previousVolume.title || '上一卷'}；舞台：${input.previousVolume.map || '未设置'}；阶段目标：${input.previousVolume.goal || '—'}`)
     lines.push(`上一卷离卷条件：${input.previousVolume.exitCriteria || '—'}`)
     if (input.previousVolume.lastChapter) {
       const last = input.previousVolume.lastChapter
       lines.push(`上一卷末章：第${last.number}章 ${last.title || ''}；剧情=${last.synopsis || '—'}`)
     }
-    lines.push('本卷必须从上一卷末章的离卷结果继续，换到新的本地地图；不要把新章写成上一卷地图里的加时赛。')
+    lines.push('本卷必须从上一卷末章的离卷结果继续：可以换舞台，也可以在同一舞台进入新的关系/案件阶段；不要把新章写成上一卷事件的重复加时赛。')
   }
   if (input.previousAnchor) {
     const anchor = input.previousAnchor
