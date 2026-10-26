@@ -2967,8 +2967,45 @@ export class NovelWriterService {
         chapter.synopsis = chapter.title || `第 ${chapter.number} 章`
       }
     }
+    // 模型少返回章节时自动补生成（最多两轮），不再要求用户手动补齐。
+    let missing = range.slice(normalized.length)
+    for (let attempt = 0; attempt < 2 && missing.length > 0; attempt += 1) {
+      const retry = await this.callJsonModel(agent, {
+        kind: 'outline.generate.retry',
+        task: 'outline',
+        system,
+        messages,
+        signal,
+        maxTokens: Math.min(24000, 6000 + range.length * 2500),
+        temperature: 0.6,
+      }).catch(() => null)
+      const retryChapters = Array.isArray(retry?.parsed)
+        ? retry.parsed
+        : retry?.parsed?.chapters
+      if (!Array.isArray(retryChapters) || retryChapters.length === 0) continue
+      const retryNormalized = retryChapters
+        .slice(0, range.length)
+        .map((raw, index) =>
+          this.normalizeOutlineChapter(raw, range[index], {
+            wordBudget,
+            inputs: { ...inputs, ...contextHashes },
+          }),
+        )
+      for (const candidate of retryNormalized) {
+        const number = Number(candidate.number)
+        if (!missing.includes(number)) continue
+        if (normalized.some((item) => Number(item.number) === number)) continue
+        if (!String(candidate.synopsis ?? '').trim()) {
+          candidate.synopsis = candidate.title || `第 ${number} 章`
+        }
+        normalized.push(candidate)
+        missing = missing.filter((value) => Number(value) !== number)
+      }
+      normalized.sort((a, b) => Number(a.number) - Number(b.number))
+    }
     const partial = normalized.length < range.length
-    const missing = partial ? range.slice(normalized.length) : []
+    const missingChapters = range.filter((number) => !normalized.some((item) => Number(item.number) === Number(number)))
+    const missingList = missingChapters
     const actualTo = fromChapter + normalized.length - 1
     const merged = existing.filter((chapter) => !inRange(chapter))
     merged.push(...normalized)
@@ -3000,7 +3037,7 @@ export class NovelWriterService {
         rolledBack: false,
         deferred: true,
         partial,
-        missing,
+        missing: missingList,
       }
     }
 
@@ -3045,7 +3082,7 @@ export class NovelWriterService {
       repaired,
       rolledBack,
       partial,
-      missing,
+      missing: missingList,
     }
   }
 
