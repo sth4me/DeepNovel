@@ -2946,7 +2946,7 @@ export class NovelWriterService {
           inputs: { ...inputs, ...contextHashes },
         }),
       )
-    const requiredFields = ['title', 'synopsis']
+    const requiredFields = ['title']
     const missingFields = normalized
       .map((chapter) => ({
         number: chapter.number,
@@ -2962,15 +2962,13 @@ export class NovelWriterService {
       error.raw = generated.first.text
       throw error
     }
-    if (normalized.length < range.length) {
-      const error = new Error(
-        `模型只返回了 ${normalized.length} 章章纲（请求 ${range.length} 章），本轮未写入，请重试或缩小范围`,
-      )
-      error.code = 'NOVEL_WRITER_BAD_MODEL_OUTPUT'
-      error.runId = generated.runId
-      error.raw = generated.first.text
-      throw error
+    for (const chapter of normalized) {
+      if (!String(chapter.synopsis ?? '').trim()) {
+        chapter.synopsis = chapter.title || `第 ${chapter.number} 章`
+      }
     }
+    const partial = normalized.length < range.length
+    const missing = partial ? range.slice(normalized.length) : []
     const actualTo = fromChapter + normalized.length - 1
     const merged = existing.filter((chapter) => !inRange(chapter))
     merged.push(...normalized)
@@ -3001,6 +2999,8 @@ export class NovelWriterService {
         repaired: [],
         rolledBack: false,
         deferred: true,
+        partial,
+        missing,
       }
     }
 
@@ -3044,6 +3044,8 @@ export class NovelWriterService {
       audit: finalAudit,
       repaired,
       rolledBack,
+      partial,
+      missing,
     }
   }
 

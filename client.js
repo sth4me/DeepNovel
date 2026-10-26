@@ -3483,6 +3483,11 @@ window.__ModuleLoader__.load({
       const [regenTo, setRegenTo] = useState(1)
       const afterGenerate = async (result) => {
         if (!result) return
+        if (result.partial) {
+          setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章，缺 ${result.missing?.length ?? 0} 章（可再点生成补齐）`)
+        } else {
+          setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章`)
+        }
         const auto = state.project?.automation ?? {}
         if (auto.autoAudit === false) return
         try {
