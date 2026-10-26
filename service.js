@@ -621,6 +621,8 @@ export class NovelWriterService {
   async callModel(agent, { task = 'default', system, messages, signal, maxTokens = 2000, temperature = 0.8, reasoningEffort, onDelta, number }) {
     const model = await this.resolveModel(agent, task)
     const effort = reasoningEffort ?? model.reasoningEffort
+    const modelInfo = await this.modelInfoRaw(model.provider, model.model).catch(() => null)
+    const budgetCap = Math.max(8000, Number(modelInfo?.defaultMaxTokens) || 64000)
     const effectiveSystem = await this.injectedSystemFor(agent, system, task)
     const sessionId = await this.llmSessionId(agent)
     const started = Date.now()
@@ -633,7 +635,7 @@ export class NovelWriterService {
         model: model.model,
         system: effectiveSystem,
         messages,
-        maxTokens: budget,
+        maxTokens: Math.min(budget, budgetCap),
         temperature,
         ...(effort ? { reasoningEffort: effort } : {}),
         sessionId,
@@ -654,20 +656,12 @@ export class NovelWriterService {
       return { text, usage, finish }
     }
     let result = await runOnce(maxTokens, effort)
-    if (!result.text.trim() && result.finish?.kind === 'max-tokens' && maxTokens < 12000) {
-      result = await runOnce(Math.min(16000, Math.max(maxTokens * 2, 6000)), effort ?? 'low')
+    if (!result.text.trim() && result.finish?.kind === 'max-tokens' && maxTokens < budgetCap) {
+      // 截断只会发生在预算不足时：加倍预算重试，思考等级保持用户配置不变。
+      result = await runOnce(Math.min(budgetCap, Math.max(maxTokens * 2, 6000)), effort)
     }
     if (result.text.trim().length === 0) {
-      // 空正文：先切换为关闭/低思考再试一次（推理内容可能挤占正文输出）。
-      const info = await this.modelInfoRaw(model.provider, model.model).catch(() => null)
-      const efforts = info?.reasoning?.efforts?.map((item) => item.id) ?? []
-      const retryEffort = efforts.includes('off') ? 'off' : efforts.includes('low') ? 'low' : effort
-      if (retryEffort !== effort) {
-        result = await runOnce(maxTokens, retryEffort)
-      }
-    }
-    if (result.text.trim().length === 0) {
-      // 再按原参数重试一次，排除瞬时空响应。
+      // 再按原参数重试一次，排除瞬时空响应；不擅自修改思考等级。
       result = await runOnce(maxTokens, effort)
     }
     if (result.text.trim().length === 0) {
@@ -2912,7 +2906,7 @@ export class NovelWriterService {
       system,
       messages,
       signal,
-      maxTokens: Math.min(32000, 8000 + range.length * 2500),
+      maxTokens: 256000,
       temperature: 0.6,
       inputHash: this.hashInputs({
         premise: inputs.premiseHash,
@@ -2976,7 +2970,7 @@ export class NovelWriterService {
         system,
         messages,
         signal,
-        maxTokens: Math.min(32000, 8000 + range.length * 2500),
+        maxTokens: 256000,
         temperature: 0.6,
       }).catch(() => null)
       const retryChapters = Array.isArray(retry?.parsed)
