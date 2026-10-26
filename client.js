@@ -3466,6 +3466,13 @@ window.__ModuleLoader__.load({
           ? focusChapter
           : chapters[0]?.number ?? null,
       )
+      const listRef = useRef(null)
+      useEffect(() => {
+        const list = listRef.current
+        if (!list) return
+        const active = list.querySelector('.nw-list-item.active')
+        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }, [selected])
       const [instruction, setInstruction] = usePersistedInput(state?.cwd, 'outlineInstruction')
       const [view, setView] = useState('cards')
       const [regenOpen, setRegenOpen] = useState(false)
@@ -3878,7 +3885,7 @@ window.__ModuleLoader__.load({
               : view === 'graph'
                 ? h(ChapterGraph, { chapters, onChoose: chooseChapter, setToast })
                 : h('div', { className: 'nw-workbench' },
-              h('div', { className: 'nw-list' },
+              h('div', { className: 'nw-list', ref: listRef },
                 chapters.map((item) =>
                   h('button', {
                     key: item.id,
@@ -3987,6 +3994,13 @@ window.__ModuleLoader__.load({
       const volumes = state.volumes ?? []
       const [volumeFilter, setVolumeFilter] = useState('all')
       const [runDetail, setRunDetail] = useState(null)
+      const listRef = useRef(null)
+      useEffect(() => {
+        const list = listRef.current
+        if (!list) return
+        const active = list.querySelector('.nw-list-item.active')
+        if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }, [selected, volumeFilter])
       const chapters = volumeFilter === 'all'
         ? allChapters
         : allChapters.filter((item) => item.volumeId === volumeFilter)
@@ -4558,7 +4572,7 @@ window.__ModuleLoader__.load({
         chapters.length === 0
           ? h(EmptyState, { title: '还没有可写的章节', desc: '先在大纲里生成并确认章纲。' })
           : h('div', { className: 'nw-workbench' },
-              h('div', { className: 'nw-list' },
+              h('div', { className: 'nw-list', ref: listRef },
                 volumes.length > 1
                   ? h('div', { style: { marginBottom: '8px' } },
                       h('select', {
