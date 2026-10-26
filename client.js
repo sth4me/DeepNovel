@@ -295,6 +295,10 @@ window.__ModuleLoader__.load({
 .nw-list{display:flex;flex-direction:column;gap:3px;max-height:calc(100vh - 300px);overflow:auto;padding-right:4px;scrollbar-width:thin}
 .nw-list-item{display:flex;align-items:center;gap:8px;padding:8px 9px;border:none;border-radius:9px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;width:100%}
 .nw-list-item:hover{background:var(--dsw-alias-bg-layer-2)}
+.nw-list-item .nw-list-hover{opacity:0;flex:0 0 auto;font-size:10px;padding:2px 6px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);cursor:pointer;transition:opacity .12s ease}
+.nw-list-item:hover .nw-list-hover,.nw-list-item.active .nw-list-hover{opacity:1}
+.nw-list-item .nw-list-hover:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
+.nw-sticky-jump{max-width:112px;font:inherit;font-size:11px;padding:3px 4px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .nw-list-item.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .nw-list-num{font-size:9px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;min-width:18px}
 .nw-list-title{flex:1;min-width:0;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3885,6 +3889,17 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'nw-list-num' }, String(item.number).padStart(2, '0')),
                     h('span', { className: 'nw-list-title' }, `${item.volumeTitle && volumeId == null ? `${item.volumeTitle} · ` : ''}${item.title || '未命名'}`),
                     h('span', { className: `nw-badge ${statusClass(item.status)}` }, item.status === 'confirmed' ? '已确认' : '待确认'),
+                    onOpenChapter
+                      ? h('span', {
+                          className: 'nw-list-hover',
+                          role: 'button',
+                          title: '跳到本章正文',
+                          onClick: (event) => {
+                            event.stopPropagation()
+                            onOpenChapter(item.number)
+                          },
+                        }, '文')
+                      : null,
                   ),
                 ),
               ),
@@ -4628,6 +4643,15 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'nw-list-bar', title: targetWords > 0 ? `目标 ${targetWords} 字 · ${pct}%` : '' },
                       h('span', { style: { width: `${pct}%` } }),
                     ),
+                    h('span', {
+                      className: 'nw-list-hover',
+                      role: 'button',
+                      title: '在大纲中查看本章',
+                      onClick: (event) => {
+                        event.stopPropagation()
+                        onOpenOutline?.(item.number)
+                      },
+                    }, '纲'),
                   )
                 }),
               ),
@@ -4648,6 +4672,12 @@ window.__ModuleLoader__.load({
                         ? h('span', { className: 'nw-badge bad', style: { marginTop: '3px' } }, '定稿待更新')
                         : null,
                     ),
+                    h('select', {
+                      className: 'nw-sticky-jump',
+                      value: String(selected ?? ''),
+                      title: '跳转章节',
+                      onChange: (event) => setSelected(Number(event.target.value)),
+                    }, allChapters.map((item) => h('option', { key: item.number, value: item.number }, `第 ${item.number} 章`))),
                     h('div', { className: 'nw-sticky-nav' },
                       previousChapter ? h('button', { type: 'button', className: 'nw-btn ghost icon', title: '上一章（Alt+←）', onClick: () => setSelected(previousChapter.number) }, '‹') : null,
                       nextChapter ? h('button', { type: 'button', className: 'nw-btn ghost icon', title: '下一章（Alt+→）', onClick: () => setSelected(nextChapter.number) }, '›') : null,
