@@ -3467,6 +3467,7 @@ window.__ModuleLoader__.load({
           : chapters[0]?.number ?? null,
       )
       const listRef = useRef(null)
+      const workbenchRef = useRef(null)
       useEffect(() => {
         const list = listRef.current
         if (!list) return
@@ -3508,6 +3509,10 @@ window.__ModuleLoader__.load({
         if (!Number.isFinite(focusChapter)) return
         setSelected(focusChapter)
         setView('edit')
+        const frame = requestAnimationFrame(() => {
+          workbenchRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        })
+        return () => cancelAnimationFrame(frame)
       }, [focusChapter])
       useEffect(() => {
         if (!state?.cwd || !volumeId) return
@@ -3898,7 +3903,7 @@ window.__ModuleLoader__.load({
               ? tableView
               : view === 'graph'
                 ? h(ChapterGraph, { chapters, onChoose: chooseChapter, setToast })
-                : h('div', { className: 'nw-workbench' },
+                : h('div', { className: 'nw-workbench', ref: workbenchRef },
               h('div', { className: 'nw-list', ref: listRef },
                 chapters.map((item) =>
                   h('button', {
@@ -4027,6 +4032,7 @@ window.__ModuleLoader__.load({
           : chapters[0]?.number ?? null
       })
       const listRef = useRef(null)
+      const workbenchRef = useRef(null)
       useEffect(() => {
         const list = listRef.current
         if (!list) return
@@ -4055,6 +4061,10 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!Number.isFinite(focusChapter)) return
         setSelected(focusChapter)
+        const frame = requestAnimationFrame(() => {
+          workbenchRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        })
+        return () => cancelAnimationFrame(frame)
       }, [focusChapter])
       useEffect(() => {
         if (Number.isFinite(selected)) onSelectChapter?.(selected)
@@ -4587,7 +4597,7 @@ window.__ModuleLoader__.load({
         }),
         chapters.length === 0
           ? h(EmptyState, { title: '还没有可写的章节', desc: '先在大纲里生成并确认章纲。' })
-          : h('div', { className: 'nw-workbench' },
+          : h('div', { className: 'nw-workbench', ref: workbenchRef },
               h('div', { className: 'nw-list', ref: listRef },
                 volumes.length > 1
                   ? h('div', { style: { marginBottom: '8px' } },
