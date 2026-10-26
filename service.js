@@ -9,12 +9,21 @@ import {
   BIBLE_SYSTEM_PROMPT,
   BIBLE_CHARACTERS_SYSTEM_PROMPT,
   BIBLE_WORLD_SYSTEM_PROMPT,
+  CHAPTER_REVIEW_SYSTEM_PROMPT,
   CHAPTER_SYSTEM_PROMPT,
+  CONTINUITY_SYSTEM_PROMPT,
+  DECONSTRUCT_SYSTEM_PROMPT,
+  DISCUSSION_SYSTEM_PROMPT,
+  INSPIRATION_SYSTEM_PROMPT,
+  OUTLINE_AUDIT_SYSTEM_PROMPT,
+  OUTLINE_REPAIR_SYSTEM_PROMPT,
   OUTLINE_SYSTEM_PROMPT,
   PREMISE_INTENT_SYSTEM_PROMPT,
   PREMISE_SYSTEM_PROMPT,
   PROMPT_CATALOG,
   REVERSE_OUTLINE_SYSTEM_PROMPT,
+  STYLE_AUDIT_SYSTEM_PROMPT,
+  SUMMARY_SYSTEM_PROMPT,
   buildBibleUserPrompt,
   buildBibleCharactersUserPrompt,
   buildBibleWorldUserPrompt,
@@ -2060,13 +2069,7 @@ export class NovelWriterService {
     const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
     const topic = String(options.topic ?? '').trim()
     const count = Math.max(1, Math.min(6, Number(options.count) || 3))
-    const system = [
-      '你是中文小说的灵感助手。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"ideas":[{"title":"点子名","hook":"一句话钩子","scene":"具体场景/桥段（2–3 句）","note":"可用在哪个阶段/注意什么"}]}。',
-      '要求：点子具体、可执行，避免空泛；与已确认构思和文风不冲突；不要写正文。',
-      '这是多轮灵感对话：用户可能基于上一轮点子继续提修改意见，优先保留没有被要求改变的部分。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'inspiration', INSPIRATION_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{
@@ -2170,11 +2173,7 @@ export class NovelWriterService {
     const text = String(options.text ?? '').trim()
     if (!text) throw new Error('请粘贴要拆解的小说文本')
     const title = String(options.title ?? '').trim() || '拆书'
-    const system = [
-      '你是中文小说的拆书编辑。只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"summary":"故事梗概（200字内）","style":{"genre":[],"tone":"","notes":""},"characters":[{"name":"","role":"","description":""}],"volumes":[{"title":"","chapters":[{"number":1,"title":"","goal":""}]}],"hooks":["可复用桥段/钩子"]}。',
-      '只根据给定文本提炼，不要编造文本中没有的设定；人物以文本为准。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'deconstruct', DECONSTRUCT_SYSTEM_PROMPT)
     const messages = [{ role: 'user', content: [{ type: 'text', text: `标题：${title}\n\n文本：\n${text.slice(0, 12000)}` }] }]
     const generated = await this.callJsonModel(agent, {
       kind: 'deconstruct.analyze',
@@ -2191,7 +2190,6 @@ export class NovelWriterService {
       summary: String(parsed.summary ?? '').slice(0, 2000),
       style: parsed.style && typeof parsed.style === 'object' ? parsed.style : {},
       characters: Array.isArray(parsed.characters) ? parsed.characters.slice(0, 30) : [],
-      volumes: Array.isArray(parsed.volumes) ? parsed.volumes.slice(0, 12) : [],
       hooks: Array.isArray(parsed.hooks) ? parsed.hooks.map(String).slice(0, 30) : [],
     }
     const path = '.dsh-writing/deconstructions.json'
@@ -4115,15 +4113,7 @@ export class NovelWriterService {
     const project = await this.readJson(agent, this.marker)
     const threshold = this.automationConfig(project).stylePassScore
     const heuristics = this.detectAiStyle(text)
-    const system = [
-      '你是中文小说的风格审稿人，专门识别“AI 味”。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"score": 0-100, "summary": "一句话总评", "issues": [{"category": "套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题", "severity": "low|medium|high", "quote": "原文片段", "advice": "具体怎么改"}]}。',
-      '判断标准：是否像模板化生成、是否解释过多、是否用抽象情绪代替具体动作、是否句式重复、对话是否不自然、是否用总结代替场景。',
-      '只报确实影响阅读的问题；同一类问题合并成一条，不要逐段罗列；同一段落最多报一条；不要为了凑数报低价值问题。',
-      'severity 标准：high=明显套话/解释过度/节奏崩坏，必须改；medium=建议改；low=可选润色。',
-      '如果整体达到可读标准，issues 返回空数组；score 按整体质量给分，不要因为存在 low 级问题就压低。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'styleAudit', STYLE_AUDIT_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{ type: 'text', text: `文风契约：${JSON.stringify(inputs.styleFields ?? {})}\n\n正文：\n${text}` }],
@@ -4210,14 +4200,7 @@ export class NovelWriterService {
       })
     }
     const bible = await this.readBible(agent).catch(() => null)
-    const system = [
-      '你是中文长篇小说的统一审校编辑，同时检查文风问题和连续性冲突。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"score":0-100,"summary":"一句话总评","styleIssues":[{"category":"套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题","severity":"low|medium|high","quote":"原文片段","advice":"具体怎么改"}],"continuityIssues":[{"level":"warn|error","message":"具体冲突","chapter":前文章节号,"advice":"怎么改"}]}。',
-      '文风判断：是否模板化、解释过多、用抽象情绪代替具体动作、句式重复、对话不自然、用总结代替场景；只报确实影响阅读的问题，同类问题合并，同一段最多一条，没有就返回空数组。',
-      '连续性判断：只报告能从前文摘要、章纲和设定中证明的矛盾——时间线、人物位置/状态、人数与身份、因果链、伏笔、设定、能力层级；没有就返回空数组。',
-      '不要因为题材或关系尺度本身判问题；不要评价题材偏好。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'review', CHAPTER_REVIEW_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{
@@ -5313,12 +5296,7 @@ ${sections.join('\n')}
     const detail = await this.chapterDetail(agent, number)
     const text = String(options.text ?? detail.final ?? detail.draft ?? '').trim()
     if (!text) throw new Error(`第 ${number} 章还没有正文，无法生成摘要`)
-    const system = [
-      '你是小说编辑，负责维护长篇连续性摘要。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"summary":"150-250字客观摘要","characters":["出场人物"],"events":["关键事件"],"openThreads":["未解决线索"]}。',
-      '只写正文中实际发生的内容，不评价文笔，不剧透后文，不编造未出现的信息。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'summary', SUMMARY_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{ type: 'text', text: `第 ${number} 章《${detail.chapter.title ?? ''}》\n\n${text.slice(0, 20000)}` }],
@@ -5527,12 +5505,7 @@ ${sections.join('\n')}
       })
     }
     const bible = await this.readBible(agent).catch(() => null)
-    const system = [
-      '你是长篇小说连续性编辑。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"issues":[{"level":"warn|error","message":"具体冲突","chapter":3,"advice":"怎么改"}]}。',
-      '只报告能从前文摘要、设定和当前章纲中证明的冲突；没有冲突返回空数组。不要评价文笔。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'continuity', CONTINUITY_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{
@@ -5588,13 +5561,7 @@ ${sections.join('\n')}
       title: chapter.title,
       synopsis: chapter.synopsis || '',
     })
-    const system = [
-      '你是长篇小说的结构编辑，负责检查章纲之间的逻辑一致性。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"issues":[{"level":"warn|error","number":章节号,"message":"具体冲突","advice":"怎么改"}]}。',
-      '检查项：章纲是否空泛（synopsis 只有概括，缺具体人物、动作、结果）；时间线（先后、季节、地点移动是否可能）；人物位置与状态（上一章 synopsis 与下一章出场/状态是否矛盾，出场角色、身份和所在位置是否前后一致）；因果链（上一章 synopsis 是否支撑下一章剧情，章节之间是否自相矛盾）；伏笔（plant/payoff 是否对应、是否跨章回收）；设定（是否与既有角色/规则/地点冲突）；能力体系（境界是否无铺垫跨级、能力变化是否有来源与影响）；重复桥段（连续多章同一套路）。',
-      '只报告能从前文摘要、章纲与设定中证明的冲突；不要评价文笔；没有冲突返回空数组。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'outlineAudit', OUTLINE_AUDIT_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{
@@ -5659,13 +5626,7 @@ ${sections.join('\n')}
       title: chapter.title,
       synopsis: chapter.synopsis || '',
     })
-    const system = [
-      '你是长篇小说的结构编辑。根据列出的逻辑冲突，修订受影响的章纲。',
-      '只输出 JSON，不要 Markdown 围栏。',
-      '格式：{"chapters":[{"number":N,"title":"","synopsis":""}]}。',
-      'synopsis 只写具体剧情梗概，不要拆成目标/冲突/转折/结果等标签。',
-      '只输出列出的受影响章；只做消除冲突所需的最小改动；保留原有情节、人物与已埋伏笔；时间线与因果链必须前后衔接；不得无铺垫提升角色境界；不要评价文笔。',
-    ].join('\n')
+    const system = await this.systemFor(agent, 'outlineRepair', OUTLINE_REPAIR_SYSTEM_PROMPT)
     const messages = [{
       role: 'user',
       content: [{
@@ -5875,11 +5836,31 @@ ${sections.join('\n')}
       .map((entry) => `${entry.role === 'assistant' ? '助手' : '用户'}：${String(entry.text ?? '').slice(0, 800)}`)
       .join('\n')
     if (historyText) parts.push(`先前讨论：\n${historyText}`)
+    try {
+      const outline = await this.readJson(root, 'story/plot/outline.json').catch(() => null)
+      const bible = await this.readBible(root).catch(() => null)
+      const premise = await this.readJson(root, 'story/premise.json').catch(() => null)
+      const targetIndex = {
+        chapters: (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
+          .slice(0, 120)
+          .map((chapter) => ({ number: Number(chapter.number), title: chapter.title || '' })),
+        bible: BIBLE_CATEGORIES.flatMap((category) => (bible?.[category] ?? []).slice(0, 30).map((entry) => ({
+          category,
+          id: entry.id,
+          name: entry.name,
+        }))),
+        style: true,
+        premiseCandidates: (premise?.candidates ?? []).slice(0, 10).map((candidate) => ({ id: candidate.id, title: candidate.title })),
+      }
+      parts.push(`【可操作对象索引（关联修改时用于 target）】${JSON.stringify(targetIndex).slice(0, 6000)}`)
+    } catch {
+      // optional index
+    }
     parts.push('', '用户说：', message)
     return parts.filter(Boolean).join('\n')
   }
 
-  discussionSystemPrompt(topicId = '', item = null) {
+  async discussionSystemPrompt(agent, topicId = '', item = null) {
     const kind = String(topicId).startsWith('chapter-')
       ? 'chapter'
       : String(topicId).startsWith('outline-')
@@ -5891,28 +5872,20 @@ ${sections.join('\n')}
             : String(topicId).startsWith('premise-')
               ? 'premise'
               : 'other'
-    const allowed = kind === 'chapter'
-      ? ['chapter-instruction（把可执行修订要求写入本章）']
-      : kind === 'outline'
-        ? ['outline-update（只改当前章纲的 title/synopsis/wordBudget）']
-        : kind === 'bible'
-          ? ['bible-update（只改当前设定条目的 name/role/description）']
-          : kind === 'style'
-            ? ['style-update（只改文风字段 pov/tense/chapterWords/sentenceLength/paragraphLength/dialogueRatio/metaphorDensity/bannedWords/notes）']
-            : kind === 'premise'
-              ? ['premise-candidate-update（只改当前候选的 title/premise/protagonist/genre/length）']
-              : []
+    const allowed = kind === 'other'
+      ? []
+      : [
+          'chapter-instruction（target: {"kind":"chapter","number":章节号}；instruction 必须是可直接执行的修订说明）',
+          'outline-update（target: {"kind":"outline","number":章节号} 或 {"kind":"outline","id":"章纲 id"}；fields: title/synopsis/wordBudget）',
+          'bible-update（target: {"kind":"bible","category":"characters|locations|rules|factions|items","id":"条目 id"}；fields: name/role/description）',
+          'style-update（target: {"kind":"style"}；fields: 文风字段）',
+          'premise-candidate-update（target: {"kind":"premise","id":"候选 id"}；fields: title/premise/protagonist/genre）',
+        ]
+    const base = await this.systemFor(agent, 'discussion', DISCUSSION_SYSTEM_PROMPT)
     return [
-      '你是中文写作讨论助手。',
-      '用户会针对一个具体的创作对象提出疑问或修改想法。',
-      '优先使用提供的章纲、人物、地点、规则、最近章节、伏笔等上下文；不要编造与上下文冲突的设定。',
-      '如果上下文不足，明确指出缺什么，不要硬编。',
-      '你可以分析、比较、给出具体可执行的修改建议（可以给示例句子），但不要声称已经修改文件。',
-      '回答简洁、具体，避免空泛套话。',
-      '只输出 JSON 对象，不要 Markdown 围栏。',
-      '格式：{"reply":"给用户看的完整回答","conclusion":"一句话结论","suggestions":["具体改法"],"todos":["可执行动作"],"risks":["风险或注意"],"actions":[{"type":"允许的动作","fields":{},"instruction":"","reason":"为什么"}]}。',
-      'reply 是主体回答；其余字段从回答中提炼，没有就给空字符串或空数组。',
-      'reply 控制在 600 字以内；suggestions 与 todos 各不超过 5 条，不要重复 reply 的内容。',
+      base,
+      '当前对象已锁定；只有缺少关键信息时才 clarify。需要澄清时给 2–4 个 options，并允许用户自定义回答。',
+      '如果修改的是关联对象，action.target 必须写清楚；不写 target 时默认当前对象。不要修改未在 target 中声明的对象。',
       allowed.length
         ? `actions 只允许：${allowed.join('；')}。没有明确、可落盘的修改时 actions 必须为空数组，不要为了凑数生成动作。`
         : 'actions 必须为空数组。',
@@ -5921,65 +5894,59 @@ ${sections.join('\n')}
 
   normalizeDiscussionActions(raw, options = {}) {
     if (!Array.isArray(raw)) return []
-    const kind = String(options.topicId ?? '').startsWith('chapter-')
-      ? 'chapter'
-      : String(options.topicId ?? '').startsWith('outline-')
-        ? 'outline'
-        : String(options.topicId ?? '').startsWith('bible-')
-          ? 'bible'
-          : String(options.topicId ?? '') === 'style'
-            ? 'style'
-            : String(options.topicId ?? '').startsWith('premise-')
-              ? 'premise'
-              : 'other'
     const allowedFields = {
       outline: ['title', 'synopsis', 'wordBudget'],
       bible: ['name', 'role', 'description'],
       style: ['pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity', 'bannedWords', 'chapterTitleStyle', 'notes'],
       premise: ['title', 'premise', 'protagonist', 'genre'],
     }
+    const typeKinds = {
+      'chapter-instruction': 'chapter',
+      'outline-update': 'outline',
+      'bible-update': 'bible',
+      'style-update': 'style',
+      'premise-candidate-update': 'premise',
+    }
+    const normalizeTarget = (target, kind) => {
+      if (!target || typeof target !== 'object') return null
+      const targetKind = typeKinds[target.kind] ?? target.kind
+      if (!['chapter', 'outline', 'bible', 'style', 'premise'].includes(targetKind)) return null
+      const normalized = { kind: targetKind }
+      if (target.number !== undefined) {
+        const number = Number(target.number)
+        if (Number.isFinite(number) && number > 0) normalized.number = number
+      }
+      if (target.id !== undefined) normalized.id = String(target.id).slice(0, 120)
+      if (target.category !== undefined) normalized.category = String(target.category).slice(0, 40)
+      if (targetKind === kind && !normalized.number && !normalized.id && !normalized.category) return null
+      return normalized
+    }
     const out = []
     for (const action of raw) {
       if (!action || typeof action !== 'object') continue
+      const type = String(action.type ?? '')
+      const kind = typeKinds[type]
+      if (!kind) continue
       const reason = String(action.reason ?? '').slice(0, 500)
-      if (kind === 'chapter' && action.type === 'chapter-instruction') {
-        const instruction = String(action.instruction ?? '').trim().slice(0, 2000)
-        if (instruction) out.push({ type: 'chapter-instruction', instruction, reason })
-      } else if (kind === 'outline' && action.type === 'outline-update') {
+      const target = normalizeTarget(action.target, kind)
+      if (type === 'chapter-instruction') {
+        const instruction = String(action.instruction ?? '').trim().slice(0, 3000)
+        if (instruction) out.push({ type, instruction, target, reason })
+      } else if (type === 'outline-update' || type === 'bible-update' || type === 'style-update' || type === 'premise-candidate-update') {
         const fields = {}
-        for (const key of allowedFields.outline) {
-          if (action.fields?.[key] !== undefined) fields[key] = String(action.fields[key]).slice(0, 1200)
-        }
-        if (Object.keys(fields).length) out.push({ type: 'outline-update', fields, reason })
-      } else if (kind === 'bible' && action.type === 'bible-update') {
-        const fields = {}
-        for (const key of allowedFields.bible) {
-          if (action.fields?.[key] !== undefined) fields[key] = String(action.fields[key]).slice(0, 1200)
-        }
-        if (Object.keys(fields).length) out.push({ type: 'bible-update', fields, reason })
-      } else if (kind === 'style' && action.type === 'style-update') {
-        const fields = {}
-        for (const key of allowedFields.style) {
+        for (const key of allowedFields[kind]) {
           if (action.fields?.[key] === undefined) continue
           const value = action.fields[key]
           if (key === 'chapterWords' || key === 'dialogueRatio') {
             const number = Number(value)
             if (Number.isFinite(number)) fields[key] = number
-          } else if (key === 'bannedWords') {
-            fields[key] = Array.isArray(value) ? value.map(String).slice(0, 30) : String(value).split(/[,，]/).map((item) => item.trim()).filter(Boolean)
+          } else if (Array.isArray(value)) {
+            fields[key] = value.map(String).slice(0, 30)
           } else {
-            fields[key] = String(value).slice(0, 1200)
+            fields[key] = String(value).slice(0, 1600)
           }
         }
-        if (Object.keys(fields).length) out.push({ type: 'style-update', fields, reason })
-      } else if (kind === 'premise' && action.type === 'premise-candidate-update') {
-        const fields = {}
-        for (const key of allowedFields.premise) {
-          if (action.fields?.[key] === undefined) continue
-          const value = action.fields[key]
-          fields[key] = Array.isArray(value) ? value.map(String).slice(0, 30) : String(value).slice(0, 1200)
-        }
-        if (Object.keys(fields).length) out.push({ type: 'premise-candidate-update', fields, reason })
+        if (Object.keys(fields).length) out.push({ type, fields, target, reason })
       }
     }
     return out.slice(0, 8)
@@ -5992,7 +5959,7 @@ ${sections.join('\n')}
     if (!message) throw new Error('讨论内容不能为空')
     const thread = await this.readDiscussion(root, topicId)
     const context = await this.buildDiscussionContext(root, options, thread)
-    const system = this.discussionSystemPrompt(topicId, options.item)
+    const system = await this.discussionSystemPrompt(root, topicId, options.item)
     const messages = [{ role: 'user', content: [{ type: 'text', text: context }] }]
     const generated = await this.callJsonModel(root, {
       kind: 'discussion.reply',
@@ -6004,12 +5971,23 @@ ${sections.join('\n')}
     })
     const parsed = generated.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
     const reply = String(parsed.reply ?? generated.text ?? '').trim()
+    const actions = this.normalizeDiscussionActions(parsed.actions, options)
+    const optionsList = Array.isArray(parsed.options)
+      ? parsed.options.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+      : []
+    const stage = ['reply', 'clarify', 'propose'].includes(parsed.stage)
+      ? parsed.stage
+      : (optionsList.length ? 'clarify' : actions.length ? 'propose' : 'reply')
     const result = {
+      stage,
+      question: String(parsed.question ?? '').trim().slice(0, 800),
+      options: optionsList,
+      allowCustom: parsed.allowCustom !== false,
       conclusion: String(parsed.conclusion ?? '').trim(),
       suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions.map(String) : [],
       todos: Array.isArray(parsed.todos) ? parsed.todos.map(String) : [],
       risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
-      actions: this.normalizeDiscussionActions(parsed.actions, options),
+      actions,
     }
     const entryTime = now()
     const next = {
@@ -6034,7 +6012,7 @@ ${sections.join('\n')}
     if (!message) throw new Error('讨论内容不能为空')
     const thread = await this.readDiscussion(root, topicId)
     const context = await this.buildDiscussionContext(root, options, thread)
-    const system = this.discussionSystemPrompt(topicId, options.item)
+    const system = await this.discussionSystemPrompt(root, topicId, options.item)
     const messages = [{ role: 'user', content: [{ type: 'text', text: context }] }]
     const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
     const generated = await this.callModel(root, {
@@ -6053,12 +6031,23 @@ ${sections.join('\n')}
       // streamed plain text is still usable as a reply
     }
     const reply = String(parsed?.reply ?? generated.text ?? '').trim()
+    const actions = this.normalizeDiscussionActions(parsed?.actions, options)
+    const optionsList = Array.isArray(parsed?.options)
+      ? parsed.options.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+      : []
+    const stage = ['reply', 'clarify', 'propose'].includes(parsed?.stage)
+      ? parsed.stage
+      : (optionsList.length ? 'clarify' : actions.length ? 'propose' : 'reply')
     const result = {
+      stage,
+      question: String(parsed?.question ?? '').trim().slice(0, 800),
+      options: optionsList,
+      allowCustom: parsed?.allowCustom !== false,
       conclusion: String(parsed?.conclusion ?? '').trim(),
       suggestions: Array.isArray(parsed?.suggestions) ? parsed.suggestions.map(String) : [],
       todos: Array.isArray(parsed?.todos) ? parsed.todos.map(String) : [],
       risks: Array.isArray(parsed?.risks) ? parsed.risks.map(String) : [],
-      actions: this.normalizeDiscussionActions(parsed?.actions, options),
+      actions,
     }
     const entryTime = now()
     const next = {
@@ -6137,10 +6126,12 @@ ${sections.join('\n')}
       const applied = []
       const errors = []
       const affected = new Set()
-      const chapterNumber = Number(options.number ?? options.item?.number)
+      const targetOf = (item) => (item.target && typeof item.target === 'object' ? item.target : {})
       for (const item of actions) {
-        if (item.type === 'chapter-instruction' && Number.isFinite(chapterNumber)) {
-          affected.add(`${this.chapterPaths(chapterNumber).dir}/instruction.json`)
+        const target = targetOf(item)
+        if (item.type === 'chapter-instruction') {
+          const number = Number(target.number ?? options.number ?? options.item?.number)
+          if (Number.isFinite(number)) affected.add(`${this.chapterPaths(number).dir}/instruction.json`)
         } else if (item.type === 'outline-update') {
           affected.add('story/plot/outline.json')
         } else if (item.type === 'bible-update') {
@@ -6157,8 +6148,9 @@ ${sections.join('\n')}
       }
       for (const item of actions.slice(0, 8)) {
         try {
+          const target = targetOf(item)
           if (item.type === 'chapter-instruction') {
-            const number = Number(options.number ?? options.item?.number)
+            const number = Number(target.number ?? options.number ?? options.item?.number)
             const instruction = String(item.instruction ?? '').trim()
             if (!Number.isFinite(number) || !instruction) throw new Error('章节修订要求为空')
             const paths = this.chapterPaths(number)
@@ -6169,28 +6161,28 @@ ${sections.join('\n')}
               result,
               createdAt: now(),
             })
-            applied.push({ type: item.type, number, path: `${paths.dir}/instruction.json` })
+            applied.push({ type: item.type, number, target, path: `${paths.dir}/instruction.json` })
           } else if (item.type === 'outline-update') {
             const chapter = await this.updateOutlineChapter(root, {
-              chapterId: options.item?.id,
-              number: options.item?.number,
+              chapterId: target.id ?? options.item?.id,
+              number: target.number ?? options.item?.number,
               fields: item.fields ?? {},
             })
-            applied.push({ type: item.type, chapterId: chapter.id })
+            applied.push({ type: item.type, chapterId: chapter.id, target })
           } else if (item.type === 'bible-update') {
             const entry = await this.upsertBibleEntry(root, {
-              category: options.item?.category,
-              id: options.item?.id,
+              category: target.category ?? options.item?.category,
+              id: target.id ?? options.item?.id,
               fields: item.fields ?? {},
             })
-            applied.push({ type: item.type, entryId: entry.id })
+            applied.push({ type: item.type, entryId: entry.id, target })
           } else if (item.type === 'style-update') {
             const style = await this.updateStyleFields(root, item.fields ?? {})
-            applied.push({ type: item.type, fieldsHash: style.fieldsHash })
+            applied.push({ type: item.type, fieldsHash: style.fieldsHash, target })
           } else if (item.type === 'premise-candidate-update') {
-            const candidateId = options.item?.id ?? String(topicId).replace(/^premise-/, '')
+            const candidateId = target.id ?? options.item?.id ?? String(topicId).replace(/^premise-/, '')
             const premise = await this.updatePremiseCandidate(root, { candidateId, fields: item.fields ?? {} })
-            applied.push({ type: item.type, candidateId: premise.id })
+            applied.push({ type: item.type, candidateId: premise.id, target })
           } else {
             throw new Error(`不支持的讨论动作：${item.type}`)
           }
