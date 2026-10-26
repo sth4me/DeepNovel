@@ -2961,22 +2961,10 @@ export class NovelWriterService {
         chapter.synopsis = chapter.title || `第 ${chapter.number} 章`
       }
     }
-    // 模型少返回章节时自动补生成（最多两轮），不再要求用户手动补齐。
+    // 缺章补齐：先整批重试 1 次，再按缺失章逐个单章补（单章输出更稳）。
     let missing = range.slice(normalized.length)
-    for (let attempt = 0; attempt < 2 && missing.length > 0; attempt += 1) {
-      const retry = await this.callJsonModel(agent, {
-        kind: 'outline.generate.retry',
-        task: 'outline',
-        system,
-        messages,
-        signal,
-        maxTokens: 256000,
-        temperature: 0.6,
-      }).catch(() => null)
-      const retryChapters = Array.isArray(retry?.parsed)
-        ? retry.parsed
-        : retry?.parsed?.chapters
-      if (!Array.isArray(retryChapters) || retryChapters.length === 0) continue
+    const mergeBatch = (retryChapters) => {
+      if (!Array.isArray(retryChapters) || retryChapters.length === 0) return
       const retryNormalized = retryChapters
         .slice(0, range.length)
         .map((raw, index) =>
@@ -2995,6 +2983,74 @@ export class NovelWriterService {
         normalized.push(candidate)
         missing = missing.filter((value) => Number(value) !== number)
       }
+      normalized.sort((a, b) => Number(a.number) - Number(b.number))
+    }
+    if (missing.length > 0) {
+      const retry = await this.callJsonModel(agent, {
+        kind: 'outline.generate.retry',
+        task: 'outline',
+        system,
+        messages,
+        signal,
+        maxTokens: 256000,
+        temperature: 0.6,
+      }).catch(() => null)
+      mergeBatch(Array.isArray(retry?.parsed) ? retry.parsed : retry?.parsed?.chapters)
+    }
+    for (let attempt = 0; missing.length > 0 && attempt < 8; attempt += 1) {
+      const number = missing[0]
+      const singleText = buildOutlineUserPrompt({
+        title: project.title,
+        language: project.language ?? 'zh',
+        premise: inputs.chosen,
+        styleFields: inputs.styleFields ?? {},
+        bible: {
+          characters: bible.characters.slice(0, 20),
+          rules: bible.rules.slice(0, 10),
+          locations: bible.locations.slice(0, 10),
+        },
+        power: {
+          system: power.system,
+          characters: power.characters,
+          recentChanges: Object.entries(power.chapterChanges)
+            .filter(([chapterNumber]) => Number(chapterNumber) < number)
+            .sort(([a], [b]) => Number(a) - Number(b))
+            .slice(-4)
+            .map(([chapterNumber, changes]) => ({ chapter: Number(chapterNumber), changes })),
+        },
+        fromChapter: number,
+        toChapter: number,
+        totalChapters,
+        wordBudget,
+        contextChapters,
+        instruction: options.instruction,
+        writingNotes: this.writingNotesFor(project, 'outline'),
+        regenerate: false,
+      })
+      const single = await this.callJsonModel(agent, {
+        kind: 'outline.generate.retry',
+        task: 'outline',
+        system,
+        messages: [{ role: 'user', content: [{ type: 'text', text: singleText }] }],
+        signal,
+        maxTokens: 256000,
+        temperature: 0.6,
+      }).catch(() => null)
+      const singleChapters = Array.isArray(single?.parsed) ? single.parsed : single?.parsed?.chapters
+      if (!Array.isArray(singleChapters) || singleChapters.length === 0) continue
+      const candidate = this.normalizeOutlineChapter(singleChapters[0], number, {
+        wordBudget,
+        inputs: { ...inputs, ...contextHashes },
+      })
+      if (!String(candidate.synopsis ?? '').trim()) {
+        candidate.synopsis = candidate.title || `第 ${number} 章`
+      }
+      if (normalized.some((item) => Number(item.number) === Number(number))) {
+        missing = missing.filter((value) => Number(value) !== Number(number))
+        continue
+      }
+      normalized.push(candidate)
+      missing = missing.filter((value) => Number(value) !== Number(number))
       normalized.sort((a, b) => Number(a.number) - Number(b.number))
     }
     const partial = normalized.length < range.length
