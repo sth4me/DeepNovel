@@ -664,6 +664,10 @@ export function apply(ctx) {
           number: params.number,
           fields: params.fields,
         })
+      case 'assistant-chat':
+        return service.assistantChat(agent, { message: params.message })
+      case 'assistant-apply':
+        return service.assistantApply(agent, { actions: params.actions })
       case 'chapters-delete-tail':
         return service.deleteTailChapters(agent, { count: params.count, dryRun: params.dryRun })
       case 'volume-create':

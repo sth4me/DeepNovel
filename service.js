@@ -3426,6 +3426,98 @@ export class NovelWriterService {
     return target
   }
 
+  async readAssistantThread(agent) {
+    return (await this.readJson(agent, 'story/assistant/thread.json').catch(() => null)) ?? {
+      messages: [],
+      summary: '',
+      updatedAt: null,
+    }
+  }
+
+  async writeAssistantThread(agent, thread) {
+    await this.writeJson(agent, 'story/assistant/thread.json', {
+      ...thread,
+      updatedAt: now(),
+    })
+  }
+
+  async assistantChat(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const message = String(options.message ?? '').trim()
+    if (!message) throw new Error('指令不能为空')
+    const project = await this.readJson(agent, this.marker)
+    const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
+    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+    const bible = await this.readJson(agent, 'story/bible/index.json').catch(() => null)
+    const thread = await this.readAssistantThread(agent)
+    const chapters = (outline?.volumes ?? []).flatMap((volume) =>
+      (volume.chapters ?? []).map((chapter) => ({
+        number: chapter.number,
+        title: chapter.title,
+        status: chapter.status,
+        synopsis: String(chapter.synopsis ?? '').slice(0, 140),
+      })),
+    )
+    const characters = (bible?.characters ?? []).map((item) => ({ name: item.name, role: item.role })).slice(0, 40)
+    const history = thread.messages.slice(-12).map((item) => `${item.role === 'user' ? '用户' : '助手'}：${String(item.content ?? '').slice(0, 300)}`).join('\n')
+    const context = [
+      `项目：${project?.title ?? '未命名'}`,
+      premise?.chosen ? `已确认构思：${JSON.stringify(premise.chosen).slice(0, 1200)}` : '构思未确认',
+      `写作要求摘要：${String(project?.writingNotes ?? '').slice(0, 1500)}`,
+      `章纲：${JSON.stringify(chapters).slice(0, 4000)}`,
+      `角色：${JSON.stringify(characters).slice(0, 2000)}`,
+    ].join('\n')
+    const system = [
+      '你是这部小说的写作助手，只操作这一部小说。',
+      '先判断用户意图，分成三类：',
+      '1) discuss：讨论、评价、提意见——只回复分析与建议，不要改任何文件。',
+      '2) propose：用户要改东西但还没确认（如“第9章太水，压一压”）——给出变更计划，不要落盘。',
+      '3) execute：用户明确确认执行（“就按这个改/执行”）——给出可执行动作。',
+      '输出 JSON：{"intent":"discuss|propose|execute","reply":"给用户的话","plan":null 或 {"summary":"一句话","actions":[动作...]}}',
+      '动作格式：{"type":"outline-update","number":章号,"fields":{"title":"...","synopsis":"..."}} 或 {"type":"setting-update","fields":{"writingNotes":"..."}}。',
+      '改章纲时保留原有情节骨架与人物关系，只按用户要求增删改；synopsis 用结构化平实写法。',
+      '不要输出 Markdown 代码围栏。',
+    ].join('\n')
+    const result = await this.callJsonModel(agent, {
+      kind: 'assistant.chat',
+      task: 'discussion',
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: `${context}\n\n历史：\n${history}\n\n用户：${message}` }] }],
+      maxTokens: 8000,
+      temperature: 0.4,
+    })
+    const parsed = result?.parsed ?? {}
+    const intent = String(parsed.intent ?? 'discuss')
+    const reply = String(parsed.reply ?? '').trim() || '我明白了。'
+    const plan = intent !== 'discuss' && parsed.plan && Array.isArray(parsed.plan.actions)
+      ? { summary: String(parsed.plan.summary ?? ''), actions: parsed.plan.actions }
+      : null
+    thread.messages.push(
+      { role: 'user', content: message, at: now() },
+      { role: 'assistant', content: reply, at: now() },
+    )
+    await this.writeAssistantThread(agent, thread)
+    return { intent, reply, plan, thread }
+  }
+
+  async assistantApply(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const actions = Array.isArray(options.actions) ? options.actions : []
+    const done = []
+    for (const action of actions) {
+      if (action.type === 'outline-update') {
+        const updated = await this.updateOutlineChapter(agent, { number: action.number, fields: action.fields ?? {} })
+        done.push({ type: action.type, number: action.number, title: updated.title })
+      } else if (action.type === 'setting-update') {
+        await this.updateProject(agent, action.fields ?? {})
+        done.push({ type: action.type, fields: Object.keys(action.fields ?? {}) })
+      } else {
+        done.push({ type: action.type, skipped: true })
+      }
+    }
+    return { done }
+  }
+
   async createOutlineVolume(agent, options = {}) {
     await this.assertInitialized(agent)
     const outline = (await this.readJson(agent, 'story/plot/outline.json').catch(() => null)) ?? {

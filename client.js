@@ -83,6 +83,20 @@ window.__ModuleLoader__.load({
 .nw-banner.warn{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary) 40%,transparent)}
 .nw-toast{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;padding:9px 11px;border-radius:9px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 8px 24px rgba(0,0,0,.24);font-size:11px;color:var(--dsw-alias-label-primary);animation:nw-in .18s ease-out}
 @keyframes nw-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.nw-assist-wrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.nw-assist-fab{width:44px;height:44px;border-radius:50%;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,.28)}
+.nw-assist-fab:hover{background:var(--dsw-alias-bg-layer-2)}
+.nw-assist{width:min(380px,92vw);max-height:64vh;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-overlay);box-shadow:0 16px 40px rgba(0,0,0,.32)}
+.nw-assist-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.nw-assist-msgs{overflow:auto;display:flex;flex-direction:column;gap:6px;max-height:34vh;padding-right:2px}
+.nw-assist-msg{font-size:11px;line-height:1.55;padding:7px 9px;border-radius:9px;white-space:pre-wrap;color:var(--dsw-alias-label-primary)}
+.nw-assist-msg.user{background:var(--dsw-alias-bg-layer-2);align-self:flex-end;max-width:88%}
+.nw-assist-msg.assistant{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);max-width:92%}
+.nw-assist-plan{display:flex;flex-direction:column;gap:5px;padding:8px;border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-1)}
+.nw-assist-action{font-size:11px;color:var(--dsw-alias-label-secondary)}
+.nw-assist-input{display:flex;gap:6px}
+.nw-assist-input .nw-input{flex:1;min-width:0}
+.nw-assist .nw-error{font-size:11px;color:var(--dsw-alias-state-error-primary)}
 .nw-chapter{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .nw-chapter.open{border-color:var(--dsw-alias-border-l2)}
 .nw-chapter-summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
@@ -1421,6 +1435,105 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function AssistantPanel({ root, onApplied }) {
+      const [open, setOpen] = useState(false)
+      const [messages, setMessages] = useState([])
+      const [input, setInput] = useState('')
+      const [plan, setPlan] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState(null)
+      const post = async (action, params) => {
+        const response = await fetch('/novel-writer/project-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectRoot: root, action, params }),
+        })
+        const data = await response.json().catch(() => null)
+        if (!response.ok || !data?.ok) throw new Error(data?.error?.message ?? `HTTP ${response.status}`)
+        return data.data
+      }
+      const send = async () => {
+        const text = input.trim()
+        if (!text || busy || !root) return
+        setBusy(true)
+        setError(null)
+        setMessages((list) => [...list, { role: 'user', content: text }])
+        setInput('')
+        try {
+          const data = await post('assistant-chat', { message: text })
+          setMessages((list) => [...list, { role: 'assistant', content: data.reply }])
+          setPlan(data.plan ?? null)
+        } catch (err) {
+          setError(err.message)
+        } finally {
+          setBusy(false)
+        }
+      }
+      const apply = async () => {
+        if (!plan || !plan.actions?.length || busy) return
+        setBusy(true)
+        setError(null)
+        try {
+          const data = await post('assistant-apply', { actions: plan.actions })
+          const done = (data.done ?? []).map((item) => (item.number ? `第${item.number}章` : item.type)).join('、')
+          setMessages((list) => [...list, { role: 'assistant', content: `已执行：${done}` }])
+          setPlan(null)
+          onApplied?.()
+        } catch (err) {
+          setError(err.message)
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h('div', { className: 'nw-assist-wrap' },
+        open
+          ? h('div', { className: 'nw-assist' },
+              h('div', { className: 'nw-assist-head' },
+                h('span', null, '小说助手'),
+                h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setOpen(false) }, '收起'),
+              ),
+              h('div', { className: 'nw-assist-msgs' },
+                messages.length === 0
+                  ? h('div', { className: 'nw-muted' }, '可以讨论、提意见、让它改章；讨论不会动文件，改章会先给计划再执行。')
+                  : null,
+                messages.map((item, index) => h('div', { key: index, className: `nw-assist-msg ${item.role}` }, item.content)),
+              ),
+              plan
+                ? h('div', { className: 'nw-assist-plan' },
+                    h('div', { className: 'nw-eyebrow' }, '变更计划'),
+                    h('div', { className: 'nw-muted' }, plan.summary || '按以下动作调整'),
+                    (plan.actions ?? []).map((action, index) => h('div', { key: index, className: 'nw-assist-action' },
+                      action.type === 'outline-update'
+                        ? `第${action.number}章${action.fields?.title ? ` → ${action.fields.title}` : '（改内容）'}`
+                        : action.type === 'setting-update'
+                          ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
+                          : action.type,
+                    )),
+                    h('div', { className: 'nw-row' },
+                      h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: apply }, busy ? '执行中…' : '执行'),
+                      h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setPlan(null) }, '取消'),
+                    ),
+                  )
+                : null,
+              error ? h('div', { className: 'nw-error' }, error) : null,
+              h('div', { className: 'nw-assist-input' },
+                h('input', {
+                  className: 'nw-input',
+                  value: input,
+                  placeholder: '例如：第9章太水，压一压，保留阿棠那场',
+                  onChange: (event) => setInput(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter') send()
+                  },
+                }),
+                h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !input.trim(), onClick: send }, busy ? '…' : '发送'),
+              ),
+            )
+          : null,
+        h('button', { type: 'button', className: 'nw-assist-fab', title: '小说助手', onClick: () => setOpen((value) => !value) }, 'AI'),
+      )
+    }
+
     function DeskApp() {
       const [root, setRoot] = useState(readStoredRoot)
       const [state, setState] = useState(null)
@@ -2287,6 +2400,7 @@ window.__ModuleLoader__.load({
           inspector,
         ),
         taskDock,
+        h(AssistantPanel, { root, onApplied: () => load() }),
         toast ? h('div', { className: 'nw-toast' }, toast) : null,
       )
     }
