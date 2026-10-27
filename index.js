@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,9 @@ export const inject = [
   'workingDirectory',
   'agentPresets',
   'agents',
+  'agentLoop',
+  'subagents',
+  'sessionQuery',
   'sandboxPolicy',
   'llm',
   'agentDefaultModel',
@@ -141,8 +144,185 @@ function isLoopback(req) {
 export function apply(ctx) {
   const service = new NovelWriterService(ctx)
   setNovelWriter(service)
+
   const activeRuns = new Map()
   const runProgress = new Map()
+  /*
+   * 写作台内部对话：每个小说项目一个 origin=subagent 的隐藏父会话（不进侧栏），
+   * 其下挂一个 continuable 子代理会话，由官方 conversation UI 内嵌展示。
+   * 父会话必须在线，子代理的 composer 才能发送；DSH 重启后按需 resume。
+   */
+  const conversationHandles = new Map()
+  const CONVERSATION_META_PATH = '.dsh-writing/conversation.json'
+
+  const conversationParentId = (projectRoot) =>
+    `deepnovel-host-${createHash('sha1').update(projectRoot).digest('hex').slice(0, 16)}`
+
+  const currentModelOptions = () => {
+    const selection = ctx.agentDefaultModel.currentSelection()
+    if (!selection?.provider || !selection?.model) return undefined
+    return {
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+    }
+  }
+
+  const ensureConversationParent = async (projectRoot) => {
+    const parentId = conversationParentId(projectRoot)
+    if (ctx.agents.get(parentId)) return parentId
+    const agentOptions = currentModelOptions()
+    try {
+      const handle = await ctx.agents.resume({
+        resumeSessionId: parentId,
+        ...(agentOptions ? { agentOptions } : {}),
+      })
+      conversationHandles.set(projectRoot, handle)
+      return parentId
+    } catch {
+      const handle = await ctx.agents.create({
+        sessionId: parentId,
+        ...(agentOptions ? { agentOptions } : {}),
+        meta: { cwd: projectRoot, origin: 'subagent' },
+      })
+      conversationHandles.set(projectRoot, handle)
+      return parentId
+    }
+  }
+
+  const readConversationMeta = async (projectRoot) => {
+    try {
+      return await service.readJson(projectRoot, CONVERSATION_META_PATH)
+    } catch {
+      return null
+    }
+  }
+
+  const writeConversationMeta = (projectRoot, value) =>
+    service.writeJson(projectRoot, CONVERSATION_META_PATH, value)
+
+  const createConversationChild = async (projectRoot, parentId, carryover = '') => {
+    const parent = ctx.agents.get(parentId)
+    if (!parent) throw new Error('conversation parent unavailable')
+    const text = typeof carryover === 'string' ? carryover.trim() : ''
+    const promptText = text
+      ? [
+          '继续上次的写作对话，先看这段上一段对话的摘要：',
+          text.slice(0, 4000),
+          '',
+          '回复保持一句话即可。',
+        ].join('\n')
+      : '开始新的写作对话。回复保持一句话即可。'
+    const activation = await ctx.subagents.startActivation({
+      provider: 'spawn',
+      label: '写作台对话',
+      delivery: 'caller',
+      signal: new AbortController().signal,
+      request: {
+        parent,
+        cwd: projectRoot,
+        agentPreset: 'novel-writer',
+        prompt: [{ type: 'text', text: promptText }],
+        agentOptions: currentModelOptions(),
+        maxDepth: 1,
+      },
+    })
+    return activation.childId
+  }
+
+  const ensureConversation = async (projectRoot) => {
+    const parentId = await ensureConversationParent(projectRoot)
+    const meta = await readConversationMeta(projectRoot)
+    let childId = typeof meta?.childId === 'string' ? meta.childId : null
+    const childAlive = childId
+      ? await ctx.sessionQuery.readSession(childId).then(() => true).catch(() => false)
+      : false
+    let created = false
+    if (!childId || !childAlive || meta?.parentId !== parentId) {
+      childId = await createConversationChild(projectRoot, parentId, meta?.carryover ?? '')
+      created = true
+      await writeConversationMeta(projectRoot, {
+        parentId,
+        childId,
+        carryover: typeof meta?.carryover === 'string' ? meta.carryover : '',
+        createdAt: new Date().toISOString(),
+      })
+    }
+    return { parentId, childId, mode: 'continuable', created, model: currentModelOptions() ?? null }
+  }
+
+  const conversationTranscript = async (childId) => {
+    const snapshot = await ctx.sessionQuery.readSession(childId)
+    const lines = []
+    for (const event of snapshot.events ?? []) {
+      if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue
+      const content = event.data?.message?.content ?? []
+      const text = content
+        .filter((block) => block?.type === 'text')
+        .map((block) => block.text)
+        .join('\n')
+        .trim()
+      if (!text) continue
+      lines.push(`${event.type === 'user/message' ? '用户' : '助手'}：${text}`)
+    }
+    return lines
+  }
+
+  const summarizeConversation = async (projectRoot) => {
+    const meta = await readConversationMeta(projectRoot)
+    const childId = typeof meta?.childId === 'string' ? meta.childId : null
+    if (!childId) throw new Error('当前项目还没有对话可以摘要')
+    const lines = await conversationTranscript(childId)
+    if (lines.length === 0) throw new Error('当前对话还没有可摘要的内容')
+    const joined = lines.join('\n\n')
+    const clipped = joined.length > 12000 ? joined.slice(-12000) : joined
+    const result = await service.callModel(projectRoot, {
+      task: 'default',
+      system: [
+        '你是小说写作助手的对话摘要器。把给定对话压缩成一段后续可用的中文摘要。',
+        '保留：用户对创作的明确要求与偏好、已经确定的设定/章纲/正文改动、当前进行到哪一步、未完成的待办与风险。',
+        '不要编造对话里没有的内容；不要写寒暄；不要用 Markdown 标题。',
+        '输出 300~600 字的一段话。',
+      ].join('\n'),
+      messages: [{ role: 'user', content: [{ type: 'text', text: `对话记录：\n\n${clipped}` }] }],
+      maxTokens: 1600,
+      temperature: 0.3,
+    })
+    const summary = String(result.text ?? '').trim()
+    return { summary, messageCount: lines.length }
+  }
+
+  const resetConversation = async (projectRoot, carryover) => {
+    const meta = await readConversationMeta(projectRoot)
+    const oldChildId = typeof meta?.childId === 'string' ? meta.childId : null
+    if (oldChildId) {
+      const child = ctx.agents.get(oldChildId)
+      if (child) {
+        try {
+          child.cancel({ kind: 'user' })
+        } catch {
+          // ignore cancellation failures
+        }
+      }
+    }
+    const parentId = await ensureConversationParent(projectRoot)
+    const text = typeof carryover === 'string' ? carryover.trim() : ''
+    const childId = await createConversationChild(projectRoot, parentId, text)
+    await writeConversationMeta(projectRoot, {
+      parentId,
+      childId,
+      carryover: text,
+      createdAt: new Date().toISOString(),
+    })
+    return {
+      parentId,
+      childId,
+      mode: 'continuable',
+      carryover: Boolean(text),
+      created: true,
+      model: currentModelOptions() ?? null,
+    }
+  }
   const pauseRequests = new Set()
 
   const dispatchWithProgress = async (agent, action, params, signal) => {
@@ -665,7 +845,53 @@ export function apply(ctx) {
           fields: params.fields,
         })
       case 'assistant-chat':
-        return service.assistantChat(agent, { message: params.message })
+        return service.assistantChat(agent, {
+          message: params.message,
+          taskId: params.taskId,
+          background: params.background === true,
+        })
+      case 'assistant-live':
+        return service.readJson(agent, 'story/assistant/live.json').catch(() => null)
+      case 'assistant-thread':
+        return service.readAssistantThread(agent)
+      case 'create-preset-agent': {
+        const steps = {}
+        let live = null
+        try {
+          // dispatchAction 的 agent 是项目根路径字符串，不能直接传给需要 Agent 对象的服务。
+          const cwd = typeof agent === 'string' ? agent : await ctx.workingDirectory.ensure(agent)
+          steps.cwd = cwd
+          live = await ctx.agentLoop.create(randomUUID(), {}, { cwd })
+          steps.created = live.id
+        } catch (error) {
+          return { failedAt: 'create', error: errorText(error), steps }
+        }
+        try {
+          steps.selected = await ctx.agentPresets.select(live, 'novel-writer')
+        } catch (error) {
+          steps.selectError = errorText(error)
+        }
+        try {
+          steps.tools = ctx.tools.schemas(live).map((schema) => schema.name)
+        } catch (error) {
+          steps.toolsError = errorText(error)
+        }
+        try {
+          steps.preset = ctx.agentPresets.composedPreset(live.ctx) ?? null
+        } catch (error) {
+          steps.presetError = errorText(error)
+        }
+        try {
+          const inventory = await ctx.agentPresets.compositionInventory()
+          const entry = (inventory ?? []).find((item) => item.id === 'novel-writer')
+          steps.rows = entry
+            ? entry.rows.map((row) => ({ entryId: row.entryId, moduleName: row.moduleName, enabled: row.enabled, fiberState: row.fiberState }))
+            : null
+        } catch (error) {
+          steps.inventoryError = errorText(error)
+        }
+        return steps
+      }
       case 'assistant-apply':
         return service.assistantApply(agent, { actions: params.actions })
       case 'assistant-undo':
@@ -1335,6 +1561,73 @@ export function apply(ctx) {
       },
     })
 
+    /*
+     * 写作台内部对话入口：确保项目父会话在线，并返回/创建 continuable 子代理会话地址。
+     * client 拿到地址后用 sessions.retain + 官方 conversation.content 内嵌展示。
+     */
+    const disposeConversation = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/conversation',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
+          const body = await readRequestBody(req)
+          const root = validProjectRoot(body.projectRoot)
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          const data = await ensureConversation(root)
+          jsonResponse(res, 200, { ok: true, data })
+        } catch (error) {
+          jsonResponse(res, 500, {
+            ok: false,
+            error: { message: errorText(error), code: error?.code ?? null },
+          })
+        }
+      },
+    })
+
+    const disposeConversationSummary = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/conversation/summary',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
+          const body = await readRequestBody(req)
+          const root = validProjectRoot(body.projectRoot)
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          const data = await summarizeConversation(root)
+          jsonResponse(res, 200, { ok: true, data })
+        } catch (error) {
+          jsonResponse(res, 500, {
+            ok: false,
+            error: { message: errorText(error), code: error?.code ?? null },
+          })
+        }
+      },
+    })
+
+    const disposeConversationReset = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/conversation/reset',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
+          const body = await readRequestBody(req)
+          const root = validProjectRoot(body.projectRoot)
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          const data = await resetConversation(root, typeof body.carryover === 'string' ? body.carryover : '')
+          jsonResponse(res, 200, { ok: true, data })
+        } catch (error) {
+          jsonResponse(res, 500, {
+            ok: false,
+            error: { message: errorText(error), code: error?.code ?? null },
+          })
+        }
+      },
+    })
+
     const disposeClientLog = ctx.webServer.register({
       kind: 'exact',
       path: '/novel-writer/client-log',
@@ -1357,6 +1650,9 @@ export function apply(ctx) {
     })
 
     return () => {
+      disposeConversationReset()
+      disposeConversationSummary()
+      disposeConversation()
       disposeDiscussionStream()
       disposePremiseStream()
       disposeDiscussionApply()

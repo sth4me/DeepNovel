@@ -103,6 +103,24 @@ window.__ModuleLoader__.load({
 .nw-assist-input textarea:focus{outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);outline-offset:1px}
 .nw-assist-input-row{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .nw-assist .nw-error{font-size:11px;color:var(--dsw-alias-state-error-primary)}
+.nw-md{font-size:12px;line-height:1.7;color:var(--dsw-alias-label-primary)}
+.nw-md p{margin:0 0 6px}
+.nw-md p:last-child{margin-bottom:0}
+.nw-md h3,.nw-md h4,.nw-md h5,.nw-md h6{margin:8px 0 4px;font-size:12.5px;font-weight:600}
+.nw-md ul,.nw-md ol{margin:2px 0 6px;padding-left:18px}
+.nw-md li{margin:2px 0}
+.nw-md code{padding:0 4px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);font-size:11px}
+.nw-md pre.nw-md-code{margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);overflow:auto;font-size:11px}
+.nw-md blockquote{margin:4px 0;padding:4px 10px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary)}
+.nw-md hr{margin:8px 0;border:none;border-top:1px solid var(--dsw-alias-border-l1)}
+.nw-md a{color:var(--dsw-alias-brand-primary);text-decoration:underline}
+.nw-assist-embedded{width:100%;height:100%;min-height:0;border:none;border-radius:0;box-shadow:none;padding:0;background:transparent;gap:8px}
+.nw-assist-embedded,.nw-assist-embedded *{box-sizing:border-box}
+.nw-assist-embedded .nw-assist-input textarea{width:100%;min-height:64px}
+.nw-assist-embedded .nw-assist-msgs{max-height:none;width:100%;overflow-x:hidden}
+.nw-assist-embedded .nw-assist-msg{max-width:100%}
+.nw-assist-embedded .nw-assist-input{width:100%}
+.nw-assist-embedded .nw-assist-plan{width:100%}
 .nw-chapter{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .nw-chapter.open{border-color:var(--dsw-alias-border-l2)}
 .nw-chapter-summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;user-select:none}
@@ -289,7 +307,7 @@ window.__ModuleLoader__.load({
 
     const CSS_APP = `
 .nw-app{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
-.nw-top{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--dsw-alias-border-l1);background:linear-gradient(180deg,var(--dsw-alias-bg-layer-2),transparent);flex:0 0 auto}
+.nw-top{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--dsw-alias-border-l1);background:linear-gradient(180deg,var(--dsw-alias-bg-layer-2),transparent);flex:0 0 auto;position:relative;z-index:45}
 .nw-top .nw-title{font-size:18px}
 .nw-top-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .nw-body{display:flex;flex:1;min-height:0}
@@ -306,7 +324,9 @@ window.__ModuleLoader__.load({
 .nw-rail-foot{margin-top:14px;padding:10px 8px;border-top:1px solid var(--dsw-alias-border-l1)}
 .nw-stage{flex:1;min-width:0;overflow:auto;padding:24px 30px;scrollbar-width:thin}
 .nw-stage-inner{max-width:1120px;margin:0 auto}
-.nw-inspector{width:330px;flex:0 0 auto;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
+.nw-inspector{width:330px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
+.nw-insp-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:6;background:transparent}
+.nw-insp-resizer:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent)}
 .nw-insp-tabs{display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto}
 .nw-insp-tab{padding:7px 10px;border:none;background:none;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .nw-insp-tab.active{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-brand-primary)}
@@ -1441,15 +1461,321 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function AssistantPanel({ root, onApplied }) {
-      const [open, setOpen] = useState(false)
+    function renderInlineMarkdown(text) {
+      const source = String(text ?? '')
+      const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*|\[([^\]]+)\]\(([^)]+)\))/g
+      const parts = []
+      let last = 0
+      let match
+      while ((match = pattern.exec(source)) !== null) {
+        if (match.index > last) parts.push(source.slice(last, match.index))
+        if (match[2] != null) parts.push(h('strong', { key: parts.length }, match[2]))
+        else if (match[3] != null) parts.push(h('code', { key: parts.length }, match[3]))
+        else if (match[4] != null) parts.push(h('em', { key: parts.length }, match[4]))
+        else if (match[5] != null) parts.push(h('a', { key: parts.length, href: match[6], target: '_blank', rel: 'noreferrer' }, match[5]))
+        last = match.index + match[0].length
+      }
+      if (last < source.length) parts.push(source.slice(last))
+      return parts
+    }
+
+    function renderMarkdown(text) {
+      const lines = String(text ?? '').split('\n')
+      const blocks = []
+      let list = null
+      let code = null
+      const flushList = () => {
+        if (list) {
+          blocks.push(h('ul', { key: blocks.length }, list))
+          list = null
+        }
+      }
+      for (const line of lines) {
+        if (line.startsWith('```')) {
+          if (code) {
+            blocks.push(h('pre', { key: blocks.length, className: 'nw-md-code' }, h('code', null, code.join('\n'))))
+            code = null
+          } else {
+            flushList()
+            code = []
+          }
+          continue
+        }
+        if (code) {
+          code.push(line)
+          continue
+        }
+        if (/^\s*[-*]\s+/.test(line)) {
+          if (!list) list = []
+          list.push(h('li', { key: list.length }, renderInlineMarkdown(line.replace(/^\s*[-*]\s+/, ''))))
+          continue
+        }
+        flushList()
+        const heading = line.match(/^(#{1,4})\s+(.*)$/)
+        if (heading) {
+          blocks.push(h(`h${Math.min(6, heading[1].length + 2)}`, { key: blocks.length }, renderInlineMarkdown(heading[2])))
+          continue
+        }
+        if (/^>\s?/.test(line)) {
+          blocks.push(h('blockquote', { key: blocks.length }, renderInlineMarkdown(line.replace(/^>\s?/, ''))))
+          continue
+        }
+        if (/^\s*---+\s*$/.test(line)) {
+          blocks.push(h('hr', { key: blocks.length }))
+          continue
+        }
+        if (line.trim() === '') continue
+        blocks.push(h('p', { key: blocks.length }, renderInlineMarkdown(line)))
+      }
+      flushList()
+      if (code) blocks.push(h('pre', { key: blocks.length, className: 'nw-md-code' }, h('code', null, code.join('\n'))))
+      return blocks
+    }
+
+    /*
+     * 写作台 AI 页：内嵌官方 conversation.content（embedded）。
+     * host /novel-writer/conversation 确保项目父会话在线，并返回 continuable 子代理地址；
+     * 官方 composer 的发送/停止走 subagents.prompt / interruptByParent。
+     */
+    const CONVERSATION_CSS = `
+      [data-deepnovel-ai] {
+        height: 100%; min-height: 0; display: flex; flex-direction: column; --dsh-chat-content-width: 100%;
+      }
+      /* 权限下拉：子代理权限由父会话/预设决定，无需用户改。 */
+      [data-deepnovel-ai] [data-slot="conversation.input.permission"] { display: none !important; }
+      /* 附件“+”按钮：子代理不支持上传，官方 input 本身 disabled；整颗按钮隐藏。 */
+      [data-deepnovel-ai] [data-slot="conversation.composer.bar"] button[aria-haspopup="listbox"] { display: none !important; }
+      /* 输入框 placeholder：去掉 @ / 命令提示，换成写作助手文案。 */
+      [data-deepnovel-ai] [data-composer-placeholder] { display: none !important; }
+      [data-deepnovel-ai] [data-composer-input]:empty::before {
+        content: '给写作助手发消息';
+        color: var(--dsw-alias-label-tertiary, #8a8a8a);
+        pointer-events: none;
+      }
+      /* 只屏蔽“在新对话中分支”：它会创建普通会话，破坏写作台的隐藏父/子结构。 */
+      [data-deepnovel-ai] button[aria-label="在新对话中分支"],
+      [data-deepnovel-ai] button[aria-label="Branch in new chat"] { display: none !important; }
+      /* 输入框卡片贴合写作台主题层级色（跟随深浅主题；深色下比页面背景更亮一档）。 */
+      [data-deepnovel-ai] [data-composer-card="true"] {
+        background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 68%, var(--dsw-alias-bg-overlay) 32%);
+        border: 1px solid var(--dsw-alias-border-l2);
+      }
+      /* 输入框下方统计带（轮次/缓存命中等）跟随主题，避免白色条带。 */
+      [data-deepnovel-ai] [data-conversation-region="composer"],
+      [data-deepnovel-ai] [data-composer-seat],
+      [data-deepnovel-ai] [data-slot="conversation.composer.bar"],
+      [data-deepnovel-ai] [data-slot="conversation.composer.dock"] {
+        background: transparent !important;
+      }
+      .nw-conv-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .nw-conv-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); flex: none; }
+      .nw-conv-toolbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+      .nw-conv-title { font-size: 12px; color: var(--dsw-alias-label-secondary); white-space: nowrap; }
+      .nw-conv-model { font-size: 11px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .nw-conv-toolbar .nw-btn { height: 26px; padding: 0 10px; font-size: 12px; }
+      .nw-conv-dialog { width: min(520px, calc(100vw - 40px)); }
+      .nw-conv-hint { font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); margin-top: 6px; }
+      .nw-conv-summary { width: 100%; min-height: 150px; margin-top: 8px; }
+      .nw-conv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    `
+
+    function DeskConversation(props) {
+      const { SessionProvider, renderFactorySlot, projectRoot } = props ?? {}
+      const [reference, setReference] = useState(null)
+      const [error, setError] = useState('')
+      const [preparing, setPreparing] = useState(false)
+      const [modelInfo, setModelInfo] = useState(null)
+      const [reloadKey, setReloadKey] = useState(0)
+      const [dialog, setDialog] = useState(null)
+      const [summary, setSummary] = useState('')
+      const [summaryLoading, setSummaryLoading] = useState(false)
+      const [actionBusy, setActionBusy] = useState(false)
+      const [dialogError, setDialogError] = useState('')
+      useEffect(() => {
+        if (!projectRoot) {
+          setReference(null)
+          setError('')
+          setPreparing(false)
+          return undefined
+        }
+        let alive = true
+        const controller = new AbortController()
+        let ref = null
+        setPreparing(true)
+        setError('')
+        setReference(null)
+        ;(async () => {
+          try {
+            const response = await fetch('/novel-writer/conversation', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ projectRoot }),
+              signal: controller.signal,
+            })
+            const payload = await response.json().catch(() => null)
+            if (!response.ok || !payload?.ok) {
+              throw new Error(payload?.error?.message ?? `HTTP ${response.status}`)
+            }
+            const { parentId, childId, mode } = payload.data
+            setModelInfo(payload.data?.model ?? null)
+            const sessions = clientScope?.get?.('sessions')
+            if (!sessions) throw new Error('sessions service unavailable')
+            ref = sessions.retain(
+              { parentSessionId: parentId, childSessionId: childId, mode: mode ?? 'continuable' },
+              { source: 'deepnovelDesk', signal: controller.signal },
+            )
+            if (!alive) {
+              try { ref.release?.() } catch { /* ignore */ }
+              return
+            }
+            setReference(ref)
+            setPreparing(false)
+            Promise.resolve(ref?.ready).catch((failure) => {
+              if (alive) setError(String(failure?.message ?? failure))
+            })
+          } catch (failure) {
+            if (!alive) return
+            setPreparing(false)
+            setError(String(failure?.message ?? failure))
+          }
+        })()
+        return () => {
+          alive = false
+          controller.abort()
+          try { ref?.release?.() } catch { /* ignore */ }
+        }
+      }, [projectRoot, reloadKey])
+      const openNewDialog = () => {
+        setDialogError('')
+        setSummary('')
+        setDialog('menu')
+      }
+      const closeDialog = () => {
+        if (actionBusy) return
+        setDialog(null)
+        setDialogError('')
+        setSummary('')
+      }
+      const requestReset = async (carryover) => {
+        if (!projectRoot) return
+        setActionBusy(true)
+        setDialogError('')
+        try {
+          const response = await fetch('/novel-writer/conversation/reset', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ projectRoot, carryover }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload?.ok) {
+            throw new Error(payload?.error?.message ?? `HTTP ${response.status}`)
+          }
+          setDialog(null)
+          setSummary('')
+          setReloadKey((value) => value + 1)
+        } catch (failure) {
+          setDialogError(String(failure?.message ?? failure))
+        } finally {
+          setActionBusy(false)
+        }
+      }
+      const prepareSummary = async () => {
+        if (!projectRoot) return
+        setSummaryLoading(true)
+        setDialogError('')
+        try {
+          const response = await fetch('/novel-writer/conversation/summary', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ projectRoot }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload?.ok) {
+            throw new Error(payload?.error?.message ?? `HTTP ${response.status}`)
+          }
+          setSummary(String(payload.data?.summary ?? ''))
+          setDialog('summary')
+        } catch (failure) {
+          setDialogError(String(failure?.message ?? failure))
+        } finally {
+          setSummaryLoading(false)
+        }
+      }
+      const toolbar = h('div', { className: 'nw-conv-toolbar' },
+        h('div', { className: 'nw-conv-toolbar-left' },
+          h('span', { className: 'nw-conv-title' }, '写作助手'),
+          modelInfo
+            ? h('span', { className: 'nw-conv-model' }, `${modelInfo.model}${modelInfo.reasoningEffort ? ' · ' + modelInfo.reasoningEffort : ''}`)
+            : null,
+        ),
+        h('button', { type: 'button', className: 'nw-btn ghost', disabled: preparing || actionBusy, onClick: openNewDialog }, '新对话'),
+      )
+      const dialogView = dialog
+        ? h('div', { className: 'nw-modal-backdrop', onClick: closeDialog },
+            h('div', { className: 'nw-modal nw-conv-dialog', onClick: (event) => event.stopPropagation() },
+              h('div', { className: 'nw-eyebrow' }, '开始新对话'),
+              h('div', { className: 'nw-conv-hint' }, '重建会按当前默认模型创建新的对话子代理；旧对话历史不会带进新对话（旧记录仍保留在本地）。'),
+              dialog === 'summary'
+                ? h('textarea', {
+                    className: 'nw-textarea nw-conv-summary',
+                    value: summary,
+                    onChange: (event) => setSummary(event.target.value),
+                    placeholder: '这段摘要会作为新对话的延续上下文',
+                  })
+                : null,
+              dialogError ? h('div', { className: 'nw-error' }, dialogError) : null,
+              h('div', { className: 'nw-conv-actions' },
+                h('button', { type: 'button', className: 'nw-btn ghost', disabled: actionBusy, onClick: closeDialog }, '取消'),
+                dialog === 'menu'
+                  ? [
+                      h('button', { key: 'summary', type: 'button', className: 'nw-btn', disabled: actionBusy || summaryLoading, onClick: prepareSummary }, summaryLoading ? '生成摘要…' : '带上摘要…'),
+                      h('button', { key: 'fresh', type: 'button', className: 'nw-btn primary', disabled: actionBusy, onClick: () => requestReset('') }, '从零开始'),
+                    ]
+                  : h('button', { type: 'button', className: 'nw-btn primary', disabled: actionBusy || !summary.trim(), onClick: () => requestReset(summary) }, '使用摘要并开始'),
+              ),
+            ),
+          )
+        : null
+      if (!projectRoot) return h('div', { className: 'nw-empty' }, '先在项目页选择一个项目。')
+      if (error) return h('div', { className: 'nw-empty' }, `写作助手不可用：${error}`)
+      if (!SessionProvider || !renderFactorySlot) return h('div', { className: 'nw-empty' }, '写作助手组件不可用。')
+      return h('div', { className: 'nw-conv-shell' },
+        toolbar,
+        dialogView,
+        preparing && !reference
+          ? h('div', { className: 'nw-empty' }, '正在准备写作助手…')
+          : reference
+            ? h(SessionProvider, { session: reference },
+                h('div', { 'data-deepnovel-ai': '1', style: { flex: 1, minHeight: '420px', display: 'flex', flexDirection: 'column' } },
+                  renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }),
+                ),
+              )
+            : h('div', { className: 'nw-empty' }, '正在加载对话…'),
+      )
+    }
+
+    function AssistantPanel({ root, onApplied, onClose }) {
       const [messages, setMessages] = useState([])
       const [input, setInput] = useState('')
       const [plan, setPlan] = useState(null)
       const [applied, setApplied] = useState(null)
-      const [expanded, setExpanded] = useState(false)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
+      const [live, setLive] = useState(null)
+      const msgsRef = useRef(null)
+      const loadedRef = useRef(false)
+      useEffect(() => {
+        if (!open || loadedRef.current) return
+        loadedRef.current = true
+        post('assistant-thread', {}).then((thread) => {
+          const history = (thread?.messages ?? []).map((item) => ({ role: item.role, content: item.content }))
+          if (history.length > 0) setMessages(history)
+        }).catch(() => {})
+      }, [open])
+      useEffect(() => {
+        const node = msgsRef.current
+        if (node) node.scrollTop = node.scrollHeight
+      }, [messages, plan, busy, live])
       const post = async (action, params) => {
         const response = await fetch('/novel-writer/project-action', {
           method: 'POST',
@@ -1465,15 +1791,55 @@ window.__ModuleLoader__.load({
         if (!text || busy || !root) return
         setBusy(true)
         setError(null)
+        setLive(null)
         setMessages((list) => [...list, { role: 'user', content: text }])
         setInput('')
+        const taskId = `assist-${Date.now()}`
         try {
-          const data = await post('assistant-chat', { message: text })
-          setMessages((list) => [...list, { role: 'assistant', content: data.reply, thinking: data.thinking }])
-          setPlan(data.plan ?? null)
+          const first = await post('assistant-chat', { message: text, taskId, background: true })
+          if (first?.reply) {
+            setMessages((list) => [...list, { role: 'assistant', content: first.reply, thinking: first.thinking }])
+            setPlan(first.plan ?? null)
+            return
+          }
+          const pollTaskId = first?.taskId ?? taskId
+          const sentAt = Date.now()
+          let finished = false
+          for (let attempt = 0; attempt < 300; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+            let data = null
+            try {
+              data = await post('assistant-live', {})
+            } catch {
+              data = null
+            }
+            if (!data) continue
+            const updatedAt = data.updatedAt ? Date.parse(data.updatedAt) : 0
+            if (data.taskId !== pollTaskId && !(updatedAt >= sentAt)) continue
+            setLive({ thinking: data.thinking ?? '', text: data.text ?? '' })
+            if (data.done) {
+              finished = true
+              setLive(null)
+              if (data.error) throw new Error(data.error)
+              setMessages((list) => [...list, { role: 'assistant', content: data.reply ?? '', thinking: data.thinking || undefined }])
+              setPlan(data.plan ?? null)
+              break
+            }
+          }
+          if (!finished) {
+            try {
+              const thread = await post('assistant-thread', {})
+              const last = (thread?.messages ?? []).filter((item) => item.role === 'assistant').slice(-1)[0]
+              if (last?.content) setMessages((list) => [...list, { role: 'assistant', content: last.content }])
+              setError('这次回复很慢，已先取回最后一条记录；如果内容不对，稍后再试一次')
+            } catch {
+              setError('这次回复很慢，请稍后再试一次')
+            }
+          }
         } catch (err) {
           setError(err.message)
         } finally {
+          setLive(null)
           setBusy(false)
         }
       }
@@ -1483,8 +1849,16 @@ window.__ModuleLoader__.load({
         setError(null)
         try {
           const data = await post('assistant-apply', { actions: plan.actions })
-          const done = (data.done ?? []).map((item) => (item.number ? `第${item.number}章` : item.type)).join('、')
-          setMessages((list) => [...list, { role: 'assistant', content: `已执行：${done}` }])
+          const detail = (data.done ?? []).map((item) => {
+            if (item.type === 'outline-update') {
+              return `第${item.number}章：${String(item.before?.title ?? '')} → ${String(item.after?.title ?? '')}${String(item.after?.synopsis ?? '') !== String(item.before?.synopsis ?? '') ? '（梗概已改）' : ''}`
+            }
+            if (item.type === 'chapter-edit') return `第${item.number}章正文已改写`
+            if (item.type === 'setting-update') return `写作设定：${(item.fields ?? []).join('、')}`
+            if (item.type === 'generate') return `已生成第${item.from}–${item.to}章大纲`
+            return item.type
+          }).join('\n')
+          setMessages((list) => [...list, { role: 'assistant', content: `执行完成：\n${detail}` }])
           setApplied(data.done ?? [])
           setPlan(null)
           onApplied?.()
@@ -1494,17 +1868,12 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      return h('div', { className: 'nw-assist-wrap' },
-        open
-          ? h('div', { className: `nw-assist${expanded ? ' expanded' : ''}` },
+      return h('div', { className: 'nw-assist nw-assist-embedded' },
               h('div', { className: 'nw-assist-head' },
                 h('span', null, '小说助手'),
-                h('div', { className: 'nw-row' },
-                  h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setExpanded((value) => !value) }, expanded ? '还原' : '展开'),
-                  h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setOpen(false) }, '收起'),
-                ),
+                h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => onClose?.() }, '收起'),
               ),
-              h('div', { className: 'nw-assist-msgs' },
+              h('div', { className: 'nw-assist-msgs', ref: msgsRef },
                 messages.length === 0
                   ? h('div', { className: 'nw-muted' }, '可以讨论、提意见、让它改章；讨论不会动文件，改章会先给计划再执行。')
                   : null,
@@ -1515,8 +1884,21 @@ window.__ModuleLoader__.load({
                         h('div', null, item.thinking),
                       )
                     : null,
-                  item.content,
+                  item.role === 'assistant'
+                    ? h('div', { className: 'nw-md' }, renderMarkdown(item.content))
+                    : item.content,
                 )),
+                live
+                  ? h('div', { className: 'nw-assist-msg assistant' },
+                      live.thinking
+                        ? h('details', { className: 'nw-assist-think', open: true },
+                            h('summary', null, '思考中…'),
+                            h('div', null, live.thinking),
+                          )
+                        : null,
+                      live.text ? h('div', { className: 'nw-assist-stream' }, live.text) : null,
+                    )
+                  : (busy ? h('div', { className: 'nw-assist-msg assistant' }, '思考中…') : null),
               ),
               plan
                 ? h('div', { className: 'nw-assist-plan' },
@@ -1527,11 +1909,27 @@ window.__ModuleLoader__.load({
                         ? `第${action.number}章：${String(action.before?.title ?? '（空）')} → ${String(action.after?.title ?? action.fields?.title ?? '（改）')}${action.fields?.synopsis ? '；梗概重写' : ''}`
                         : action.type === 'chapter-edit'
                           ? `第${action.number}章正文：按指令改写`
-                          : action.type === 'setting-update'
-                            ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
-                            : action.type === 'generate'
-                              ? `生成：${action.kind ?? '大纲'} ${action.count ?? ''} 章`
-                              : action.type,
+                          : action.type === 'bible-update'
+                            ? `设定：${action.category ?? 'characters'} · ${action.name ?? action.id}（${Object.keys(action.fields ?? {}).join('、')}）`
+                            : action.type === 'bible-delete'
+                              ? `删除设定：${action.category ?? 'characters'} · ${action.name ?? action.id}`
+                              : action.type === 'chapter-delete'
+                                ? `删除第${action.number}章正文`
+                                : action.type === 'outline-delete'
+                                  ? `删除尾部 ${action.count} 章章纲`
+                                  : action.type === 'volume-delete'
+                                    ? `删除卷：${action.volumeId}`
+                                    : action.type === 'style-update'
+                              ? `文风契约：${Object.keys(action.fields ?? {}).join('、')}`
+                              : action.type === 'prompt-update'
+                                ? '提示词注入'
+                                : action.type === 'volume-update'
+                                  ? `卷：${action.volumeId}（${Object.keys(action.fields ?? {}).join('、')}）`
+                                  : action.type === 'setting-update'
+                              ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
+                              : action.type === 'generate'
+                                ? `生成：${action.kind ?? '大纲'} ${action.count ?? ''} 章`
+                                : action.type,
                     )),
                     h('div', { className: 'nw-row' },
                       h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: apply }, busy ? '执行中…' : '执行'),
@@ -1581,13 +1979,10 @@ window.__ModuleLoader__.load({
                   h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !input.trim(), onClick: send }, busy ? '…' : '发送'),
                 ),
               ),
-            )
-          : null,
-        h('button', { type: 'button', className: 'nw-assist-fab', title: '小说助手', onClick: () => setOpen((value) => !value) }, 'AI'),
       )
     }
 
-    function DeskApp() {
+    function DeskApp(props) {
       const [root, setRoot] = useState(readStoredRoot)
       const [state, setState] = useState(null)
       const [loading, setLoading] = useState(false)
@@ -1631,6 +2026,38 @@ window.__ModuleLoader__.load({
       const discussionAbortRef = useRef(null)
       const [lastAction, setLastAction] = useState(null)
       const [focus, setFocus] = useState(false)
+      const [inspWidth, setInspWidth] = useState(() => {
+        try {
+          const stored = Number(localStorage.getItem('dsh.novelWriter.inspWidth'))
+          return Number.isFinite(stored) && stored >= 260 && stored <= 720 ? stored : 340
+        } catch {
+          return 340
+        }
+      })
+      const inspWidthRef = useRef(inspWidth)
+      useEffect(() => {
+        inspWidthRef.current = inspWidth
+      }, [inspWidth])
+      const startInspResize = (event) => {
+        event.preventDefault()
+        const startX = event.clientX
+        const startWidth = inspWidthRef.current
+        const onMove = (moveEvent) => {
+          const next = Math.min(720, Math.max(260, startWidth - (moveEvent.clientX - startX)))
+          setInspWidth(next)
+        }
+        const onUp = () => {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+          try {
+            localStorage.setItem('dsh.novelWriter.inspWidth', String(inspWidthRef.current))
+          } catch {
+            // storage unavailable
+          }
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+      }
       const [direction, setDirection] = usePersistedInput(root, 'premiseDirection')
       const [inspectorOpen, setInspectorOpen] = useState(() =>
         typeof window === 'undefined' ? true : window.innerWidth > 1180,
@@ -2374,13 +2801,26 @@ window.__ModuleLoader__.load({
         runDetail ? h(RunDetailModal, { detail: runDetail, onClose: () => setRunDetail(null), setToast }) : null,
       )
 
-      const inspector = h('div', { className: 'nw-inspector' },
+      const deskConversation = (() => {
+        try {
+          return props?.renderSlot
+            ? props.renderSlot('deepnovel.desk.conversation', { projectRoot: root })
+            : null
+        } catch (failure) {
+          return h('div', { className: 'nw-empty' }, `对话加载失败：${failure?.message ?? failure}`)
+        }
+      })()
+
+      const inspector = h('div', { className: 'nw-inspector', style: { width: `${inspWidth}px` } },
+        h('div', { className: 'nw-insp-resizer', onMouseDown: startInspResize, title: '拖动调整面板宽度' }),
         h('div', { className: 'nw-insp-tabs' },
           h('button', { type: 'button', className: `nw-insp-tab${inspTab === 'flow' ? ' active' : ''}`, onClick: () => setInspTab('flow') }, '流程'),
-          h('button', { type: 'button', className: `nw-insp-tab${inspTab === 'discuss' ? ' active' : ''}`, onClick: () => setInspTab('discuss') }, '讨论'),
+          h('button', { type: 'button', className: `nw-insp-tab${inspTab === 'assistant' ? ' active' : ''}`, onClick: () => setInspTab('assistant') }, 'AI'),
         ),
         h('div', { className: 'nw-insp-body' },
-          inspTab === 'discuss'
+          inspTab === 'assistant'
+            ? deskConversation
+            : inspTab === 'discuss'
             ? h(DiscussionPanel, {
                 discussion,
                 onSend: sendDiscussion,
@@ -2453,7 +2893,18 @@ window.__ModuleLoader__.load({
           inspector,
         ),
         taskDock,
-        h(AssistantPanel, { root, onApplied: () => load() }),
+        inspectorOpen && inspTab === 'assistant'
+          ? null
+          : h('button', {
+              type: 'button',
+              className: 'nw-assist-fab',
+              title: '小说助手',
+              style: { position: 'fixed', right: '18px', bottom: '18px', zIndex: 30 },
+              onClick: () => {
+                setInspectorOpen(true)
+                setInspTab('assistant')
+              },
+            }, 'AI'),
         toast ? h('div', { className: 'nw-toast' }, toast) : null,
       )
     }
@@ -7665,7 +8116,7 @@ window.__ModuleLoader__.load({
       logClient('registerDesk', { slots: Boolean(scope.get('slots')), layout: Boolean(layoutService), uiWorkspace: Boolean(uiWorkspaceService) })
       scope.effect(() => {
         const style = document.createElement('style')
-        style.textContent = CSS + CSS_DESIGN + CSS_APP
+        style.textContent = CSS + CSS_DESIGN + CSS_APP + CONVERSATION_CSS
         document.head.appendChild(style)
         // 点击空白处或按 Esc 关闭「更多」等 details 菜单。
         const closeMenus = () => {
@@ -7706,8 +8157,32 @@ window.__ModuleLoader__.load({
             )
             disposers = [
               disposeEntry,
-              slots.register({ name: 'main', key: MAIN_ID }, DeskApp),
+              slots.register(
+                {
+                  name: 'main',
+                  key: MAIN_ID,
+                  children: { 'deepnovel.desk.conversation': { kind: 'single', scope: 'session-maybe' } },
+                },
+                DeskApp,
+              ),
             ]
+            try {
+              disposers.push(
+                slots.register(
+                  {
+                    name: 'deepnovel.desk.conversation',
+                    children: {
+                      'deepnovel.desk.conversation.body': { kind: 'single', scope: 'session-maybe' },
+                    },
+                  },
+                  DeskConversation,
+                ),
+              )
+            } catch (slotError) {
+              logClient('conversation-slot-error', {
+                message: slotError instanceof Error ? slotError.message : String(slotError),
+              })
+            }
             logClient('registered', { panel: MAIN_ID, attempt: tryIndex })
           } catch (error) {
             if (disposeEntry) {
