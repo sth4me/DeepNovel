@@ -3465,18 +3465,54 @@ export class NovelWriterService {
         synopsis: String(chapter.synopsis ?? '').slice(0, 140),
       })),
     )
-    const characters = (bible?.characters ?? []).map((item) => ({ name: item.name, role: item.role })).slice(0, 40)
+    const volumes = (outline?.volumes ?? []).map((volume) => ({
+      id: volume.id,
+      title: volume.title,
+      goal: String(volume.goal ?? '').slice(0, 200),
+      map: String(volume.map ?? '').slice(0, 200),
+      exitCriteria: String(volume.exitCriteria ?? '').slice(0, 200),
+      chapters: (volume.chapters ?? []).length,
+    }))
+    const characters = (bible?.characters ?? []).map((item) => ({
+      name: item.name,
+      role: item.role,
+      description: String(item.description ?? '').slice(0, 300),
+    })).slice(0, 30)
+    const style = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
+    const readChapterText = async (number) => {
+      const paths = this.chapterPaths(number)
+      return (await this.readText(agent, paths.final).catch(() => null)) ??
+        (await this.readText(agent, paths.draft).catch(() => null)) ?? ''
+    }
+    const mentioned = (() => {
+      const match = message.match(/第\s*(\d+)\s*章/)
+      return match ? Number(match[1]) : null
+    })()
+    const bodyParts = []
+    if (mentioned) {
+      const text = await readChapterText(mentioned)
+      if (text) bodyParts.push(`第${mentioned}章正文（前4000字）：\n${text.slice(0, 4000)}`)
+    }
+    const lastNumbers = chapters.map((item) => Number(item.number)).sort((a, b) => a - b).slice(-2)
+    for (const number of lastNumbers) {
+      const text = await readChapterText(number)
+      if (text) bodyParts.push(`第${number}章正文（开头400字）：\n${text.slice(0, 400)}`)
+    }
     const history = thread.messages.slice(-12).map((item) => `${item.role === 'user' ? '用户' : '助手'}：${String(item.content ?? '').slice(0, 300)}`).join('\n')
     const context = [
       `项目：${project?.title ?? '未命名'}`,
       premise?.chosen ? `已确认构思：${JSON.stringify(premise.chosen).slice(0, 1200)}` : '构思未确认',
       `写作要求摘要：${String(project?.writingNotes ?? '').slice(0, 1500)}`,
+      `文风契约：${JSON.stringify(style?.fields ?? {}).slice(0, 1200)}`,
+      `分卷：${JSON.stringify(volumes).slice(0, 1500)}`,
       `章纲：${JSON.stringify(chapters).slice(0, 4000)}`,
-      `角色：${JSON.stringify(characters).slice(0, 2000)}`,
+      `角色：${JSON.stringify(characters).slice(0, 4000)}`,
+      bodyParts.length ? `正文节选：\n${bodyParts.join('\n\n')}` : '正文：尚未写。',
     ].join('\n')
     const system = [
       '你是这部小说的写作助手，只操作这一部小说。',
       '思考过程与回复都用中文；不要用英文思考（除非用户要求英文）。',
+      '你可以阅读项目里的章纲、设定、文风与正文（已按需附上）；作答只依据提供的内容，不要编造未出现的设定。',
       '先判断用户意图，分成三类：',
       '1) discuss：讨论、评价、提意见——只回复分析与建议，不要改任何文件。',
       '2) propose：用户要改东西但还没确认（如“第9章太水，压一压”）——给出变更计划，不要落盘。',
