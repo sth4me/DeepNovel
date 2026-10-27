@@ -668,6 +668,8 @@ export function apply(ctx) {
         return service.assistantChat(agent, { message: params.message })
       case 'assistant-apply':
         return service.assistantApply(agent, { actions: params.actions })
+      case 'assistant-undo':
+        return service.assistantUndo(agent)
       case 'chapters-delete-tail':
         return service.deleteTailChapters(agent, { count: params.count, dryRun: params.dryRun })
       case 'volume-create':

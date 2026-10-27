@@ -1440,6 +1440,7 @@ window.__ModuleLoader__.load({
       const [messages, setMessages] = useState([])
       const [input, setInput] = useState('')
       const [plan, setPlan] = useState(null)
+      const [applied, setApplied] = useState(null)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
       const post = async (action, params) => {
@@ -1477,6 +1478,7 @@ window.__ModuleLoader__.load({
           const data = await post('assistant-apply', { actions: plan.actions })
           const done = (data.done ?? []).map((item) => (item.number ? `第${item.number}章` : item.type)).join('、')
           setMessages((list) => [...list, { role: 'assistant', content: `已执行：${done}` }])
+          setApplied(data.done ?? [])
           setPlan(null)
           onApplied?.()
         } catch (err) {
@@ -1504,15 +1506,43 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'nw-muted' }, plan.summary || '按以下动作调整'),
                     (plan.actions ?? []).map((action, index) => h('div', { key: index, className: 'nw-assist-action' },
                       action.type === 'outline-update'
-                        ? `第${action.number}章${action.fields?.title ? ` → ${action.fields.title}` : '（改内容）'}`
-                        : action.type === 'setting-update'
-                          ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
-                          : action.type,
+                        ? `第${action.number}章：${String(action.before?.title ?? '（空）')} → ${String(action.after?.title ?? action.fields?.title ?? '（改）')}${action.fields?.synopsis ? '；梗概重写' : ''}`
+                        : action.type === 'chapter-edit'
+                          ? `第${action.number}章正文：按指令改写`
+                          : action.type === 'setting-update'
+                            ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
+                            : action.type === 'generate'
+                              ? `生成：${action.kind ?? '大纲'} ${action.count ?? ''} 章`
+                              : action.type,
                     )),
                     h('div', { className: 'nw-row' },
                       h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: apply }, busy ? '执行中…' : '执行'),
                       h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setPlan(null) }, '取消'),
                     ),
+                  )
+                : null,
+              applied && applied.length > 0
+                ? h('div', { className: 'nw-row' },
+                    h('span', { className: 'nw-muted' }, `已改 ${applied.length} 处`),
+                    h('button', {
+                      type: 'button',
+                      className: 'nw-btn ghost',
+                      disabled: busy,
+                      onClick: async () => {
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          await post('assistant-undo', {})
+                          setMessages((list) => [...list, { role: 'assistant', content: '已撤销上一批修改' }])
+                          setApplied(null)
+                          onApplied?.()
+                        } catch (err) {
+                          setError(err.message)
+                        } finally {
+                          setBusy(false)
+                        }
+                      },
+                    }, '撤销'),
                   )
                 : null,
               error ? h('div', { className: 'nw-error' }, error) : null,

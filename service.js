@@ -3474,7 +3474,7 @@ export class NovelWriterService {
       '2) propose：用户要改东西但还没确认（如“第9章太水，压一压”）——给出变更计划，不要落盘。',
       '3) execute：用户明确确认执行（“就按这个改/执行”）——给出可执行动作。',
       '输出 JSON：{"intent":"discuss|propose|execute","reply":"给用户的话","plan":null 或 {"summary":"一句话","actions":[动作...]}}',
-      '动作格式：{"type":"outline-update","number":章号,"fields":{"title":"...","synopsis":"..."}} 或 {"type":"setting-update","fields":{"writingNotes":"..."}}。',
+      '动作格式：{"type":"outline-update","number":章号,"fields":{"title":"...","synopsis":"..."}}；{"type":"chapter-edit","number":章号,"instruction":"怎么改这一章正文"}；{"type":"setting-update","fields":{"writingNotes":"..."}}；{"type":"generate","kind":"outline","count":N,"instruction":"..."}。',
       '改章纲时保留原有情节骨架与人物关系，只按用户要求增删改；synopsis 用结构化平实写法。',
       '不要输出 Markdown 代码围栏。',
     ].join('\n')
@@ -3503,19 +3503,95 @@ export class NovelWriterService {
   async assistantApply(agent, options = {}) {
     await this.assertInitialized(agent)
     const actions = Array.isArray(options.actions) ? options.actions : []
+    if (actions.length === 0) throw new Error('没有可执行的变更')
+    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+    const project = await this.readJson(agent, this.marker).catch(() => null)
+    const contract = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
+    const backup = {
+      outline: outline ? JSON.parse(JSON.stringify(outline)) : null,
+      project: project ? JSON.parse(JSON.stringify(project)) : null,
+      contract: contract ? JSON.parse(JSON.stringify(contract)) : null,
+      drafts: {},
+      createdAt: now(),
+    }
     const done = []
     for (const action of actions) {
       if (action.type === 'outline-update') {
+        const before = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
+          .find((chapter) => Number(chapter.number) === Number(action.number))
+        const beforeTitle = String(before?.title ?? '')
+        const beforeSynopsis = String(before?.synopsis ?? '')
         const updated = await this.updateOutlineChapter(agent, { number: action.number, fields: action.fields ?? {} })
-        done.push({ type: action.type, number: action.number, title: updated.title })
+        done.push({
+          type: action.type,
+          number: action.number,
+          before: { title: beforeTitle, synopsis: beforeSynopsis },
+          after: { title: updated.title, synopsis: updated.synopsis },
+        })
       } else if (action.type === 'setting-update') {
         await this.updateProject(agent, action.fields ?? {})
         done.push({ type: action.type, fields: Object.keys(action.fields ?? {}) })
+      } else if (action.type === 'chapter-edit') {
+        const number = Number(action.number)
+        const paths = this.chapterPaths(number)
+        const before = (await this.readText(agent, paths.draft).catch(() => null)) ??
+          (await this.readText(agent, paths.final).catch(() => null)) ?? ''
+        backup.drafts[number] = before
+        const { chapter } = await this.findOutlineChapter(agent, number)
+        const system = [
+          '你是这部小说的写作助手，只改写指定的这一章正文。',
+          '按用户指令修改，保持文风、人物与既有情节连续；不改动其他章节。',
+          '只输出正文，不要标题、说明或 Markdown。',
+        ].join('\n')
+        const result = await this.callModel(agent, {
+          task: 'draft',
+          system,
+          messages: [{
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `第${number}章《${chapter?.title ?? ''}》\n章纲：${chapter?.synopsis ?? ''}\n\n修改要求：${action.instruction ?? '按章纲润色并修正问题'}\n\n当前正文：\n${before}`,
+            }],
+          }],
+          maxTokens: 256000,
+          temperature: 0.7,
+        })
+        const text = String(result.text ?? '').trim()
+        if (!text) throw new Error(`第${number}章改写失败：模型没有返回正文`)
+        await this.saveChapterText(agent, { number, text })
+        done.push({ type: action.type, number, before: before.slice(0, 120), after: text.slice(0, 120) })
+      } else if (action.type === 'generate') {
+        if (action.kind === 'outline') {
+          const result = await this.outlineGenerate(agent, {
+            count: Number(action.count) || 3,
+            volumeId: action.volumeId,
+            instruction: action.instruction,
+            deferAudit: true,
+          })
+          done.push({ type: action.type, kind: 'outline', from: result.fromChapter, to: result.toChapter })
+        } else {
+          done.push({ type: action.type, kind: action.kind ?? 'unknown', skipped: true })
+        }
       } else {
         done.push({ type: action.type, skipped: true })
       }
     }
-    return { done }
+    await this.writeJson(agent, 'story/assistant/backup.json', backup)
+    return { done, backupSaved: true }
+  }
+
+  async assistantUndo(agent) {
+    await this.assertInitialized(agent)
+    const backup = await this.readJson(agent, 'story/assistant/backup.json').catch(() => null)
+    if (!backup) throw new Error('没有可撤销的变更')
+    if (backup.outline) await this.writeJson(agent, 'story/plot/outline.json', backup.outline)
+    if (backup.project) await this.writeJson(agent, this.marker, backup.project)
+    if (backup.contract) await this.writeJson(agent, 'story/style/contract.json', backup.contract)
+    for (const [number, text] of Object.entries(backup.drafts ?? {})) {
+      await this.writeTextFile(agent, this.chapterPaths(Number(number)).draft, text)
+    }
+    await this.writeJson(agent, 'story/assistant/backup.json', {})
+    return { restored: true }
   }
 
   async createOutlineVolume(agent, options = {}) {
