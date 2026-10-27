@@ -24,10 +24,12 @@ import {
   REVERSE_OUTLINE_SYSTEM_PROMPT,
   STYLE_AUDIT_SYSTEM_PROMPT,
   SUMMARY_SYSTEM_PROMPT,
+  VOLUME_PLAN_SYSTEM_PROMPT,
   buildBibleUserPrompt,
   buildBibleCharactersUserPrompt,
   buildBibleWorldUserPrompt,
   buildReverseOutlineUserPrompt,
+  buildVolumePlanUserPrompt,
   buildChapterUserPrompt,
   buildOutlineUserPrompt,
   buildPremiseUserPrompt,
@@ -2788,9 +2790,37 @@ export class NovelWriterService {
     }
     const volumes = Array.isArray(outline.volumes) ? outline.volumes : []
     const requestedVolumeId = String(options.volumeId ?? '')
-    const volume = volumes.find((item) => item.id === requestedVolumeId) ??
+    let volume = volumes.find((item) => item.id === requestedVolumeId) ??
       volumes[0] ?? { id: 'vol-1', title: '第一卷', goal: '', chapters: [] }
+    // 新开一卷：当前卷最后一章已标阶段收束时，下一次“续写/生成后”自动落到下一卷，
+    // 不要求用户先手动切卷；重生成仍留在原卷。
+    if (!options.regenerate && Array.isArray(volume.chapters) && volume.chapters.length > 0) {
+      const sorted = volume.chapters.slice().sort((a, b) => Number(a.number) - Number(b.number))
+      const last = sorted[sorted.length - 1]
+      if (last?.volumeEnd === true) {
+        const ordinal = Number(String(volume.id ?? '').replace(/\D+/g, '')) || 0
+        let next = volumes.find((item) => item.id === `vol-${ordinal + 1}`)
+        if (!next) {
+          next = {
+            id: `vol-${ordinal + 1}`,
+            title: `第 ${ordinal + 1} 卷`,
+            goal: '',
+            map: '',
+            chapters: [],
+          }
+          volumes.push(next)
+        }
+        volume = next
+      }
+    }
     if (!volumes.some((item) => item.id === volume.id)) volumes.push(volume)
+    if (!String(volume.map ?? '').trim() || !String(volume.goal ?? '').trim()) {
+      const planned = await this.planVolume(agent, {
+        volumeId: volume.id,
+        instruction: options.instruction,
+      }, signal).catch(() => null)
+      if (planned?.volume) Object.assign(volume, planned.volume)
+    }
     const existing = Array.isArray(volume.chapters) ? volume.chapters : []
     const allExisting = volumes.flatMap((item) => item.chapters ?? [])
     const maxNumber = allExisting.reduce((max, chapter) => {
@@ -3112,6 +3142,7 @@ export class NovelWriterService {
         deferred: true,
         partial,
         missing: missingList,
+        volumeId: volume.id,
         nextVolumeId,
         volumeEnded,
       }
@@ -3159,9 +3190,67 @@ export class NovelWriterService {
       rolledBack,
       partial,
       missing: missingList,
+      volumeId: volume.id,
       nextVolumeId,
       volumeEnded,
     }
+  }
+
+  async planVolume(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const outline = await this.readJson(agent, 'story/plot/outline.json')
+    const volumes = Array.isArray(outline?.volumes) ? outline.volumes : []
+    const volumeId = String(options.volumeId ?? '')
+    const index = volumes.findIndex((item) => item.id === volumeId)
+    if (index < 0) throw new Error('找不到要规划的分卷')
+    const volume = volumes[index]
+    const previousVolume = index > 0 ? volumes[index - 1] : null
+    const previousChapters = (previousVolume?.chapters ?? []).slice().sort((a, b) => Number(a.number) - Number(b.number))
+    const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
+    const style = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
+    const project = await this.readJson(agent, this.marker)
+    const system = await this.systemFor(agent, 'volumePlan', VOLUME_PLAN_SYSTEM_PROMPT)
+    const userText = buildVolumePlanUserPrompt({
+      title: project.title,
+      language: project.language ?? 'zh',
+      premise: premise?.chosen ?? {},
+      styleFields: style?.fields ?? {},
+      volume,
+      previousVolume: previousVolume ? {
+        ...previousVolume,
+        lastChapter: previousChapters[previousChapters.length - 1] ?? null,
+      } : null,
+      chapters: volume.chapters ?? [],
+      instruction: options.instruction,
+    })
+    const generated = await this.callJsonModel(agent, {
+      kind: 'outline.volume-plan',
+      task: 'outline',
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+      signal,
+      maxTokens: 4000,
+      temperature: 0.35,
+      inputHash: this.hashInputs({ volumeId, chapters: (volume.chapters ?? []).map((chapter) => chapter.number) }),
+    })
+    const parsed = generated.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
+    const nextVolume = {
+      ...volume,
+      title: String(parsed.title ?? '').trim() || volume.title || `第 ${index + 1} 卷`,
+      map: String(parsed.map ?? '').trim() || volume.map || '',
+      goal: String(parsed.goal ?? '').trim() || volume.goal || '',
+      powerCeiling: String(parsed.powerCeiling ?? '').trim() || volume.powerCeiling || '',
+      exitCriteria: String(parsed.exitCriteria ?? '').trim() || volume.exitCriteria || '',
+      targetChapters: clamp(Number(parsed.targetChapters ?? volume.targetChapters ?? 12) || 12, 1, 100),
+    }
+    if (!nextVolume.map) throw new Error('模型没有返回可用的本卷地图')
+    volumes[index] = nextVolume
+    await this.writeJson(agent, 'story/plot/outline.json', {
+      ...outline,
+      volumes,
+      updatedAt: now(),
+    })
+    return { volume: nextVolume, runId: generated.runId }
   }
 
   async reverseOutline(agent, options = {}, signal) {
@@ -4369,7 +4458,7 @@ export class NovelWriterService {
       ].filter((line) => line !== '').join('\n')
       const messages = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
       this.reportStage('fixing', `第 ${round}/${rounds} 轮修复`)
-      const call = await this.callModel(agent, { task: 'fix', number, system, messages, signal, maxTokens: 9000, temperature: 0.7 })
+      const call = await this.callModel(agent, { task: 'fix', number, system, messages, signal, maxTokens: 256000, temperature: 0.7 })
       const clean = call.text.replace(/^```[a-zA-Z]*\s*/, '').replace(/```$/, '').trim()
       if (!clean) throw new Error('模型没有返回修复后的正文')
       const sourceChars = countChars(text)
@@ -4808,7 +4897,7 @@ ${sections.join('\n')}
       system,
       messages,
       signal,
-      maxTokens: 9000,
+      maxTokens: 256000,
       temperature: 0.85,
     })
     const clean = call.text
@@ -5070,7 +5159,7 @@ ${sections.join('\n')}
       system: plan.system,
       messages: plan.messages,
       signal,
-      maxTokens: plan.hasRange ? 5000 : 9000,
+      maxTokens: 256000,
       temperature: 0.8,
     })
     const clean = call.text
@@ -5124,7 +5213,7 @@ ${sections.join('\n')}
         system,
         messages,
         signal,
-        maxTokens: hasRange ? 5000 : 9000,
+        maxTokens: 256000,
         temperature: 0.8,
       })
       const clean = call.text

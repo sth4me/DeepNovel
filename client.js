@@ -3575,6 +3575,11 @@ window.__ModuleLoader__.load({
       const chapters = volumeId ? allChapters.filter((item) => item.volumeId === volumeId) : allChapters
       const activeVolume = volumes.find((volume) => volume.id === volumeId) ?? null
       const ready = state.stage?.premise === 'confirmed' && state.stage?.style === 'confirmed' && state.stage?.bible === 'confirmed'
+      const readyBlockers = [
+        state.stage?.premise !== 'confirmed' ? '构思未确认' : '',
+        state.stage?.style !== 'confirmed' ? '文风未确认' : '',
+        state.stage?.bible !== 'confirmed' ? '设定未确认' : '',
+      ].filter(Boolean)
       const [selected, setSelected] = useState(
         Number.isFinite(focusChapter) && chapters.some((item) => Number(item.number) === Number(focusChapter))
           ? focusChapter
@@ -3597,6 +3602,7 @@ window.__ModuleLoader__.load({
       const [regenTo, setRegenTo] = useState(1)
       const afterGenerate = async (result) => {
         if (!result) return
+        if (result.volumeId) setVolumeId(result.volumeId)
         if (result.nextVolumeId) {
           setVolumeId(result.nextVolumeId)
           setToast('本卷阶段收束，已自动开启下一卷')
@@ -3811,6 +3817,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-actions', style: { marginTop: '8px' } },
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: createVolume }, '+ 新建卷'),
             activeVolume ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: editVolumePlan }, '卷设置') : null,
+            activeVolume ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('volume-plan', { volumeId: activeVolume.id }, { toast: '已生成卷舞台设定' }) }, '生成卷设定') : null,
             activeVolume ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: deleteVolume }, '删除卷') : null,
             activeVolume && chapters.length
               ? h('button', {
@@ -4018,10 +4025,10 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'nw-muted' }, `范围：第 ${Math.min(regenFrom, regenTo)}–${Math.max(regenFrom, regenTo)} 章；只重写章纲，不动已写正文。`),
               )
             : null,
-          ready ? null : h('div', { className: 'nw-banner warn', style: { marginTop: '10px' } }, '先完成构思与文风确认，章纲按钮才会启用。'),
+          ready ? null : h('div', { className: 'nw-banner warn', style: { marginTop: '10px' } }, `先完成${readyBlockers.join('、')}，章纲按钮才会启用。`),
         ),
         chapters.length === 0
-          ? h(EmptyState, { title: '还没有章纲', desc: '先完成构思与文风，然后生成后 3 章。' })
+          ? h(EmptyState, { title: '还没有章纲', desc: '先确认构思、文风和设定，然后生成后 3 章。' })
           : view === 'cards'
             ? cardsView
             : view === 'table'

@@ -683,6 +683,8 @@ export function apply(ctx) {
           powerCeiling: params.powerCeiling,
           exitCriteria: params.exitCriteria,
         })
+      case 'volume-plan':
+        return service.planVolume(agent, { volumeId: params.volumeId, instruction: params.instruction }, signal)
       case 'volume-delete':
         return service.deleteOutlineVolume(agent, { volumeId: params.volumeId })
       case 'chapter-move':

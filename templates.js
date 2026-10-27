@@ -554,6 +554,45 @@ export const DISCUSSION_SYSTEM_PROMPT = [
   'reply 控制在 600 字以内；suggestions 与 todos 各不超过 5 条，不要重复 reply 的内容。',
 ].join('\n')
 
+export const VOLUME_PLAN_SYSTEM_PROMPT = [
+  '你是中文长篇小说的分卷编辑，负责为本卷确定舞台与卷级目标。',
+  '只输出 JSON 对象，不要 Markdown 围栏，不要解释。',
+  '格式：{"title":"卷名","map":"本卷主要活动范围与地点","goal":"本卷主线要完成什么","powerCeiling":"本卷本地战力天花板","exitCriteria":"什么条件满足后离开本卷","targetChapters":12}。',
+  'map 要写 3–6 个具体地点/势力范围，必须与上一卷地图有明确区分，不能只写“上一卷继续”；如果本卷已有章纲，地点必须从章纲里已有的场景归纳，不要凭空改掉。',
+  'goal 要写人物在本卷的具体目标与阻力，不是主题口号；exitCriteria 要可判断。',
+  'targetChapters 只作参考，不按章数硬切。',
+].join('\n')
+
+export function buildVolumePlanUserPrompt(input) {
+  const lines = [
+    `项目：${input.title}（语言：${input.language}）`,
+    `目标卷：${input.volume.title || input.volume.id}`,
+    `已确认构思：${JSON.stringify(input.premise)}`,
+    `文风契约：${JSON.stringify(input.styleFields ?? {})}`,
+  ]
+  if (input.previousVolume) {
+    lines.push('上一卷：')
+    lines.push(JSON.stringify({
+      title: input.previousVolume.title,
+      map: input.previousVolume.map,
+      goal: input.previousVolume.goal,
+      exitCriteria: input.previousVolume.exitCriteria,
+      lastChapter: input.previousVolume.lastChapter,
+    }, null, 2))
+  }
+  if (input.instruction) lines.push(`额外要求：${input.instruction}`)
+  if (input.chapters?.length) {
+    lines.push('本卷已有章纲：')
+    for (const chapter of input.chapters.slice(-12)) {
+      lines.push(`- 第${chapter.number}章 ${chapter.title || ''}：${String(chapter.synopsis || '').slice(0, 800)}`)
+    }
+  } else {
+    lines.push('本卷还没有章纲，请根据上一卷离卷结果和升级目标先规划舞台。')
+  }
+  lines.push('只输出 JSON。')
+  return lines.join('\n')
+}
+
 export const PROMPT_CATALOG = [
   {
     key: 'premise',
@@ -603,6 +642,13 @@ export const PROMPT_CATALOG = [
     category: '大纲',
     description: '从已有正文反推每章 synopsis，不新增正文没有的事件。',
     default: REVERSE_OUTLINE_SYSTEM_PROMPT,
+  },
+  {
+    key: 'volumePlan',
+    label: '分卷舞台计划',
+    category: '大纲',
+    description: '从上一卷离卷结果和本卷已有章纲归纳地图、卷目标、战力天花板与离卷条件。',
+    default: VOLUME_PLAN_SYSTEM_PROMPT,
   },
   {
     key: 'draft',
