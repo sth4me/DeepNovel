@@ -86,16 +86,20 @@ window.__ModuleLoader__.load({
 .nw-assist-wrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
 .nw-assist-fab{width:44px;height:44px;border-radius:50%;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,.28)}
 .nw-assist-fab:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-assist{width:min(380px,92vw);max-height:64vh;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-overlay);box-shadow:0 16px 40px rgba(0,0,0,.32)}
-.nw-assist-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary)}
-.nw-assist-msgs{overflow:auto;display:flex;flex-direction:column;gap:6px;max-height:34vh;padding-right:2px}
-.nw-assist-msg{font-size:11px;line-height:1.55;padding:7px 9px;border-radius:9px;white-space:pre-wrap;color:var(--dsw-alias-label-primary)}
-.nw-assist-msg.user{background:var(--dsw-alias-bg-layer-2);align-self:flex-end;max-width:88%}
+.nw-assist{width:min(540px,94vw);height:min(76vh,720px);display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-overlay);box-shadow:0 20px 50px rgba(0,0,0,.36)}
+.nw-assist.expanded{width:min(960px,96vw);height:88vh}
+.nw-assist-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
+.nw-assist-msgs{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+.nw-assist-msg{font-size:12px;line-height:1.65;padding:9px 11px;border-radius:10px;white-space:pre-wrap;color:var(--dsw-alias-label-primary)}
+.nw-assist-msg.user{background:var(--dsw-alias-bg-layer-2);align-self:flex-end;max-width:86%}
 .nw-assist-msg.assistant{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);max-width:92%}
-.nw-assist-plan{display:flex;flex-direction:column;gap:5px;padding:8px;border:1px dashed var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-layer-1)}
-.nw-assist-action{font-size:11px;color:var(--dsw-alias-label-secondary)}
-.nw-assist-input{display:flex;gap:6px}
-.nw-assist-input .nw-input{flex:1;min-width:0}
+.nw-assist-plan{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+.nw-assist-action{font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary);padding:4px 0;border-bottom:1px dashed var(--dsw-alias-border-l1)}
+.nw-assist-action:last-child{border-bottom:none}
+.nw-assist-input{display:flex;flex-direction:column;gap:6px}
+.nw-assist-input textarea{width:100%;min-height:78px;max-height:200px;padding:9px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1.55;resize:vertical}
+.nw-assist-input textarea:focus{outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);outline-offset:1px}
+.nw-assist-input-row{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .nw-assist .nw-error{font-size:11px;color:var(--dsw-alias-state-error-primary)}
 .nw-chapter{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .nw-chapter.open{border-color:var(--dsw-alias-border-l2)}
@@ -1441,6 +1445,7 @@ window.__ModuleLoader__.load({
       const [input, setInput] = useState('')
       const [plan, setPlan] = useState(null)
       const [applied, setApplied] = useState(null)
+      const [expanded, setExpanded] = useState(false)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
       const post = async (action, params) => {
@@ -1489,10 +1494,13 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'nw-assist-wrap' },
         open
-          ? h('div', { className: 'nw-assist' },
+          ? h('div', { className: `nw-assist${expanded ? ' expanded' : ''}` },
               h('div', { className: 'nw-assist-head' },
                 h('span', null, '小说助手'),
-                h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setOpen(false) }, '收起'),
+                h('div', { className: 'nw-row' },
+                  h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setExpanded((value) => !value) }, expanded ? '还原' : '展开'),
+                  h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setOpen(false) }, '收起'),
+                ),
               ),
               h('div', { className: 'nw-assist-msgs' },
                 messages.length === 0
@@ -1547,16 +1555,21 @@ window.__ModuleLoader__.load({
                 : null,
               error ? h('div', { className: 'nw-error' }, error) : null,
               h('div', { className: 'nw-assist-input' },
-                h('input', {
-                  className: 'nw-input',
+                h('textarea', {
                   value: input,
-                  placeholder: '例如：第9章太水，压一压，保留阿棠那场',
+                  placeholder: '想改什么、想问什么都可以说；讨论不会动文件，改章会先给计划。（Enter 发送，Shift+Enter 换行）',
                   onChange: (event) => setInput(event.target.value),
                   onKeyDown: (event) => {
-                    if (event.key === 'Enter') send()
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      send()
+                    }
                   },
                 }),
-                h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !input.trim(), onClick: send }, busy ? '…' : '发送'),
+                h('div', { className: 'nw-assist-input-row' },
+                  h('span', { className: 'nw-muted' }, busy ? '思考中…' : ''),
+                  h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !input.trim(), onClick: send }, busy ? '…' : '发送'),
+                ),
               ),
             )
           : null,
