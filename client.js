@@ -96,6 +96,8 @@ window.__ModuleLoader__.load({
 .nw-assist-plan{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
 .nw-assist-action{font-size:11px;line-height:1.6;color:var(--dsw-alias-label-secondary);padding:4px 0;border-bottom:1px dashed var(--dsw-alias-border-l1)}
 .nw-assist-action:last-child{border-bottom:none}
+.nw-assist-think summary{font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer;margin-bottom:4px}
+.nw-assist-think div{font-size:11px;line-height:1.55;color:var(--dsw-alias-label-secondary);white-space:pre-wrap}
 .nw-assist-input{display:flex;flex-direction:column;gap:6px}
 .nw-assist-input textarea{width:100%;min-height:78px;max-height:200px;padding:9px 10px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1.55;resize:vertical}
 .nw-assist-input textarea:focus{outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);outline-offset:1px}
@@ -1467,7 +1469,7 @@ window.__ModuleLoader__.load({
         setInput('')
         try {
           const data = await post('assistant-chat', { message: text })
-          setMessages((list) => [...list, { role: 'assistant', content: data.reply }])
+          setMessages((list) => [...list, { role: 'assistant', content: data.reply, thinking: data.thinking }])
           setPlan(data.plan ?? null)
         } catch (err) {
           setError(err.message)
@@ -1506,7 +1508,15 @@ window.__ModuleLoader__.load({
                 messages.length === 0
                   ? h('div', { className: 'nw-muted' }, '可以讨论、提意见、让它改章；讨论不会动文件，改章会先给计划再执行。')
                   : null,
-                messages.map((item, index) => h('div', { key: index, className: `nw-assist-msg ${item.role}` }, item.content)),
+                messages.map((item, index) => h('div', { key: index, className: `nw-assist-msg ${item.role}` },
+                  item.thinking
+                    ? h('details', { className: 'nw-assist-think' },
+                        h('summary', null, '思考'),
+                        h('div', null, item.thinking),
+                      )
+                    : null,
+                  item.content,
+                )),
               ),
               plan
                 ? h('div', { className: 'nw-assist-plan' },

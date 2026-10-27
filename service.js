@@ -639,6 +639,7 @@ export class NovelWriterService {
     const started = Date.now()
     const runOnce = async (budget, effort) => {
       let text = ''
+      let reasoning = ''
       let usage = null
       let finish = null
       for await (const chunk of this.ctx.llm.stream({
@@ -663,8 +664,13 @@ export class NovelWriterService {
             throw new Error(`模型调用失败：${JSON.stringify(chunk.reason)}`)
           }
         }
+        else if (typeof chunk.type === 'string' && /reason|think/i.test(chunk.type)) {
+          // 兼容各提供方的思考流（reasoning-delta / thinking-delta 等），只收集不展示。
+          const piece = chunk.text ?? chunk.reasoning ?? chunk.delta ?? ''
+          if (typeof piece === 'string') reasoning += piece
+        }
       }
-      return { text, usage, finish }
+      return { text, usage, finish, reasoning }
     }
     let result = await runOnce(maxTokens, effort)
     if (!result.text.trim() && result.finish?.kind === 'max-tokens' && maxTokens < budgetCap) {
@@ -751,6 +757,7 @@ export class NovelWriterService {
       system: first.system ?? system,
       messages,
       output: first.text,
+      reasoning: String(first.reasoning ?? '').slice(0, 30000),
       repairOutput: repair?.text ?? null,
       usage: first.usage,
       repairUsage: repair?.usage ?? null,
@@ -3469,6 +3476,7 @@ export class NovelWriterService {
     ].join('\n')
     const system = [
       '你是这部小说的写作助手，只操作这一部小说。',
+      '思考过程与回复都用中文；不要用英文思考（除非用户要求英文）。',
       '先判断用户意图，分成三类：',
       '1) discuss：讨论、评价、提意见——只回复分析与建议，不要改任何文件。',
       '2) propose：用户要改东西但还没确认（如“第9章太水，压一压”）——给出变更计划，不要落盘。',
@@ -3497,7 +3505,13 @@ export class NovelWriterService {
       { role: 'assistant', content: reply, at: now() },
     )
     await this.writeAssistantThread(agent, thread)
-    return { intent, reply, plan, thread }
+    return {
+      intent,
+      reply,
+      plan,
+      thinking: String(result?.first?.reasoning ?? '').slice(0, 8000),
+      thread,
+    }
   }
 
   async assistantApply(agent, options = {}) {
