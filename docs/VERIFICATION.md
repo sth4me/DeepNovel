@@ -110,6 +110,7 @@
 
 - 提示词模板：`PROMPT_CATALOG` 23 条均带 `group`（premise/bible/outline/chapter/review/craft/data/other）与 `tags`；只读 `prompt-preview` 返回 `defaultText` / `currentText` / `customized` / `baseRevision` / `revision` / `variables`（`{{name}}` / `${name}` 去重、≤20），函数拼装模板返回 `variablesHint`；覆盖后 `currentText` 为覆盖文本且 `customized = true`，恢复默认后回到 `defaultText`；预览不调用模型、不改提示词。
 - 素材库：schema v3 新增 `materials` 表（v2→v3 事务内升级、旧数据保留）；类型 片段/资料/桥段/引用/其他，`tags` ≤10、`title` 缺省取首行 ≤120；`materials-list` / `material-save` / `material-delete` 走 `materials` 资源锁；`novel_query kind=materials`（keyword 匹配标题/内容/标签、limit 默认 20、content 截断 400）；导出纯文件项目含 `story/materials.json`，快照含 `project.db` 自然包含。
+- 提示词与技能：规则集中在 `writing-rules.js`（35 禁用词 / AI 句式 / 真人基准 / 5 组质检 / deslop 规则），templates / service / craft / builtin-skills 全部引用、无重复字面量；流程提示词（PROMPT_CATALOG）与技能（`craft-*` / `ref-*` / 导入）数据模型独立、不合并；项目页「提示词与技能」卡双 tab（流程提示词 / 技能库）替代原两张卡，素材库卡独立；技能正文与流程提示词共享同一规则来源。
 
 ## 错误处理
 

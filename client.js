@@ -5771,7 +5771,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function SystemPromptsEditor({ state, run, busy, setToast }) {
+    function SystemPromptsEditor({ state, run, busy, setToast, inline }) {
       const catalog = state.promptCatalog?.prompts ?? []
       const GROUP_LABELS = {
         premise: '构思',
@@ -5842,7 +5842,7 @@ window.__ModuleLoader__.load({
           setImportText('')
         }
       }
-      return h('div', { className: 'nw-card' },
+      return h('div', inline ? null : { className: 'nw-card' },
         h('div', { className: 'nw-row' },
           h('h3', { className: 'nw-h3' }, '提示词模板'),
           h('div', { className: 'nw-actions', style: { margin: 0 } },
@@ -6378,7 +6378,7 @@ window.__ModuleLoader__.load({
      * 技能库：内置技法（随插件提供、只能开关）+ 导入技能（可删除、同名覆盖内置）。
      * 预览沿用技法卡片分节渲染（反例警示 / 自检斜体 / 无分节回退整段）。
      */
-    function SkillsLibraryCard({ state, run, busy, setToast }) {
+    function SkillsLibraryCard({ state, run, busy, setToast, inline }) {
       const [skills, setSkills] = useState(() => (Array.isArray(state.skills) ? state.skills : []))
       const [loading, setLoading] = useState(false)
       const [preview, setPreview] = useState(null)
@@ -6476,7 +6476,7 @@ window.__ModuleLoader__.load({
         const scope = scopeOf(skill)
         return h('span', { className: scope === 'builtin' ? 'nw-badge' : 'nw-badge ok' }, scopeLabel(scope))
       }
-      return h('div', { className: 'nw-card' },
+      return h('div', inline ? null : { className: 'nw-card' },
         h('div', { className: 'nw-row' },
           h('h3', { className: 'nw-h3' }, '技能库'),
           h('span', { className: 'nw-muted' }, `${skills.length} 个技能`),
@@ -6566,6 +6566,37 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+      )
+    }
+
+    /*
+     * 「提示词与技能」统一入口：流程提示词（每个任务必定使用，可覆盖/有版本）
+     * 与技能（可选参考，AI 按需读取）合并为一张卡、双 tab，数据模型仍相互独立。
+     */
+    function PromptAndSkillsCard({ state, run, busy, setToast }) {
+      const [tab, setTab] = useState('prompts')
+      return h('div', { className: 'nw-card' },
+        h('div', { className: 'nw-row' },
+          h('h3', { className: 'nw-h3' }, '提示词与技能'),
+          h('div', { className: 'nw-actions', style: { margin: 0 } },
+            h('button', {
+              type: 'button',
+              className: tab === 'prompts' ? 'nw-btn primary' : 'nw-btn ghost',
+              onClick: () => setTab('prompts'),
+            }, '流程提示词'),
+            h('button', {
+              type: 'button',
+              className: tab === 'skills' ? 'nw-btn primary' : 'nw-btn ghost',
+              onClick: () => setTab('skills'),
+            }, '技能库'),
+          ),
+        ),
+        h('p', { className: 'nw-muted' }, '流程提示词：每个写作任务必定使用，可覆盖、有版本。技能：可选参考，AI 按需读取并自行判断是否适合本章；内置技能随插件提供、只能开关，导入技能可删除。'),
+        h('div', { style: { marginTop: '6px' } },
+          tab === 'prompts'
+            ? h(SystemPromptsEditor, { state, run, busy, setToast, inline: true })
+            : h(SkillsLibraryCard, { state, run, busy, setToast, inline: true }),
+        ),
       )
     }
 
@@ -7031,7 +7062,6 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('project-update', { fields: { automation } }, { toast: '自动化设置已保存' }) }, '保存自动化设置'),
           ),
         ),
-        h(SystemPromptsEditor, { state, run, busy, setToast }),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '写作要求（共享）'),
           h('p', { className: 'nw-muted' }, '写在这里的要求可以在设定/大纲/章节的生成要求里用「插入项目要求」引用。'),
@@ -7069,7 +7099,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-muted', style: { marginTop: '4px' } },
             '已生效于：设定生成、大纲生成、章节草稿、章节修订（保存后下一次生成生效）'),
         ),
-        h(SkillsLibraryCard, { state, run, busy, setToast }),
+        h(PromptAndSkillsCard, { state, run, busy, setToast }),
         h(MaterialsLibraryCard, { state, run, busy, setToast }),
         state.dataLayer
           ? h('div', { className: 'nw-card' },

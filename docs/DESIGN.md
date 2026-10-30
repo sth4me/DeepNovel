@@ -48,15 +48,25 @@
 - **范围**：助手技能只来自内置 `craft-*` + 项目导入 + 全局导入；不扫描 DSH 公共 / 系统 / 用户级技能（`<dshHome>/skills`、`<agentsHome>/skills`、`$DSH_BUNDLED_SKILL_DIR`、custom 根）；非写作项目返回空。加载入口只保留 `tool-skill`（`skill-filesystem` 已移除，项目根由 provider 按 cwd 动态提供）。
 - **路由**：模型路由——AI 用 skill 工具按需加载全文，读后判断是否适合本章（题材 / 文风契约 / 节奏 / 指令），不适合不套用；技法不是本书设定、不是硬性规则。旧的「程序按任务 / 指令打分注入全文」已废弃（模型读全文判断比程序触发词更准）。
 - **内容**：出处为通用写作 / 编剧理论 + 网文实践整理，自写摘要非复制（检查清单思路参考 MuMuAINovel / DeepWrite）；每张卡统一五节【适用】【通用原则】【按场景调节】【常见反例（不要这样写）】【自检】，数字多为参考值。
-- **管理**：项目页「技能库」卡（scope 徽标 / 内置开关 / 导入（项目或全局）/ 删除 / 预览分节渲染 / 导入弹窗）；project-action `skills-list`（每项带 scope/path）/ `skill-toggle`（仅内置）/ `skill-import`（`{ path, scope? }`）/ `skill-delete`（`{ name, scope }`）/ `skill-read`（`{ name, scope? }`）。
+- **管理**：项目页「提示词与技能」卡的技能库 tab（scope 徽标 / 内置开关 / 导入（项目或全局）/ 删除 / 预览分节渲染 / 导入弹窗）；project-action `skills-list`（每项带 scope/path）/ `skill-toggle`（仅内置）/ `skill-import`（`{ path, scope? }`）/ `skill-delete`（`{ name, scope }`）/ `skill-read`（`{ name, scope? }`）。
 
 ## 提示词模板
 
-提示词模板能力整合在项目页「System 模板」卡，不单独做工作台页面。
+提示词模板能力整合在项目页「提示词与技能」卡的流程提示词 tab，不单独做工作台页面。
 
 - **目录**：`PROMPT_CATALOG` 23 条，每条带 `group`（premise / bible / outline / chapter / review / craft / data / other）与 `tags`，用于分类筛选。
 - **预览**：只读 `prompt-preview { key }` 返回 `defaultText` / `currentText` / `customized` / `baseRevision` / `revision` / `variables`（从 `{{name}}` / `${name}` 提取，去重、最多 20 个）；由代码拼装的模板不执行，返回 `variablesHint`。预览不调用 LLM。
 - **编辑**：覆盖仍写 `prompt_overrides` 表，编辑 / 覆盖 / 恢复默认逻辑不变；「默认已更新」判断沿用 baseHash + baseRevision。
+
+## 提示词与技能（两层模型）
+
+写作台把「流程提示词」与「技能」分成两层，**数据模型不合并**，但共享同一套写作规则。
+
+- **流程提示词**（System 模板，`PROMPT_CATALOG` 23 条）：任务必用——每个生成动作按任务取对应 system；可在项目页覆盖、有版本号、可预览默认/当前与占位符；覆盖存 `prompt_overrides` 表。
+- **技能**（`craft-*` / `ref-*` / 导入技能）：可选参考——模型按需用 skill 工具读取全文，读后自行判断是否适合本章；可逐项开关、导入、删除；不是硬性规则、不是本书设定。
+- **为什么不合并**：流程提示词决定「这个任务怎么执行」（必须稳定、可覆盖、可审计版本）；技能是「可参考的写作方法库」（可增长、可导入、由模型判断）。合并会让必用规则与可选参考混在一起，难以保证行为稳定。
+- **共享规则**：禁用词（35 个）、AI 句式、真人基准、章节质检清单（5 组）集中在 `writing-rules.js`；提示词模板、流程动作（aiFlavor 估算 / deslop）与技能卡（craft / ref）都从这里引用，避免多处手写字面量漂移。
+- **管理入口**：项目页「提示词与技能」卡，双 tab——「流程提示词」与「技能库」；素材库卡独立。
 
 ## 参考
 

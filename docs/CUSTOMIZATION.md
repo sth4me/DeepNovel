@@ -37,7 +37,7 @@
 
 ## System 模板
 
-项目 → System 模板（高级）：
+项目 → 提示词与技能 > 流程提示词（高级）：
 
 - 按任务覆盖**基础 system prompt**：构思 / 设定 / 大纲 / 正文 / 修订 / 修复。
 - 留空 = 使用内置默认；覆盖只替换基础 system，任务附加规则（如“这是修复任务，不改情节”）仍由插件拼接。
@@ -46,6 +46,7 @@
 - 模板目录按 `group` 分类（构思 / 设定 / 大纲 / 正文 / 审校 / 技法 / 数据 / 其他），可筛选；每条带 tags。
 - **预览只读**：显示默认文本与当前生效文本、是否已覆盖、版本号（当前 / 所基于），以及可替换占位符（从 `{{name}}` / `${name}` 提取，最多 20 个）；代码拼装的模板会提示「无可替换占位符」。预览不调用模型，也不修改任何提示词。
 - 编辑 / 覆盖 / 恢复默认的逻辑不变。
+- 与「技能库」同属项目页「提示词与技能」卡的两个 tab（流程提示词 / 技能库）；两者共享 `writing-rules.js` 的禁用词 / 句式 / 真人基准 / 质检清单规则，但数据模型独立。
 - 与「提示词注入」互补：注入只追加，System 模板替换基础段。
 
 ## 提示词注入
@@ -88,10 +89,11 @@
 
 内置技能共 14 个——9 张通用技法卡片（`craft-*`）与 5 个参考库（`ref-*`：钩子库 / 开篇库 / 反转工具箱 / 情绪弧线 / 章节质检清单），随插件提供、不可删除、可按项目开关；与项目导入、全局导入技能平级出现在技能目录；不加载 DSH 公共 / 用户级技能。
 
-- 内置开关：项目页「技能库」逐条启用/停用（写 `story/project.db` 的 `project` 表中的 `craftDisabled`）。
+- 内置开关：项目页「提示词与技能」> 技能库 tab 逐条启用/停用（写 `story/project.db` 的 `project` 表中的 `craftDisabled`）。
 - 导入技能：把 `SKILL.md`（目录包或单个 `.md`，YAML frontmatter 含 name/description）通过项目页「导入技能」导入；可选择作用域——项目写入 `<projectRoot>/.dsh/skills`（仅当前项目），全局写入 `DSH_HOME/novel-writer/library/skills/`（所有写作项目可用）。同名覆盖前会备份（项目 → `.dsh-writing/backups/skills-<时间>/`，全局 → `DSH_HOME/novel-writer/library/backups/skills-<时间>/`）。也可手动放到项目的 `.dsh/skills`、`.agents/skills` 或全局库。
 - 优先级：同名冲突时 项目 > 全局 > 内置。
 - 路由：AI 用 skill 工具按需读取全文并自行判断是否适合本章；不再由程序按任务打分注入。
+- 入口：与「System 模板」同属项目页「提示词与技能」卡的两个 tab（流程提示词 / 技能库）；技能正文与流程提示词共享 `writing-rules.js` 的禁用词 / 句式 / 真人基准 / 质检清单规则，但数据模型独立。
 - 旧兼容：`$DSH_HOME/novel-writer/library/craft/<id>.json` 自定义卡片与 `novel_craft` 工具（list / read / recommend）仍可用。
 
 ## 拆书

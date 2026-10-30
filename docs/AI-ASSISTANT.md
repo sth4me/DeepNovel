@@ -58,7 +58,9 @@
 - 格式：`<name>/SKILL.md` 或 `<name>.md`，带 YAML frontmatter，`name` / `description` 必填。
 - 模型路由：助手读全文后自行判断是否适合本章（题材、文风契约、节奏、当前指令）；不适合就不套用，并简要说明。**技法不是本书设定，也不是硬性规则**。
 - 不再由程序自动注入：旧方案「按任务 / 指令程序打分、把卡片全文注入提示词」已废弃；改为模型按需加载后判断（模型读了全文，比程序触发词更准）。`novel_craft` 工具保留兼容（list / read / recommend）。
-- 管理接口（项目页「技能库」卡）：`skills-list`（每项带 `scope` = builtin / project / global 与 `path`）、`skill-toggle`（仅内置，写项目 `craftDisabled`）、`skill-import`（`{ path, scope? }`，`scope` 默认 project、可选 global；目录包 / 扁平；同名覆盖前备份）、`skill-delete`（`{ name, scope }`，仅导入）、`skill-read`（`{ name, scope? }`；内置带判断提示）。
+- 管理接口（项目页「提示词与技能」> 技能库 tab）：`skills-list`（每项带 `scope` = builtin / project / global 与 `path`）、`skill-toggle`（仅内置，写项目 `craftDisabled`）、`skill-import`（`{ path, scope? }`，`scope` 默认 project、可选 global；目录包 / 扁平；同名覆盖前备份）、`skill-delete`（`{ name, scope }`，仅导入）、`skill-read`（`{ name, scope? }`；内置带判断提示）。
+
+- 技能与「流程提示词」是两层：技能是**可选参考**（模型按需读取、自行判断适配性、可开关/导入/删除）；流程提示词（System 模板）是**任务必用**、可覆盖、有版本、可预览；两者数据模型不合并，见 [DESIGN.md](DESIGN.md) 的「提示词与技能（两层模型）」。
 
 ### MCP
 

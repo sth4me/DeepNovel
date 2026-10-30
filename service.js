@@ -21,12 +21,6 @@ import {
   scanImportedSkills,
 } from './skills.js'
 
-const AI_BANNED_WORDS = [
-  '仿佛', '好像', '犹如', '宛若', '一丝', '一抹', '些许', '几分', '隐约', '深吸一口气',
-  '缓缓', '不禁', '微微', '轻轻', '淡淡', '眼中闪过', '嘴角勾起', '眉头微皱', '心中一动', '心头一震',
-  '心下了然', '不容置疑', '不易察觉', '显而易见', '坚定', '深邃', '凛冽', '突然', '瞬间', '不由自主',
-  '情不自禁', '不由得', '嘴角微扬', '脸色一变', '目光如炬',
-]
 
 /** 规范化模型返回的 aiFlavor；结构不合法返回 null。 */
 function normalizeAiFlavor(raw) {
@@ -64,6 +58,7 @@ function estimateAiFlavor(text) {
 import { openDatabase } from './db.js'
 import { migrateLegacyProject } from './migrate.js'
 import { MATERIAL_KINDS, NovelStore } from './store.js'
+import { AI_BANNED_WORDS } from './writing-rules.js'
 import {
   BIBLE_SYSTEM_PROMPT,
   BIBLE_CHARACTERS_SYSTEM_PROMPT,
