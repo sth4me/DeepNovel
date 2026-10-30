@@ -33,3 +33,25 @@
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: mcp-example
+            name: '@deepseek-ai/dsh-mcp-client'
+            disabled: !!js true
+            config:
+              serverName: example
+              transport: streamable-http
+              url: http://127.0.0.1:3000/mcp
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'

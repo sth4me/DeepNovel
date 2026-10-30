@@ -13,16 +13,18 @@ export const LOCK_RULES = {
     'clean-orphans',
     'chapters-delete-tail',
   ],
-  projectActions: ['discussion-undo', 'discussion-applies-clear'],
+  projectActions: [],
   projectPrefixes: ['snapshot-', 'restore-'],
   exact: {
     'relations-save': 'bible',
     'character-card-import': 'bible',
+    'library-character-import': 'bible',
     'style-samples-save': 'style',
     'style-import-template': 'style',
     'chapter-move': 'outline',
     'outline-audit': 'read:audit:outline',
     'summarize-missing': 'summary:batch',
+    'export-file-project': 'project:export',
   },
   readGroups: [
     {
@@ -51,9 +53,14 @@ const chapterNumber = (params = {}) => {
   return Number.isFinite(number) && number > 0 ? number : null
 }
 
+/** 全项目级资源：与任何资源互斥（导入/导出/快照/恢复期间禁止其它写）。 */
+export const GLOBAL_RESOURCES = new Set(['project', 'project:import', 'project:export'])
+
 export function runResource(action, params = {}) {
   if (typeof action !== 'string') return null
   if (LOCK_RULES.batchActions.includes(action)) return 'chapter:batch'
+  // delete + removeOutline 会删章纲并重排后续章号（全项目改动），按批量操作处理。
+  if (action === 'chapter-delete' && params?.removeOutline === true) return 'chapter:batch'
   if (LOCK_RULES.projectActions.includes(action)) return 'project'
   if (LOCK_RULES.projectPrefixes.some((prefix) => action.startsWith(prefix))) return 'project'
   for (const group of LOCK_RULES.readGroups) {
@@ -76,6 +83,11 @@ export function runResource(action, params = {}) {
 export function locksConflict(locks, resource) {
   if (!locks) return false
   if (locks.has(resource)) return true
+  // 全项目资源（导入/导出/快照/恢复）与任何资源互斥。
+  if (GLOBAL_RESOURCES.has(resource)) return locks.size > 0
+  for (const key of locks.keys()) {
+    if (GLOBAL_RESOURCES.has(key)) return true
+  }
   if (resource === 'chapter:batch') {
     for (const key of locks.keys()) {
       if (key.startsWith('chapter:')) return true

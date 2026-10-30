@@ -70,18 +70,18 @@ assert.equal(loaded.batches[0].candidates.length, 2)
 assert.equal(loaded.activeBatchId, 'b1')
 
 // 新一代候选落盘后可以恢复旧批次
-await writeFile(
-  join(project, 'story', 'premise.json'),
-  JSON.stringify({ status: 'candidate', candidates: [{ id: 'new', title: '新标题', premise: '新核心' }], chosen: null }),
-  'utf8',
-)
+await service.writeJson(project, 'story/premise.json', {
+  status: 'candidate',
+  candidates: [{ id: 'new', title: '新标题', premise: '新核心' }],
+  chosen: null,
+})
 const restored = await service.restorePremiseBatch(project, { batchId: 'b1' })
 assert.equal(restored.candidates.length, 2)
-const premise = JSON.parse(await readFile(join(project, 'story', 'premise.json'), 'utf8'))
+const premise = await service.readJson(project, 'story/premise.json')
 assert.equal(premise.candidates[0].id, 'c1')
 assert.equal(premise.status, 'candidate')
 
-// 讨论消息的可应用动作和 discuss 批次需要保留
+// 历史批次里的 discuss 模式与可应用动作需要保留（旧数据兼容）
 await service.savePremiseChat(project, {
   messages: [{ id: 'm3', role: 'assistant', content: '建议改冷硬', actions: [{ type: 'premise-candidate-update', fields: { premise: '更冷的核心' } }] }],
   batches: [{ id: 'b2', mode: 'discuss', instruction: '改冷硬', candidates: [], ideas: [] }],

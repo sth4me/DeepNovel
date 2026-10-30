@@ -363,9 +363,6 @@ window.__ModuleLoader__.load({
 @media (max-width:900px){.nw-sticky-title{max-width:100%}.nw-sticky-head{flex-wrap:wrap}.nw-sticky-nav{margin-left:auto}.nw-sticky-actions .nw-btn{flex:0 0 auto}}
 .nw-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
 .nw-cards .nw-card{margin-bottom:0;height:100%}
-.nw-discuss{display:flex;flex-direction:column;height:100%;min-height:0}
-.nw-discuss-head{padding:0 0 10px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:10px}
-.nw-discuss-msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-right:2px}
 .nw-msg{font-size:11.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;padding:9px 11px;border-radius:10px;max-width:100%}
 .nw-msg.user{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);align-self:flex-end}
 .nw-msg.assistant{background:var(--dsw-alias-bg-layer-1)}
@@ -379,7 +376,6 @@ window.__ModuleLoader__.load({
 .nw-result-actions .nw-btn{margin-top:6px}
 .nw-msg-actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
 .nw-msg-actions .nw-btn{height:26px;padding:0 9px;font-size:10.5px}
-.nw-discuss-input{display:flex;gap:6px;margin-top:10px;flex:0 0 auto}
 .nw-picker{max-width:760px;margin:7vh auto 0}
 .nw-picker-card{background:var(--dsw-alias-bg-layer-2);border-radius:18px;padding:26px}
 .nw-picker-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
@@ -930,121 +926,6 @@ window.__ModuleLoader__.load({
       return { ops, hunks }
     }
 
-    async function fetchDiscussion(projectRoot, topicId) {
-      const response = await fetch(
-        `/novel-writer/discussion?projectRoot=${encodeURIComponent(projectRoot)}&topicId=${encodeURIComponent(topicId)}`,
-        { cache: 'no-store' },
-      )
-      const payload = await response.json()
-      if (!payload.ok) throw new Error(payload.error?.message ?? '读取讨论失败')
-      return payload.data
-    }
-
-    async function postDiscussion(projectRoot, payloadInput) {
-      const response = await fetch('/novel-writer/discussion', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectRoot, ...payloadInput }),
-      })
-      const payload = await response.json()
-      if (!payload.ok) throw new Error(payload.error?.message ?? '讨论失败')
-      return payload.data
-    }
-
-    function extractReplyPartial(raw) {
-      const match = /"reply"\s*:\s*"/.exec(raw)
-      if (!match) return ''
-      let index = match.index + match[0].length
-      let out = ''
-      const escapes = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', '\\': '\\', '/': '/' }
-      while (index < raw.length) {
-        const char = raw[index]
-        if (char === '\\') {
-          const next = raw[index + 1]
-          if (next === 'u') {
-            const hex = raw.slice(index + 2, index + 6)
-            if (!/^[0-9a-fA-F]{4}$/.test(hex)) break
-            out += String.fromCharCode(parseInt(hex, 16))
-            index += 6
-            continue
-          }
-          if (next in escapes) {
-            out += escapes[next]
-            index += 2
-            continue
-          }
-          index += 2
-          continue
-        }
-        if (char === '"') break
-        out += char
-        index += 1
-      }
-      return out
-    }
-
-    async function postDiscussionStream(projectRoot, payloadInput, onDelta, signal) {
-      const response = await fetch('/novel-writer/discussion-stream', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-        body: JSON.stringify({ projectRoot, ...payloadInput }),
-        signal,
-      })
-      const type = response.headers.get('content-type') ?? ''
-      if (!response.ok || !type.includes('text/event-stream') || !response.body) {
-        const payload = await response.json().catch(() => null)
-        if (payload?.ok) return payload.data
-        if (response.status === 404 || response.status === 405) {
-          return postDiscussion(projectRoot, payloadInput)
-        }
-        throw new Error(payload?.error?.message ?? '讨论失败')
-      }
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let raw = ''
-      let result = null
-      let streamError = null
-      const consume = (block) => {
-        let event = 'message'
-        const dataLines = []
-        for (const line of block.split(/\r?\n/)) {
-          if (line.startsWith('event:')) event = line.slice(6).trim()
-          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-        }
-        if (dataLines.length === 0) return
-        let data
-        try {
-          data = JSON.parse(dataLines.join('\n'))
-        } catch {
-          return
-        }
-        if (event === 'delta') {
-          raw += String(data.text ?? '')
-          onDelta?.(raw)
-        } else if (event === 'done') {
-          result = data.data ?? data
-        } else if (event === 'error') {
-          streamError = data.error ?? { message: '讨论流中断' }
-        }
-      }
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let boundary = buffer.indexOf('\n\n')
-        while (boundary >= 0) {
-          consume(buffer.slice(0, boundary))
-          buffer = buffer.slice(boundary + 2)
-          boundary = buffer.indexOf('\n\n')
-        }
-      }
-      if (buffer.trim()) consume(buffer)
-      if (streamError) throw new Error(streamError.message ?? '讨论失败')
-      if (!result) throw new Error('讨论流意外结束')
-      return result
-    }
-
     async function postPremiseStream(projectRoot, payloadInput, onDelta, signal) {
       const response = await fetch('/novel-writer/premise-stream', {
         method: 'POST',
@@ -1107,17 +988,6 @@ window.__ModuleLoader__.load({
       return result
     }
 
-    async function postDiscussionApply(projectRoot, payloadInput) {
-      const response = await fetch('/novel-writer/discussion-apply', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectRoot, ...payloadInput }),
-      })
-      const payload = await response.json()
-      if (!payload.ok) throw new Error(payload.error?.message ?? '应用讨论结果失败')
-      return payload.data
-    }
-
     function logClient(message, detail) {
       try {
         fetch('/novel-writer/client-log', {
@@ -1171,7 +1041,6 @@ window.__ModuleLoader__.load({
       if (action === 'import-manuscript') return 'chapter:batch'
       if (action === 'chapter-approve-all' || action === 'chapter-approve-volume' || action === 'chapter-approve-stale') return 'chapter:batch'
       if (action === 'clean-orphans' || action === 'chapters-delete-tail') return 'chapter:batch'
-      if (action === 'discussion-undo' || action === 'discussion-applies-clear') return 'project'
       if (action === 'style-samples-save' || action === 'style-import-template') return 'style'
       if (action === 'relations-save') return 'bible'
       if (action === 'character-card-import') return 'bible'
@@ -1211,6 +1080,81 @@ window.__ModuleLoader__.load({
       }
       if (resource.startsWith('chapter:')) return Boolean(running['chapter:batch'])
       return false
+    }
+
+    // 锁资源与占用者的可读标签（用于任务托盘与按钮提示）。
+    const LOCK_RESOURCE_LABELS = {
+      outline: '大纲',
+      bible: '设定',
+      style: '文风',
+      premise: '构思',
+      project: '项目',
+      'project:import': '导入项目',
+      'project:export': '导出项目',
+    }
+    function lockResourceLabel(resource) {
+      const value = String(resource ?? '')
+      if (value.startsWith('chapter:')) {
+        const id = value.slice('chapter:'.length)
+        return id === 'batch' ? '批量章节' : `第 ${Number(id) || id} 章`
+      }
+      if (value === 'chapter') return '章节'
+      if (LOCK_RESOURCE_LABELS[value]) return LOCK_RESOURCE_LABELS[value]
+      if (value.startsWith('read:')) return '只读检查'
+      if (value.startsWith('summary')) return '摘要'
+      return value || '任务'
+    }
+    function lockOwnerLabel(owner) {
+      const value = String(owner ?? '')
+      if (value.startsWith('agent:')) return '写作助手'
+      if (value.startsWith('ui:')) return '写作窗口'
+      return value || '未知来源'
+    }
+    // 与 Host 一致：project/import/export 与任何资源互斥；chapter:batch 与 chapter:* 互斥。
+    function locksConflictWith(resource, locks) {
+      if (!resource || !Array.isArray(locks) || locks.length === 0) return false
+      const projectLike = (value) => value === 'project' || value.startsWith('project:')
+      for (const lock of locks) {
+        const held = String(lock?.resource ?? '')
+        if (!held) continue
+        if (projectLike(resource) || projectLike(held)) return true
+        if (resource === held) return true
+        if (resource === 'chapter:batch' && held.startsWith('chapter:')) return true
+        if (held === 'chapter:batch' && resource.startsWith('chapter:')) return true
+      }
+      return false
+    }
+    // 操作是否被 activeLocks（助手/其它窗口）占用；返回冲突资源或 null。
+    function lockBlocking(action, params, state) {
+      if (!state) return null
+      const resource = actionResource(action, params, state.lockRules)
+      if (!resource) return null
+      const locks = Array.isArray(state.activeLocks) ? state.activeLocks : []
+      return locksConflictWith(resource, locks) ? { resource, label: lockResourceLabel(resource) } : null
+    }
+    function lockBlockedMessage(action, params, state) {
+      return lockBlocking(action, params, state) ? '写作助手正在处理该资源' : null
+    }
+    // 托盘可见的「其它来源」锁：过滤本窗口（ui:<root>），按 owner+resource 去重。
+    function visibleLocks(stateLocks, liveLocks, root) {
+      const seen = new Set()
+      const list = []
+      const merged = [...(Array.isArray(stateLocks) ? stateLocks : []), ...(Array.isArray(liveLocks) ? liveLocks : [])]
+      for (const lock of merged) {
+        if (!lock || !lock.resource) continue
+        if (root && lock.owner === `ui:${root}`) continue
+        const key = `${lock.owner ?? ''}|${lock.resource}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        list.push(lock)
+      }
+      return list
+    }
+    // /project-runs 返回兼容：旧数组 或 { runs, locks }。
+    function parseRunsPayload(data) {
+      const runs = Array.isArray(data) ? data : Array.isArray(data?.runs) ? data.runs : []
+      const locks = Array.isArray(data?.locks) ? data.locks.filter((lock) => lock && lock.resource) : []
+      return { runs, locks }
     }
 
     function continuityIssueKey(issue) {
@@ -1461,77 +1405,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function renderInlineMarkdown(text) {
-      const source = String(text ?? '')
-      const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*|\[([^\]]+)\]\(([^)]+)\))/g
-      const parts = []
-      let last = 0
-      let match
-      while ((match = pattern.exec(source)) !== null) {
-        if (match.index > last) parts.push(source.slice(last, match.index))
-        if (match[2] != null) parts.push(h('strong', { key: parts.length }, match[2]))
-        else if (match[3] != null) parts.push(h('code', { key: parts.length }, match[3]))
-        else if (match[4] != null) parts.push(h('em', { key: parts.length }, match[4]))
-        else if (match[5] != null) parts.push(h('a', { key: parts.length, href: match[6], target: '_blank', rel: 'noreferrer' }, match[5]))
-        last = match.index + match[0].length
-      }
-      if (last < source.length) parts.push(source.slice(last))
-      return parts
-    }
-
-    function renderMarkdown(text) {
-      const lines = String(text ?? '').split('\n')
-      const blocks = []
-      let list = null
-      let code = null
-      const flushList = () => {
-        if (list) {
-          blocks.push(h('ul', { key: blocks.length }, list))
-          list = null
-        }
-      }
-      for (const line of lines) {
-        if (line.startsWith('```')) {
-          if (code) {
-            blocks.push(h('pre', { key: blocks.length, className: 'nw-md-code' }, h('code', null, code.join('\n'))))
-            code = null
-          } else {
-            flushList()
-            code = []
-          }
-          continue
-        }
-        if (code) {
-          code.push(line)
-          continue
-        }
-        if (/^\s*[-*]\s+/.test(line)) {
-          if (!list) list = []
-          list.push(h('li', { key: list.length }, renderInlineMarkdown(line.replace(/^\s*[-*]\s+/, ''))))
-          continue
-        }
-        flushList()
-        const heading = line.match(/^(#{1,4})\s+(.*)$/)
-        if (heading) {
-          blocks.push(h(`h${Math.min(6, heading[1].length + 2)}`, { key: blocks.length }, renderInlineMarkdown(heading[2])))
-          continue
-        }
-        if (/^>\s?/.test(line)) {
-          blocks.push(h('blockquote', { key: blocks.length }, renderInlineMarkdown(line.replace(/^>\s?/, ''))))
-          continue
-        }
-        if (/^\s*---+\s*$/.test(line)) {
-          blocks.push(h('hr', { key: blocks.length }))
-          continue
-        }
-        if (line.trim() === '') continue
-        blocks.push(h('p', { key: blocks.length }, renderInlineMarkdown(line)))
-      }
-      flushList()
-      if (code) blocks.push(h('pre', { key: blocks.length, className: 'nw-md-code' }, h('code', null, code.join('\n'))))
-      return blocks
-    }
-
     /*
      * 写作台 AI 页：内嵌官方 conversation.content（embedded）。
      * host /novel-writer/conversation 确保项目父会话在线，并返回 continuable 子代理地址；
@@ -1577,10 +1450,39 @@ window.__ModuleLoader__.load({
       .nw-conv-hint { font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); margin-top: 6px; }
       .nw-conv-summary { width: 100%; min-height: 150px; margin-top: 8px; }
       .nw-conv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+      .nw-conv-viewtabs { display: flex; gap: 4px; padding: 6px 10px 0; flex: none; }
+      .nw-conv-viewtab { min-height: 24px; padding: 2px 10px; font-size: 11.5px; border: 1px solid transparent; border-radius: 8px 8px 0 0; background: none; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+      .nw-conv-viewtab:hover { color: var(--dsw-alias-label-primary); }
+      .nw-conv-viewtab.active { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-border-l1); border-bottom-color: transparent; background: var(--dsw-alias-bg-layer-1); font-weight: 600; }
     `
 
+    /*
+     * 内嵌会话的视图切换：embedded 形态不渲染官方 Header（View 标签栏），
+     * 点工具卡片的「查看」会切进轨迹视图后回不来。这里自己提供「对话/轨迹」
+     * 两个 tab，把选中的 view 作为 owner props 传给官方会话体。
+     */
+    function DeskConversationViews(props) {
+      const { renderSlot } = props ?? {}
+      const [view, setView] = useState('chat')
+      const tabs = [
+        { id: 'chat', label: '对话' },
+        { id: 'trajectory', label: '轨迹' },
+      ]
+      return h('div', { style: { display: 'flex', flexDirection: 'column' } },
+        h('div', { className: 'nw-conv-viewtabs' },
+          tabs.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'nw-conv-viewtab' + (view === item.id ? ' active' : ''),
+            onClick: () => setView(item.id),
+          }, item.label)),
+        ),
+        renderSlot('conversation.session', { view }),
+      )
+    }
+
     function DeskConversation(props) {
-      const { SessionProvider, renderFactorySlot, projectRoot } = props ?? {}
+      const { SessionProvider, renderFactorySlot, projectRoot, run, setToast } = props ?? {}
       const [reference, setReference] = useState(null)
       const [error, setError] = useState('')
       const [preparing, setPreparing] = useState(false)
@@ -1590,6 +1492,7 @@ window.__ModuleLoader__.load({
       const [summary, setSummary] = useState('')
       const [summaryLoading, setSummaryLoading] = useState(false)
       const [actionBusy, setActionBusy] = useState(false)
+      const [compactBusy, setCompactBusy] = useState(false)
       const [dialogError, setDialogError] = useState('')
       useEffect(() => {
         if (!projectRoot) {
@@ -1651,10 +1554,42 @@ window.__ModuleLoader__.load({
         setDialog('menu')
       }
       const closeDialog = () => {
-        if (actionBusy) return
+        if (actionBusy || compactBusy) return
         setDialog(null)
         setDialogError('')
         setSummary('')
+      }
+      const openCompactDialog = () => {
+        setDialogError('')
+        setCompactBusy(false)
+        setDialog('compact')
+      }
+      const requestCompact = async () => {
+        if (!projectRoot || compactBusy) return
+        setCompactBusy(true)
+        setDialogError('')
+        try {
+          let payload = null
+          if (run) {
+            payload = await run('conversation-compact', {}, { silent: true, throwOnError: true })
+          } else {
+            const response = await fetch('/novel-writer/project-action', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ projectRoot, action: 'conversation-compact', params: {} }),
+            })
+            const data = await response.json().catch(() => null)
+            if (!response.ok || !data?.ok) throw new Error(data?.error?.message ?? `HTTP ${response.status}`)
+            payload = data.data
+          }
+          setDialog(null)
+          setToast?.(typeof payload?.message === 'string' && payload.message ? payload.message : '已压缩上下文')
+          setReloadKey((value) => value + 1)
+        } catch (failure) {
+          setDialogError(String(failure?.message ?? failure))
+        } finally {
+          setCompactBusy(false)
+        }
       }
       const requestReset = async (carryover) => {
         if (!projectRoot) return
@@ -1708,13 +1643,16 @@ window.__ModuleLoader__.load({
             ? h('span', { className: 'nw-conv-model' }, `${modelInfo.model}${modelInfo.reasoningEffort ? ' · ' + modelInfo.reasoningEffort : ''}`)
             : null,
         ),
+        h('button', { type: 'button', className: 'nw-btn ghost', disabled: preparing || actionBusy, onClick: openCompactDialog }, '压缩上下文'),
         h('button', { type: 'button', className: 'nw-btn ghost', disabled: preparing || actionBusy, onClick: openNewDialog }, '新对话'),
       )
       const dialogView = dialog
         ? h('div', { className: 'nw-modal-backdrop', onClick: closeDialog },
             h('div', { className: 'nw-modal nw-conv-dialog', onClick: (event) => event.stopPropagation() },
-              h('div', { className: 'nw-eyebrow' }, '开始新对话'),
-              h('div', { className: 'nw-conv-hint' }, '重建会按当前默认模型创建新的对话子代理；旧对话历史不会带进新对话（旧记录仍保留在本地）。'),
+              h('div', { className: 'nw-eyebrow' }, dialog === 'compact' ? '压缩上下文' : '开始新对话'),
+              h('div', { className: 'nw-conv-hint' }, dialog === 'compact'
+                ? '把较早的对话历史摘要成一段，保留最近原文；不会影响项目数据。会话正在生成时无法压缩。'
+                : '重建会按当前默认模型创建新的对话子代理；旧对话历史不会带进新对话（旧记录仍保留在本地）。'),
               dialog === 'summary'
                 ? h('textarea', {
                     className: 'nw-textarea nw-conv-summary',
@@ -1725,13 +1663,15 @@ window.__ModuleLoader__.load({
                 : null,
               dialogError ? h('div', { className: 'nw-error' }, dialogError) : null,
               h('div', { className: 'nw-conv-actions' },
-                h('button', { type: 'button', className: 'nw-btn ghost', disabled: actionBusy, onClick: closeDialog }, '取消'),
-                dialog === 'menu'
-                  ? [
-                      h('button', { key: 'summary', type: 'button', className: 'nw-btn', disabled: actionBusy || summaryLoading, onClick: prepareSummary }, summaryLoading ? '生成摘要…' : '带上摘要…'),
-                      h('button', { key: 'fresh', type: 'button', className: 'nw-btn primary', disabled: actionBusy, onClick: () => requestReset('') }, '从零开始'),
-                    ]
-                  : h('button', { type: 'button', className: 'nw-btn primary', disabled: actionBusy || !summary.trim(), onClick: () => requestReset(summary) }, '使用摘要并开始'),
+                h('button', { type: 'button', className: 'nw-btn ghost', disabled: actionBusy || compactBusy, onClick: closeDialog }, '取消'),
+                dialog === 'compact'
+                  ? h('button', { type: 'button', className: 'nw-btn primary', disabled: compactBusy, onClick: requestCompact }, compactBusy ? '压缩中…' : '开始压缩')
+                  : dialog === 'menu'
+                    ? [
+                        h('button', { key: 'summary', type: 'button', className: 'nw-btn', disabled: actionBusy || summaryLoading, onClick: prepareSummary }, summaryLoading ? '生成摘要…' : '带上摘要…'),
+                        h('button', { key: 'fresh', type: 'button', className: 'nw-btn primary', disabled: actionBusy, onClick: () => requestReset('') }, '从零开始'),
+                      ]
+                    : h('button', { type: 'button', className: 'nw-btn primary', disabled: actionBusy || !summary.trim(), onClick: () => requestReset(summary) }, '使用摘要并开始'),
               ),
             ),
           )
@@ -1747,238 +1687,14 @@ window.__ModuleLoader__.load({
           : reference
             ? h(SessionProvider, { session: reference },
                 h('div', { 'data-deepnovel-ai': '1', style: { flex: 1, minHeight: '420px', display: 'flex', flexDirection: 'column' } },
-                  renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }),
+                  renderFactorySlot(
+                    'conversation.content',
+                    { variant: 'embedded', phase: 'active', hero: false },
+                    { slots: { views: DeskConversationViews } },
+                  ),
                 ),
               )
             : h('div', { className: 'nw-empty' }, '正在加载对话…'),
-      )
-    }
-
-    function AssistantPanel({ root, onApplied, onClose }) {
-      const [messages, setMessages] = useState([])
-      const [input, setInput] = useState('')
-      const [plan, setPlan] = useState(null)
-      const [applied, setApplied] = useState(null)
-      const [busy, setBusy] = useState(false)
-      const [error, setError] = useState(null)
-      const [live, setLive] = useState(null)
-      const msgsRef = useRef(null)
-      const loadedRef = useRef(false)
-      useEffect(() => {
-        if (!open || loadedRef.current) return
-        loadedRef.current = true
-        post('assistant-thread', {}).then((thread) => {
-          const history = (thread?.messages ?? []).map((item) => ({ role: item.role, content: item.content }))
-          if (history.length > 0) setMessages(history)
-        }).catch(() => {})
-      }, [open])
-      useEffect(() => {
-        const node = msgsRef.current
-        if (node) node.scrollTop = node.scrollHeight
-      }, [messages, plan, busy, live])
-      const post = async (action, params) => {
-        const response = await fetch('/novel-writer/project-action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectRoot: root, action, params }),
-        })
-        const data = await response.json().catch(() => null)
-        if (!response.ok || !data?.ok) throw new Error(data?.error?.message ?? `HTTP ${response.status}`)
-        return data.data
-      }
-      const send = async () => {
-        const text = input.trim()
-        if (!text || busy || !root) return
-        setBusy(true)
-        setError(null)
-        setLive(null)
-        setMessages((list) => [...list, { role: 'user', content: text }])
-        setInput('')
-        const taskId = `assist-${Date.now()}`
-        try {
-          const first = await post('assistant-chat', { message: text, taskId, background: true })
-          if (first?.reply) {
-            setMessages((list) => [...list, { role: 'assistant', content: first.reply, thinking: first.thinking }])
-            setPlan(first.plan ?? null)
-            return
-          }
-          const pollTaskId = first?.taskId ?? taskId
-          const sentAt = Date.now()
-          let finished = false
-          for (let attempt = 0; attempt < 300; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 500))
-            let data = null
-            try {
-              data = await post('assistant-live', {})
-            } catch {
-              data = null
-            }
-            if (!data) continue
-            const updatedAt = data.updatedAt ? Date.parse(data.updatedAt) : 0
-            if (data.taskId !== pollTaskId && !(updatedAt >= sentAt)) continue
-            setLive({ thinking: data.thinking ?? '', text: data.text ?? '' })
-            if (data.done) {
-              finished = true
-              setLive(null)
-              if (data.error) throw new Error(data.error)
-              setMessages((list) => [...list, { role: 'assistant', content: data.reply ?? '', thinking: data.thinking || undefined }])
-              setPlan(data.plan ?? null)
-              break
-            }
-          }
-          if (!finished) {
-            try {
-              const thread = await post('assistant-thread', {})
-              const last = (thread?.messages ?? []).filter((item) => item.role === 'assistant').slice(-1)[0]
-              if (last?.content) setMessages((list) => [...list, { role: 'assistant', content: last.content }])
-              setError('这次回复很慢，已先取回最后一条记录；如果内容不对，稍后再试一次')
-            } catch {
-              setError('这次回复很慢，请稍后再试一次')
-            }
-          }
-        } catch (err) {
-          setError(err.message)
-        } finally {
-          setLive(null)
-          setBusy(false)
-        }
-      }
-      const apply = async () => {
-        if (!plan || !plan.actions?.length || busy) return
-        setBusy(true)
-        setError(null)
-        try {
-          const data = await post('assistant-apply', { actions: plan.actions })
-          const detail = (data.done ?? []).map((item) => {
-            if (item.type === 'outline-update') {
-              return `第${item.number}章：${String(item.before?.title ?? '')} → ${String(item.after?.title ?? '')}${String(item.after?.synopsis ?? '') !== String(item.before?.synopsis ?? '') ? '（梗概已改）' : ''}`
-            }
-            if (item.type === 'chapter-edit') return `第${item.number}章正文已改写`
-            if (item.type === 'setting-update') return `写作设定：${(item.fields ?? []).join('、')}`
-            if (item.type === 'generate') return `已生成第${item.from}–${item.to}章大纲`
-            return item.type
-          }).join('\n')
-          setMessages((list) => [...list, { role: 'assistant', content: `执行完成：\n${detail}` }])
-          setApplied(data.done ?? [])
-          setPlan(null)
-          onApplied?.()
-        } catch (err) {
-          setError(err.message)
-        } finally {
-          setBusy(false)
-        }
-      }
-      return h('div', { className: 'nw-assist nw-assist-embedded' },
-              h('div', { className: 'nw-assist-head' },
-                h('span', null, '小说助手'),
-                h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => onClose?.() }, '收起'),
-              ),
-              h('div', { className: 'nw-assist-msgs', ref: msgsRef },
-                messages.length === 0
-                  ? h('div', { className: 'nw-muted' }, '可以讨论、提意见、让它改章；讨论不会动文件，改章会先给计划再执行。')
-                  : null,
-                messages.map((item, index) => h('div', { key: index, className: `nw-assist-msg ${item.role}` },
-                  item.thinking
-                    ? h('details', { className: 'nw-assist-think' },
-                        h('summary', null, '思考'),
-                        h('div', null, item.thinking),
-                      )
-                    : null,
-                  item.role === 'assistant'
-                    ? h('div', { className: 'nw-md' }, renderMarkdown(item.content))
-                    : item.content,
-                )),
-                live
-                  ? h('div', { className: 'nw-assist-msg assistant' },
-                      live.thinking
-                        ? h('details', { className: 'nw-assist-think', open: true },
-                            h('summary', null, '思考中…'),
-                            h('div', null, live.thinking),
-                          )
-                        : null,
-                      live.text ? h('div', { className: 'nw-assist-stream' }, live.text) : null,
-                    )
-                  : (busy ? h('div', { className: 'nw-assist-msg assistant' }, '思考中…') : null),
-              ),
-              plan
-                ? h('div', { className: 'nw-assist-plan' },
-                    h('div', { className: 'nw-eyebrow' }, '变更计划'),
-                    h('div', { className: 'nw-muted' }, plan.summary || '按以下动作调整'),
-                    (plan.actions ?? []).map((action, index) => h('div', { key: index, className: 'nw-assist-action' },
-                      action.type === 'outline-update'
-                        ? `第${action.number}章：${String(action.before?.title ?? '（空）')} → ${String(action.after?.title ?? action.fields?.title ?? '（改）')}${action.fields?.synopsis ? '；梗概重写' : ''}`
-                        : action.type === 'chapter-edit'
-                          ? `第${action.number}章正文：按指令改写`
-                          : action.type === 'bible-update'
-                            ? `设定：${action.category ?? 'characters'} · ${action.name ?? action.id}（${Object.keys(action.fields ?? {}).join('、')}）`
-                            : action.type === 'bible-delete'
-                              ? `删除设定：${action.category ?? 'characters'} · ${action.name ?? action.id}`
-                              : action.type === 'chapter-delete'
-                                ? `删除第${action.number}章正文`
-                                : action.type === 'outline-delete'
-                                  ? `删除尾部 ${action.count} 章章纲`
-                                  : action.type === 'volume-delete'
-                                    ? `删除卷：${action.volumeId}`
-                                    : action.type === 'style-update'
-                              ? `文风契约：${Object.keys(action.fields ?? {}).join('、')}`
-                              : action.type === 'prompt-update'
-                                ? '提示词注入'
-                                : action.type === 'volume-update'
-                                  ? `卷：${action.volumeId}（${Object.keys(action.fields ?? {}).join('、')}）`
-                                  : action.type === 'setting-update'
-                              ? `设定：${Object.keys(action.fields ?? {}).join('、')}`
-                              : action.type === 'generate'
-                                ? `生成：${action.kind ?? '大纲'} ${action.count ?? ''} 章`
-                                : action.type,
-                    )),
-                    h('div', { className: 'nw-row' },
-                      h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: apply }, busy ? '执行中…' : '执行'),
-                      h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setPlan(null) }, '取消'),
-                    ),
-                  )
-                : null,
-              applied && applied.length > 0
-                ? h('div', { className: 'nw-row' },
-                    h('span', { className: 'nw-muted' }, `已改 ${applied.length} 处`),
-                    h('button', {
-                      type: 'button',
-                      className: 'nw-btn ghost',
-                      disabled: busy,
-                      onClick: async () => {
-                        setBusy(true)
-                        setError(null)
-                        try {
-                          await post('assistant-undo', {})
-                          setMessages((list) => [...list, { role: 'assistant', content: '已撤销上一批修改' }])
-                          setApplied(null)
-                          onApplied?.()
-                        } catch (err) {
-                          setError(err.message)
-                        } finally {
-                          setBusy(false)
-                        }
-                      },
-                    }, '撤销'),
-                  )
-                : null,
-              error ? h('div', { className: 'nw-error' }, error) : null,
-              h('div', { className: 'nw-assist-input' },
-                h('textarea', {
-                  value: input,
-                  placeholder: '想改什么、想问什么都可以说；讨论不会动文件，改章会先给计划。（Enter 发送，Shift+Enter 换行）',
-                  onChange: (event) => setInput(event.target.value),
-                  onKeyDown: (event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      send()
-                    }
-                  },
-                }),
-                h('div', { className: 'nw-assist-input-row' },
-                  h('span', { className: 'nw-muted' }, busy ? '思考中…' : ''),
-                  h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !input.trim(), onClick: send }, busy ? '…' : '发送'),
-                ),
-              ),
       )
     }
 
@@ -2001,11 +1717,16 @@ window.__ModuleLoader__.load({
       const [clock, setClock] = useState(Date.now())
       const [taskOpen, setTaskOpen] = useState(true)
       const [runStages, setRunStages] = useState({})
+      const [liveLocks, setLiveLocks] = useState([])
       const [recentTasks, setRecentTasks] = useState([])
       const [queued, setQueued] = useState([])
       const queuedRef = useRef([])
       const [error, setError] = useState(null)
       const [toast, setToast] = useState(null)
+      // 手动/自动同步共用的按钮状态：idle | busy | done
+      const [syncState, setSyncState] = useState('idle')
+      const syncBusyRef = useRef(false)
+      const lastAutoSyncToastRef = useRef(0)
       const [runDetail, setRunDetail] = useState(null)
       const [runFilter, setRunFilter] = useState('all')
       const [tab, setTabState] = useState(() => readStoredTab() ?? 'project')
@@ -2022,8 +1743,6 @@ window.__ModuleLoader__.load({
       const busy = Object.keys(running).some((key) => running[key]?.tab === tab)
       const anyBusy = Object.keys(running).length > 0
       const [inspTab, setInspTab] = useState('flow')
-      const [discussion, setDiscussion] = useState(null)
-      const discussionAbortRef = useRef(null)
       const [lastAction, setLastAction] = useState(null)
       const [focus, setFocus] = useState(false)
       const [inspWidth, setInspWidth] = useState(() => {
@@ -2093,6 +1812,37 @@ window.__ModuleLoader__.load({
         return data
       }
 
+      /*
+       * 手动刷新与自动刷新共用同一个入口：重新拉项目状态，并在顶部按钮上给出反馈。
+       * 自动刷新只提示「同步了改动」且限频；手动刷新失败会明确报错。
+       */
+      const syncNow = async ({ manual = false } = {}) => {
+        if (!root || syncBusyRef.current) return
+        syncBusyRef.current = true
+        setSyncState('busy')
+        try {
+          await load(root)
+          setSyncState('done')
+          if (manual) {
+            setToast('已同步最新数据')
+          } else if (Date.now() - lastAutoSyncToastRef.current > 12000) {
+            lastAutoSyncToastRef.current = Date.now()
+            setToast('已同步写作助手的改动')
+          }
+        } catch (failure) {
+          setSyncState('idle')
+          if (manual) setToast(`同步失败：${String(failure?.message ?? failure)}`)
+        } finally {
+          syncBusyRef.current = false
+        }
+      }
+
+      useEffect(() => {
+        if (syncState !== 'done') return undefined
+        const timer = setTimeout(() => setSyncState('idle'), 1600)
+        return () => clearTimeout(timer)
+      }, [syncState])
+
       useEffect(() => {
         if (!root) {
           setState(null)
@@ -2101,7 +1851,6 @@ window.__ModuleLoader__.load({
         let alive = true
         setLoading(true)
         setError(null)
-        setDiscussion(null)
         fetchProjectState(root)
           .then((data) => {
             if (!alive) return
@@ -2135,41 +1884,103 @@ window.__ModuleLoader__.load({
       }, [busy])
 
       useEffect(() => {
-        if (!anyBusy) return undefined
+        if (!anyBusy && liveLocks.length === 0) return undefined
         const timer = setInterval(() => setClock(Date.now()), 1000)
         return () => clearInterval(timer)
-      }, [anyBusy])
+      }, [anyBusy, liveLocks.length])
 
       useEffect(() => {
-        if (!anyBusy || !root) {
+        if (!root) {
           setRunStages({})
+          setLiveLocks([])
           return undefined
         }
         let alive = true
+        let inflight = false
         const poll = async () => {
+          if (!alive || inflight) return
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+          inflight = true
           try {
             const response = await fetch(
               `/novel-writer/project-runs?projectRoot=${encodeURIComponent(root)}`,
               { cache: 'no-store' },
             )
             const payload = await response.json()
-            if (!alive || !payload.ok) return
+            if (!alive || !payload?.ok) return
+            const { runs, locks } = parseRunsPayload(payload.data)
             const next = {}
-            for (const item of payload.data ?? []) {
+            for (const item of runs) {
               if (item?.resource) next[item.resource] = item
             }
-            setRunStages(next)
+            setRunStages((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
+            setLiveLocks((prev) => (JSON.stringify(prev) === JSON.stringify(locks) ? prev : locks))
+            setState((prev) => {
+              if (!prev) return prev
+              const known = Array.isArray(prev.activeLocks) ? prev.activeLocks : []
+              if (JSON.stringify(known) === JSON.stringify(locks)) return prev
+              return { ...prev, activeLocks: locks }
+            })
           } catch {
             // progress is best-effort
+          } finally {
+            inflight = false
           }
         }
         poll()
-        const timer = setInterval(poll, 1000)
+        const timer = setInterval(poll, 2000)
         return () => {
           alive = false
           clearInterval(timer)
         }
-      }, [anyBusy, root])
+      }, [root])
+
+      /*
+       * 写作助手在对话里直接改文件，Host 不会给页面推送事件，所以轮询一个轻量指纹：
+       * 发现大纲/卷/章节被改动就重载页面数据，省得用户切走再切回来。
+       */
+      useEffect(() => {
+        if (!root) return undefined
+        let alive = true
+        let known = null
+        let inflight = false
+        const poll = async () => {
+          if (!alive || inflight) return
+          inflight = true
+          try {
+            const response = await fetch(
+              `/novel-writer/project-signature?projectRoot=${encodeURIComponent(root)}`,
+              { cache: 'no-store' },
+            )
+            const payload = await response.json().catch(() => null)
+            const signature = payload?.ok ? payload.data?.signature ?? null : null
+            if (!alive || !signature) return
+            if (known === null) {
+              known = signature
+              return
+            }
+            if (known === signature) return
+            known = signature
+            await syncNow({ manual: false })
+          } catch {
+            // 轮询失败不影响写作台正常使用
+          } finally {
+            inflight = false
+          }
+        }
+        // 后台标签页会被浏览器降频，切回前台时立刻补一次
+        const onVisible = () => {
+          if (document.visibilityState === 'visible') poll()
+        }
+        document.addEventListener('visibilitychange', onVisible)
+        poll()
+        const timer = setInterval(poll, 2500)
+        return () => {
+          alive = false
+          clearInterval(timer)
+          document.removeEventListener('visibilitychange', onVisible)
+        }
+      }, [root])
 
       useEffect(() => {
         if (!toast) return undefined
@@ -2219,6 +2030,11 @@ window.__ModuleLoader__.load({
         const resource = actionResource(action, params, state?.lockRules)
         if (resource && runningConflict(runningRef.current, resource)) {
           enqueueTask(action, params, options, resource)
+          return
+        }
+        // 助手/其它窗口已占用的资源：不发请求，直接提示（按钮侧也会 disabled）。
+        if (resource && locksConflictWith(resource, state?.activeLocks)) {
+          setToast('写作助手正在处理该资源，请稍候再试')
           return
         }
         if (resource) {
@@ -2349,199 +2165,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const discussionAutoConfirmKey = (topicId) => `dsh.novelWriter.discussionAutoConfirm.${encodeURIComponent(root ?? '')}.${topicId}`
-      const readDiscussionAutoConfirm = (topicId) => {
-        try { return localStorage.getItem(discussionAutoConfirmKey(topicId)) === '1' } catch { return false }
-      }
-      const storeDiscussionAutoConfirm = (topicId, value) => {
-        try { localStorage.setItem(discussionAutoConfirmKey(topicId), value ? '1' : '0') } catch { /* ignore */ }
-      }
-      const openDiscussion = async (topicId, topic, item) => {
-        setInspTab('discuss')
-        setDiscussion({ topicId, topic, item, messages: [], loading: true, error: null, context: '', autoConfirm: readDiscussionAutoConfirm(topicId) })
-        try {
-          const thread = await fetchDiscussion(root, topicId)
-          setDiscussion({ topicId, topic, item, messages: thread.messages ?? [], loading: false, error: null, context: '', autoConfirm: readDiscussionAutoConfirm(topicId) })
-        } catch (err) {
-          setDiscussion((prev) => (prev ? { ...prev, loading: false, error: String(err?.message ?? err) } : prev))
-        }
-      }
-
-      const sendDiscussion = async (text) => {
-        if (!root || !discussion || !text.trim()) return
-        if (discussionAbortRef.current) discussionAbortRef.current.abort()
-        const controller = new AbortController()
-        discussionAbortRef.current = controller
-        setDiscussion((prev) => ({ ...prev, loading: true, stopped: false, error: null, streamText: '', context: '' }))
-        try {
-          const result = await postDiscussionStream(root, {
-            topicId: discussion.topicId,
-            topic: discussion.topic,
-            item: discussion.item,
-            message: text,
-          }, (raw) => {
-            const partial = extractReplyPartial(raw)
-            if (!partial) return
-            setDiscussion((prev) => (prev ? { ...prev, streamText: partial } : prev))
-          }, controller.signal)
-          setDiscussion((prev) => ({
-            ...prev,
-            messages: result.messages ?? [],
-            loading: false,
-            stopped: false,
-            streamText: '',
-            context: result.context ?? '',
-          }))
-        } catch (err) {
-          const aborted = controller.signal.aborted || err?.name === 'AbortError'
-          setDiscussion((prev) => ({
-            ...prev,
-            loading: false,
-            stopped: aborted,
-            error: aborted ? '已停止生成' : String(err?.message ?? err),
-          }))
-        } finally {
-          if (discussionAbortRef.current === controller) discussionAbortRef.current = null
-        }
-      }
-
-      const stopDiscussion = () => {
-        discussionAbortRef.current?.abort()
-        discussionAbortRef.current = null
-      }
-
-      const applyDiscussionResult = async (action, currentDiscussion, message, selectedIndexes = null, autoConfirm = false) => {
-        try {
-          const allActions = Array.isArray(message.result?.actions) ? message.result.actions : []
-          const selectedActions = Array.isArray(selectedIndexes)
-            ? allActions.filter((_, index) => selectedIndexes.includes(index))
-            : allActions
-          const number =
-            currentDiscussion.item?.number ??
-            Number(String(currentDiscussion.topicId).match(/chapter-(\d+)/)?.[1]) ??
-            null
-          const suggestions = Array.isArray(message.result?.suggestions)
-            ? message.result.suggestions.map((item) => String(item)).filter(Boolean)
-            : []
-          const actionInstructions = selectedActions
-            .filter((item) => item?.type === 'chapter-instruction')
-            .map((item) => String(item.instruction ?? '').trim())
-            .filter(Boolean)
-          const detailText = suggestions.length
-            ? `${message.result?.conclusion ? `结论：${message.result.conclusion}\n\n` : ''}具体改法：\n${suggestions.map((item) => `- ${item}`).join('\n')}`
-            : (message.result?.conclusion || cleanDiscussionText(message.text))
-          const revisionInstruction = actionInstructions.length
-            ? actionInstructions.join('\n')
-            : detailText
-          const data = await postDiscussionApply(root, {
-            action,
-            topicId: currentDiscussion.topicId,
-            topic: currentDiscussion.topic,
-            reply: message.text,
-            result: message.result ?? {},
-            item: currentDiscussion.item,
-            actions: selectedActions,
-            number,
-            instruction: action === 'instruction' ? revisionInstruction : detailText,
-          })
-          if (action === 'actions') {
-            await load()
-            const items = Array.isArray(data.appliedItems) ? data.appliedItems : []
-            const landed = items
-              .map((item) => {
-                if (item.type === 'chapter-instruction') return `第 ${item.number} 章修订要求`
-                if (item.type === 'outline-update') return `章纲「${item.chapterId ?? ''}」`
-                if (item.type === 'bible-update') return `设定「${item.entryId ?? ''}」`
-                if (item.type === 'style-update') return '文风字段'
-                if (item.type === 'premise-candidate-update') return '构思候选'
-                return item.type
-              })
-              .join('、')
-            if (data.applyId) {
-              setDiscussion((prev) => (prev ? {
-                ...prev,
-                lastApply: { id: data.applyId, landed, items, errors: data.errors ?? [] },
-              } : prev))
-            }
-            setToast(`已应用 ${data.appliedCount ?? 0} 项：${landed || '见讨论记录'}${data.errors?.length ? `（${data.errors.length} 项失败）` : ''}`)
-            const chapterActions = selectedActions.filter((item) => item.type === 'chapter-instruction')
-            if (autoConfirm) {
-              storeDiscussionAutoConfirm(currentDiscussion.topicId, true)
-              setDiscussion((prev) => (prev ? { ...prev, autoConfirm: true } : prev))
-            }
-            const revisions = new Map()
-            for (const actionItem of chapterActions) {
-              const targetNumber = Number(actionItem.target?.number ?? number)
-              const instruction = String(actionItem.instruction ?? '').trim()
-              if (!Number.isFinite(targetNumber) || !instruction) continue
-              revisions.set(targetNumber, revisions.has(targetNumber) ? `${revisions.get(targetNumber)}\n${instruction}` : instruction)
-            }
-            for (const [targetNumber, instruction] of revisions) {
-              const chapterInfo = (state?.chapters ?? []).find((item) => Number(item.number) === Number(targetNumber))
-              if (chapterInfo?.hasDraft || chapterInfo?.hasFinal) {
-                await run('chapter-revise', { number: targetNumber, instruction }, { toast: `第 ${targetNumber} 章已按讨论结果重写` })
-              }
-            }
-            try {
-              window.dispatchEvent(new CustomEvent('nw-chapters-refresh'))
-            } catch {
-              // non-browser
-            }
-            return
-          }
-          if (action === 'instruction') {
-            try {
-              window.dispatchEvent(new CustomEvent('nw-instruction-updated', {
-                detail: { number: data.number ?? number, instruction: data.instruction ?? detailText },
-              }))
-            } catch {
-              // non-browser
-            }
-            setToast('已写入本章修订要求（含具体改法）')
-            return
-          }
-          setToast(`已保存备注：${data.path}`)
-        } catch (err) {
-          setDiscussion((prev) => (prev ? { ...prev, error: String(err?.message ?? err) } : prev))
-        }
-      }
-
-      const cleanDiscussionText = (text) => {
-        const raw = String(text ?? '').trim()
-        if (!raw.startsWith('{')) return raw
-        const match = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/)
-        if (match) {
-          try {
-            return JSON.parse(`"${match[1]}"`)
-          } catch {
-            return match[1]
-          }
-        }
-        return raw
-      }
-
-      const copyDiscussionText = async (text) => {
-        try {
-          await navigator.clipboard.writeText(text)
-          setToast('已复制')
-        } catch {
-          setToast('复制失败，请手动选择文本')
-        }
-      }
-
-      const undoDiscussionApply = async () => {
-        const applyId = discussion?.lastApply?.id
-        if (!applyId) return
-        try {
-          await postDiscussionApply(root, { action: 'undo', applyId })
-          await load()
-          setDiscussion((prev) => (prev ? { ...prev, lastApply: null } : prev))
-          setToast('已撤销讨论应用')
-        } catch (error) {
-          setDiscussion((prev) => (prev ? { ...prev, error: String(error?.message ?? error) } : prev))
-        }
-      }
-
       if (!root) {
         return h(ProjectPicker, { onPick: pickProject, onManual: (path) => { storeRoot(path); setRoot(path) } })
       }
@@ -2599,7 +2222,13 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'nw-btn ghost', title: '专注模式（Esc 退出）', onClick: () => setFocus((value) => !value) }, focus ? '退出专注' : '专注'),
           busy
             ? h('button', { type: 'button', className: 'nw-btn danger', onClick: cancel }, h('span', { className: 'nw-spinner' }), `${elapsed}s`)
-            : h('button', { type: 'button', className: 'nw-btn ghost icon', title: '刷新', onClick: () => load().catch(() => {}) }, '↻'),
+            : h('button', {
+                type: 'button',
+                className: 'nw-btn ghost icon',
+                title: syncState === 'busy' ? '正在同步…' : '刷新项目数据（写作助手的改动会自动同步）',
+                disabled: syncState === 'busy',
+                onClick: () => syncNow({ manual: true }),
+              }, syncState === 'busy' ? '…' : syncState === 'done' ? '✓' : '↻'),
           anyBusy || queued.length
             ? h('button', { type: 'button', className: 'nw-btn ghost', title: '查看并行任务', onClick: () => setTaskOpen((value) => !value) }, `任务 ${Object.keys(running).length + queued.length}`)
             : null,
@@ -2638,19 +2267,19 @@ window.__ModuleLoader__.load({
           : !state.initialized
             ? h(InitView, { state, run, busy })
             : tab === 'project'
-              ? h(ProjectView, { state, run, busy, catalog, goTo: setTab, setToast })
+              ? h(ProjectView, { state, run, busy, catalog, goTo: setTab, setToast, setFocusChapter })
               : tab === 'premise'
-                ? h(PremiseView, { state, run, busy, direction, setDirection, goTo: setTab, openDiscussion, setToast })
+                ? h(PremiseView, { state, run, busy, direction, setDirection, goTo: setTab, setToast })
                 : tab === 'style'
-                  ? h(StyleView, { state, run, busy, openDiscussion, setToast })
+                  ? h(StyleView, { state, run, busy, setToast })
                   : tab === 'bible'
                     ? h(BibleView, {
-                        state, run, busy, openDiscussion, setToast,
+                        state, run, busy, setToast,
                         onOpenOutline: (number) => { setFocusChapter(number); setTab('outline') },
                       })
                     : tab === 'outline' || tab === 'chapters'
                       ? h(ChapterWorkspace, {
-                          state, root, run, busy, openDiscussion, setToast,
+                          state, root, run, busy, setToast,
                           focusChapter,
                           mode: tab,
                           setTab,
@@ -2752,7 +2381,6 @@ window.__ModuleLoader__.load({
                     ['style', '文风'],
                     ['bible', '设定'],
                     ['premise', '构思'],
-                    ['discussion', '讨论'],
                     ['deconstruct', '拆书'],
                   ].map(([id, label]) => h('option', { key: id, value: id }, label))),
                   h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, `${runs.length} 条`),
@@ -2804,7 +2432,7 @@ window.__ModuleLoader__.load({
       const deskConversation = (() => {
         try {
           return props?.renderSlot
-            ? props.renderSlot('deepnovel.desk.conversation', { projectRoot: root })
+            ? props.renderSlot('deepnovel.desk.conversation', { projectRoot: root, run, setToast })
             : null
         } catch (failure) {
           return h('div', { className: 'nw-empty' }, `对话加载失败：${failure?.message ?? failure}`)
@@ -2820,35 +2448,21 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-insp-body' },
           inspTab === 'assistant'
             ? deskConversation
-            : inspTab === 'discuss'
-            ? h(DiscussionPanel, {
-                discussion,
-                onSend: sendDiscussion,
-                onApplyInstruction: (message) => applyDiscussionResult('instruction', discussion, message),
-                onSaveNote: (message) => applyDiscussionResult('note', discussion, message),
-                onApplyActions: (message, selectedIndexes, autoConfirm) => applyDiscussionResult('actions', discussion, message, selectedIndexes, autoConfirm),
-                onToggleAutoConfirm: () => {
-                  const next = !discussion?.autoConfirm
-                  if (discussion?.topicId) storeDiscussionAutoConfirm(discussion.topicId, next)
-                  setDiscussion((prev) => (prev ? { ...prev, autoConfirm: next } : prev))
-                },
-                onUndoApply: undoDiscussionApply,
-                onCopy: copyDiscussionText,
-                onStop: stopDiscussion,
-                onClose: () => setInspTab('flow'),
-              })
             : flowInspector,
         ),
       )
 
       const taskEntries = Object.entries(running)
       const queuedEntries = queued
-      const taskDock = taskEntries.length || queuedEntries.length
+      const otherLocks = visibleLocks(state?.activeLocks, liveLocks, root)
+      const taskDock = taskEntries.length || queuedEntries.length || otherLocks.length
         ? h('div', { className: `nw-task-dock${taskOpen ? ' open' : ' collapsed'}` },
             h('div', { className: 'nw-task-head' },
-              h('div', { className: 'nw-task-title' }, `运行中 ${taskEntries.length}${queuedEntries.length ? ` · 排队 ${queuedEntries.length}` : ''}`),
+              h('div', { className: 'nw-task-title' }, `运行中 ${taskEntries.length}${otherLocks.length ? ` · 助手 ${otherLocks.length}` : ''}${queuedEntries.length ? ` · 排队 ${queuedEntries.length}` : ''}`),
               h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setTaskOpen((value) => !value) }, taskOpen ? '收起' : '展开'),
-              h('button', { type: 'button', className: 'nw-btn danger', onClick: cancel }, '全部取消'),
+              taskEntries.length || queuedEntries.length
+                ? h('button', { type: 'button', className: 'nw-btn danger', onClick: cancel }, '全部取消')
+                : null,
             ),
             taskOpen
               ? h('div', { className: 'nw-task-list' },
@@ -2879,6 +2493,18 @@ window.__ModuleLoader__.load({
                       ),
                     ),
                   ),
+                  otherLocks.map((lock) => {
+                    const parsedStart = Number.isFinite(Number(lock.startedAt))
+                      ? Number(lock.startedAt)
+                      : (Date.parse(String(lock.startedAt ?? '')) || clock)
+                    return h('div', { key: `lock-${lock.owner ?? ''}-${lock.resource}`, className: 'nw-task-row', title: '由写作助手发起，可在 AI 页停止' },
+                      h('span', { className: 'nw-spinner' }),
+                      h('div', { className: 'nw-task-main' },
+                        h('div', { className: 'nw-task-label' }, `${lockOwnerLabel(lock.owner)} · ${lockResourceLabel(lock.resource)}`),
+                        h('div', { className: 'nw-muted' }, `占用中 · ${Math.max(0, Math.floor((clock - parsedStart) / 1000))}s · 由写作助手发起，可在 AI 页停止`),
+                      ),
+                    )
+                  }),
                   h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, '同资源任务自动排队；不同章节/阶段可并行。'),
                 )
               : null,
@@ -2969,250 +2595,6 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-      )
-    }
-
-    function DiscussionPanel({ discussion, onSend, onApplyInstruction, onSaveNote, onApplyActions, onUndoApply, onCopy, onClose, onStop, onToggleAutoConfirm }) {
-      const [text, setText] = useState('')
-      const [pendingMessage, setPendingMessage] = useState(null)
-      const [pendingSelected, setPendingSelected] = useState([])
-      const [autoConfirmNext, setAutoConfirmNext] = useState(false)
-      useEffect(() => { setText(''); setPendingMessage(null); setPendingSelected([]); setAutoConfirmNext(false) }, [discussion?.topicId])
-      if (!discussion) {
-        return h('div', { className: 'nw-empty' },
-          h('div', { className: 'nw-empty-icon' }, h(QuillIcon)),
-          h('div', { className: 'nw-empty-title' }, '按需讨论'),
-          h('div', { className: 'nw-muted' }, '在任意构思、文风、章纲或章节旁点「讨论」，这里会开一个只针对该对象的讨论线程。'),
-        )
-      }
-      const canApplyInstruction = /^chapter-\d+/.test(String(discussion.topicId))
-      const lastUser = [...(discussion.messages ?? [])].reverse().find((message) => message.role === 'user')?.text ?? ''
-      const renderList = (label, items) => {
-        if (!Array.isArray(items) || items.length === 0) return null
-        return h('div', { className: 'nw-result-group' },
-          h('div', { className: 'nw-result-label' }, label),
-          items.slice(0, 6).map((item, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${item}`)),
-        )
-      }
-      const targetLabel = (action) => {
-        const target = action.target
-        if (!target) return ''
-        if (target.kind === 'chapter') return `第 ${target.number ?? '?'} 章`
-        if (target.kind === 'outline') return `第 ${target.number ?? target.id ?? '?'} 章章纲`
-        if (target.kind === 'bible') return `设定 ${target.category ?? ''}${target.id ? ` · ${target.id}` : ''}`
-        if (target.kind === 'style') return '文风'
-        if (target.kind === 'premise') return `构思 ${target.id ?? ''}`
-        return ''
-      }
-      const actionSummary = (action) => {
-        const prefix = targetLabel(action) ? `[${targetLabel(action)}] ` : ''
-        if (action.type === 'chapter-instruction') return `${prefix}重写正文：${String(action.instruction ?? '').slice(0, 100)}`
-        if (action.type === 'outline-update') return `${prefix}修改章纲：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'bible-update') return `${prefix}修改设定：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'style-update') return `${prefix}修改文风：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        if (action.type === 'premise-candidate-update') return `${prefix}修改构思：${Object.entries(action.fields ?? {}).map(([key, value]) => `${key}=${String(value).slice(0, 40)}`).join('；')}`
-        return action.type
-      }
-      const formatFieldValue = (value) => {
-        if (value === undefined || value === null || value === '') return '（空）'
-        if (Array.isArray(value)) return value.join('、')
-        return String(value).slice(0, 160)
-      }
-      const currentFieldValue = (action, key) => {
-        const item = discussion?.item ?? {}
-        if (action.type === 'style-update') return item.fields?.[key]
-        return item[key]
-      }
-      return h('div', { className: 'nw-discuss' },
-        h('div', { className: 'nw-discuss-head' },
-          h('div', { className: 'nw-eyebrow' }, '讨论'),
-          h('div', { className: 'nw-h3' }, discussion.topic),
-          h('div', { className: 'nw-muted' }, '讨论只针对这个对象。确认应用后：章节会写入修订要求并重写正文，章纲/设定/文风/构思会直接更新字段；「仅存备注」只存档，不改文件。'),
-          discussion.autoConfirm
-            ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } },
-                h('span', { style: { flex: 1 } }, '本线程已开启自动确认：后续讨论产生的修改会直接执行。'),
-                h('button', { type: 'button', className: 'nw-btn', onClick: () => onToggleAutoConfirm?.() }, '关闭自动确认'),
-              )
-            : null,
-          discussion.context
-            ? h('details', { className: 'nw-qa-details', style: { marginTop: '5px' } },
-                h('summary', { className: 'nw-qa-summary-line' }, '查看本次注入的上下文'),
-                h('pre', { className: 'nw-pre', style: { maxHeight: '220px' } }, discussion.context),
-              )
-            : null,
-          discussion.lastApply
-            ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } },
-                h('div', null, `已应用${discussion.lastApply.landed ? `：${discussion.lastApply.landed}` : '这次讨论修改'}。`),
-                discussion.lastApply.errors?.length
-                  ? h('div', { className: 'nw-muted' }, `${discussion.lastApply.errors.length} 项失败`)
-                  : null,
-                h('button', { type: 'button', className: 'nw-btn', style: { marginTop: '4px' }, onClick: onUndoApply }, '撤销应用'),
-              )
-            : null,
-        ),
-        h('div', { className: 'nw-discuss-msgs' },
-          discussion.loading && (discussion.messages ?? []).length === 0 && !discussion.streamText
-            ? h('div', { className: 'nw-muted' }, '正在读取对象上下文…')
-            : (discussion.messages ?? []).map((message, index) => {
-                const result = message.result ?? {}
-                const hasResult =
-                  result.question ||
-                  (result.options ?? []).length ||
-                  result.conclusion ||
-                  (result.suggestions ?? []).length ||
-                  (result.todos ?? []).length ||
-                  (result.risks ?? []).length
-                return h('div', { key: index, className: `nw-msg ${message.role === 'assistant' ? 'assistant' : 'user'}` },
-                  h('div', { className: 'nw-msg-role' }, message.role === 'assistant' ? '助手' : '你'),
-                  h('div', { className: 'nw-msg-text' }, message.text),
-                  message.role === 'assistant' && (result.question || (result.options ?? []).length)
-                    ? h('div', { className: 'nw-result-actions' },
-                        result.question ? h('div', { className: 'nw-result-conclusion' }, result.question) : null,
-                        (result.options ?? []).length
-                          ? h('div', { className: 'nw-actions' },
-                              (result.options ?? []).map((option, optionIndex) =>
-                                h('button', {
-                                  key: optionIndex,
-                                  type: 'button',
-                                  className: 'nw-btn',
-                                  disabled: discussion.loading,
-                                  onClick: () => onSend?.(option),
-                                }, option),
-                              ),
-                            )
-                          : null,
-                        result.allowCustom !== false
-                          ? h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, '也可以直接在下方输入你自己的答案。')
-                          : null,
-                      )
-                    : null,
-                  hasResult
-                    ? h('div', { className: 'nw-result' },
-                        result.conclusion ? h('div', { className: 'nw-result-conclusion' }, result.conclusion) : null,
-                        renderList('建议', result.suggestions),
-                        renderList('待办', result.todos),
-                        renderList('风险', result.risks),
-                      )
-                    : null,
-                  (result.actions ?? []).length
-                    ? h('div', { className: 'nw-result-actions' },
-                        h('div', { className: 'nw-result-label' }, '可直接应用'),
-                        result.actions.map((action, actionIndex) =>
-                          h('div', { key: actionIndex, className: 'nw-result-item' }, `· ${actionSummary(action)}`),
-                        ),
-                        h('button', {
-                          type: 'button',
-                          className: 'nw-btn primary',
-                          onClick: () => {
-                            const all = result.actions.map((_, actionIndex) => actionIndex)
-                            if (discussion.autoConfirm) {
-                              onApplyActions?.(message, all, true)
-                              return
-                            }
-                            setPendingSelected(all)
-                            setAutoConfirmNext(false)
-                            setPendingMessage(message)
-                          },
-                        }, `应用这些修改（${result.actions.length}）`),
-                      )
-                    : null,
-                  message.role === 'assistant'
-                    ? h('div', { className: 'nw-msg-actions' },
-                        h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => onCopy?.(message.text) }, '复制'),
-                        canApplyInstruction
-                          ? h('button', { type: 'button', className: 'nw-btn', onClick: () => onApplyInstruction?.(message) }, '用作修订要求')
-                          : null,
-                        hasResult
-                          ? h('button', { type: 'button', className: 'nw-btn', onClick: () => onSaveNote?.(message) }, '仅存备注')
-                          : null,
-                      )
-                    : null,
-                )
-              }),
-          (discussion.loading || discussion.stopped) && discussion.streamText
-            ? h('div', { className: 'nw-msg assistant' },
-                h('div', { className: 'nw-msg-role' }, discussion.loading ? '助手 · 生成中' : '助手 · 已停止'),
-                h('div', { className: 'nw-msg-text' }, discussion.streamText),
-                discussion.loading
-                  ? h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, h('span', { className: 'nw-spinner' }), ' 正在结合章纲与设定…')
-                  : null,
-              )
-            : null,
-          discussion.error ? h('div', { className: 'nw-banner warn' }, discussion.error) : null,
-          !discussion.loading && lastUser && (discussion.stopped || discussion.error)
-            ? h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
-                h('button', { type: 'button', className: 'nw-btn', onClick: () => onSend(lastUser) }, '重试上一条'),
-              )
-            : null,
-        ),
-        h('div', { className: 'nw-discuss-input' },
-          h('input', {
-            className: 'nw-input',
-            value: text,
-            placeholder: '说说你想讨论/修改什么…',
-            onChange: (event) => setText(event.target.value),
-            onKeyDown: (event) => {
-              if (event.key === 'Enter' && text.trim() && !discussion.loading) {
-                event.preventDefault()
-                onSend(text)
-                setText('')
-              }
-            },
-          }),
-          discussion.loading
-            ? h('button', { type: 'button', className: 'nw-btn danger', onClick: onStop }, '停止')
-            : h('button', { type: 'button', className: 'nw-btn primary', disabled: !text.trim(), onClick: () => { onSend(text); setText('') } }, '发送'),
-        ),
-        pendingMessage
-          ? h('div', { className: 'nw-modal-backdrop' },
-              h('div', { className: 'nw-modal', style: { maxWidth: '560px' } },
-                h('h3', { className: 'nw-h3' }, '应用讨论修改'),
-                h('p', { className: 'nw-muted' }, canApplyInstruction
-                  ? '确认后会先写入修改字段；如果包含章节修订建议，会直接按建议重写本章正文。没有草稿时只写入修订要求。'
-                  : '确认后直接写入对应字段，刷新后会看到修改结果。'),
-                (pendingMessage.result?.actions ?? []).map((action, index) =>
-                  h('div', { key: index, style: { marginTop: '8px' } },
-                    h('label', { className: 'nw-row', style: { gap: '8px', alignItems: 'flex-start', cursor: 'pointer' } },
-                      h('input', {
-                        type: 'checkbox',
-                        checked: pendingSelected.includes(index),
-                        onChange: (event) => setPendingSelected((prev) => (
-                          event.target.checked ? [...new Set([...prev, index])] : prev.filter((item) => item !== index)
-                        )),
-                      }),
-                      h('div', null,
-                        h('div', { className: 'nw-label' }, actionSummary(action)),
-                        action.type === 'chapter-instruction'
-                          ? h('div', { className: 'nw-p' }, action.instruction)
-                          : Object.entries(action.fields ?? {}).map(([key, value]) =>
-                              h('div', { key, className: 'nw-kv' },
-                                h('span', { className: 'nw-muted' }, key),
-                                h('span', null, `${formatFieldValue(currentFieldValue(action, key))} → ${formatFieldValue(value)}`),
-                              ),
-                            ),
-                      ),
-                    ),
-                  ),
-                ),
-                h('label', { className: 'nw-row', style: { gap: '8px', marginTop: '10px', cursor: 'pointer' } },
-                  h('input', { type: 'checkbox', checked: autoConfirmNext, onChange: (event) => setAutoConfirmNext(event.target.checked) }),
-                  h('span', { className: 'nw-muted' }, '本线程不再询问，后续同类修改直接执行'),
-                ),
-                h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
-                  h('button', { type: 'button', className: 'nw-btn', onClick: () => setPendingMessage(null) }, '取消'),
-                  h('button', {
-                    type: 'button',
-                    className: 'nw-btn primary',
-                    disabled: pendingSelected.length === 0,
-                    onClick: () => {
-                      onApplyActions?.(pendingMessage, pendingSelected, autoConfirmNext)
-                      setPendingMessage(null)
-                    },
-                  }, canApplyInstruction ? '确认并重写正文' : '确认执行'),
-                ),
-              ),
-            )
-          : null,
       )
     }
 
@@ -3337,7 +2719,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function BibleView({ state, run, busy, openDiscussion, onOpenOutline, setToast }) {
+    function BibleView({ state, run, busy, onOpenOutline, setToast }) {
+      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const bible = state.bible ?? {
         status: 'missing',
         characters: [],
@@ -3357,6 +2740,7 @@ window.__ModuleLoader__.load({
         ['power', '能力'],
       ]
       const power = state.power ?? null
+      const library = Array.isArray(state.characterLibrary?.characters) ? state.characterLibrary.characters : []
       const [category, setCategory] = useState('characters')
       const [instruction, setInstruction] = usePersistedInput(state?.cwd, 'bibleInstruction')
       const [importOpen, setImportOpen] = useState(false)
@@ -3380,9 +2764,9 @@ window.__ModuleLoader__.load({
         }),
         h('div', { className: 'nw-card' },
           h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('bible-generate', { scope: 'all', instruction: instruction || undefined }, { toast: '设定已生成' }) }, busy ? '生成中…' : '生成全部设定'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('bible-generate', { scope: 'characters', instruction: instruction || undefined }, { toast: '角色已生成' }) }, '只生成角色'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('bible-generate', { scope: 'world', instruction: instruction || undefined }, { toast: '世界设定已生成' }) }, '只生成世界'),
+            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || Boolean(lockMsg('bible-generate', { scope: 'all' })), title: lockMsg('bible-generate', { scope: 'all' }) ?? undefined, onClick: () => run('bible-generate', { scope: 'all', instruction: instruction || undefined }, { toast: '设定已生成' }) }, busy ? '生成中…' : '生成全部设定'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('bible-generate', { scope: 'characters' })), title: lockMsg('bible-generate', { scope: 'characters' }) ?? undefined, onClick: () => run('bible-generate', { scope: 'characters', instruction: instruction || undefined }, { toast: '角色已生成' }) }, '只生成角色'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('bible-generate', { scope: 'world' })), title: lockMsg('bible-generate', { scope: 'world' }) ?? undefined, onClick: () => run('bible-generate', { scope: 'world', instruction: instruction || undefined }, { toast: '世界设定已生成' }) }, '只生成世界'),
             h('input', { className: 'nw-input', style: { flex: '1 1 240px', minWidth: '200px' }, value: instruction, placeholder: '生成要求（可留空）', disabled: busy, onChange: (event) => setInstruction(event.target.value) }),
             state.project?.writingNotes
               ? h('button', {
@@ -3405,7 +2789,7 @@ window.__ModuleLoader__.load({
                   },
                 }, '复制要求')
               : null,
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy || bible.characters.length === 0, onClick: () => run('bible-commit', {}, { next: 'outline', toast: '设定已确认，下一步：大纲' }) }, '确认设定'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || bible.characters.length === 0 || Boolean(lockMsg('bible-commit', {})), title: lockMsg('bible-commit', {}) ?? undefined, onClick: () => run('bible-commit', {}, { next: 'outline', toast: '设定已确认，下一步：大纲' }) }, '确认设定'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setImportOpen(true) }, '导入角色卡'),
             bible.status === 'confirmed' ? h('span', { className: 'nw-badge ok' }, '已确认') : null,
           ),
@@ -3445,11 +2829,57 @@ window.__ModuleLoader__.load({
                         category,
                         run,
                         busy,
-                        openDiscussion,
                         setToast,
                       }),
                     ),
                   ),
+        category === 'characters'
+          ? h('div', { className: 'nw-card', style: { marginTop: '12px' } },
+              h('div', { className: 'nw-row' },
+                h('h3', { className: 'nw-h3' }, '角色库'),
+                h('span', { className: 'nw-muted' }, `${library.length} 个角色`),
+                h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('library-characters', {}, { toast: '角色库已刷新' }) }, '刷新'),
+              ),
+              h('p', { className: 'nw-muted' }, '跨项目保存的角色卡；导入会把角色合并进本项目的设定，不会删除已有角色。'),
+              library.length === 0
+                ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有跨项目角色，先把角色卡存入库')
+                : h('div', { style: { marginTop: '6px' } },
+                    library.map((item) => {
+                      const sourceTitle = item?.source?.projectTitle
+                      const createdDate = typeof item?.createdAt === 'string' ? item.createdAt.slice(0, 10) : ''
+                      return h('div', { key: item?.id ?? `${item?.name ?? 'character'}-${createdDate}`, className: 'nw-row', style: { padding: '6px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+                        h('div', { style: { minWidth: 0, flex: 1 } },
+                          h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+                            h('span', { style: { fontSize: '12px', fontWeight: 600 } }, item?.name ?? item?.id ?? '未命名'),
+                            item?.role ? h('span', { className: 'nw-badge' }, item.role) : null,
+                          ),
+                          h('div', { className: 'nw-muted' },
+                            [sourceTitle ? `来自「${sourceTitle}」` : '', createdDate].filter(Boolean).join(' · ') || '—'),
+                        ),
+                        h('button', {
+                          type: 'button',
+                          className: 'nw-btn',
+                          disabled: busy || !item?.id,
+                          onClick: async () => {
+                            const result = await run('library-character-import', { id: item.id }, { silent: true })
+                            if (!result) return
+                            setToast?.(result.merged ? `已合并「${item.name ?? item.id}」` : `已导入「${item.name ?? item.id}」`)
+                          },
+                        }, '导入'),
+                        h('button', {
+                          type: 'button',
+                          className: 'nw-btn danger',
+                          disabled: busy || !item?.id,
+                          onClick: async () => {
+                            if (!(await requestConfirm({ title: '从角色库删除', message: `从角色库删除「${item?.name ?? item?.id}」？已导入到本项目的设定不会受影响。`, danger: true }))) return
+                            run('library-character-delete', { id: item.id }, { toast: '已从角色库删除' })
+                          },
+                        }, '删除'),
+                      )
+                    }),
+                  ),
+            )
+          : null,
         importOpen
           ? h('div', { className: 'nw-modal-backdrop', onClick: () => setImportOpen(false) },
               h('div', { className: 'nw-modal', onClick: (event) => event.stopPropagation() },
@@ -3510,6 +2940,7 @@ window.__ModuleLoader__.load({
     }
 
     function BibleRelationsGraph({ state, run, busy, setToast }) {
+      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const bible = state.bible ?? { characters: [] }
       const relations = state.relations?.relations ?? []
       const characters = (bible.characters ?? []).filter((item) => item.name)
@@ -3688,7 +3119,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-row' },
             h('h3', { className: 'nw-h3' }, '人物关系'),
             h('span', { className: 'nw-muted' }, `${characters.length} 人 · ${relations.length} 条关系`),
-            h('button', { type: 'button', className: 'nw-btn ghost', style: { marginLeft: 'auto' }, disabled: busy, onClick: resetLayout }, '重置布局'),
+            h('button', { type: 'button', className: 'nw-btn ghost', style: { marginLeft: 'auto' }, disabled: busy || Boolean(lockMsg('relations-save', {})), title: lockMsg('relations-save', {}) ?? undefined, onClick: resetLayout }, '重置布局'),
             h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: downloadSvg }, '导出 SVG'),
             h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: downloadPng }, '导出 PNG'),
             h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => downloadPng(true) }, '导出 PNG（透明）'),
@@ -3796,7 +3227,8 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button',
               className: 'nw-btn primary',
-              disabled: busy || !form.from || !form.to || form.from === form.to,
+              disabled: busy || !form.from || !form.to || form.from === form.to || Boolean(lockMsg('relations-save', {})),
+              title: lockMsg('relations-save', {}) ?? undefined,
               onClick: addRelation,
             }, '添加关系'),
           ),
@@ -3867,7 +3299,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function BibleEntryCard({ entry, category, run, busy, openDiscussion, setToast }) {
+    function BibleEntryCard({ entry, category, run, busy, setToast }) {
       const [fields, setFields] = useState({
         name: entry.name ?? '',
         role: entry.role ?? '',
@@ -3907,7 +3339,6 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'nw-card' },
         h('div', { className: 'nw-row' },
           h('div', { className: 'nw-eyebrow' }, entry.id ?? '新条目'),
-          h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => openDiscussion?.(`bible-${entry.id}`, `${fields.name || entry.id} 设定讨论`, { category, ...entry }) }, '讨论'),
         ),
         h('div', { className: 'nw-field' },
           h('label', { className: 'nw-label' }, '名称'),
@@ -3958,6 +3389,14 @@ window.__ModuleLoader__.load({
                   }
                 },
               }, '导出卡片')
+            : null,
+          category === 'characters'
+            ? h('button', {
+                type: 'button',
+                className: 'nw-btn ghost',
+                disabled: busy || !(fields.name || entry.name),
+                onClick: () => run('library-character-save', { name: fields.name || entry.name }, { toast: '已存入角色库' }),
+              }, '存入库')
             : null,
           h('button', {
             type: 'button',
@@ -4139,7 +3578,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterWorkspace({ state, root, run, busy, openDiscussion, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter }) {
+    function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter }) {
       const isOutline = mode === 'outline'
       return h('div', null,
         h('div', { className: 'nw-workspace-switch' },
@@ -4156,19 +3595,20 @@ window.__ModuleLoader__.load({
         ),
         isOutline
           ? h(OutlineWorkbench, {
-              state, run, busy, openDiscussion, setToast, focusChapter,
+              state, run, busy, setToast, focusChapter,
               onSelectChapter,
               onOpenChapter: (number) => openChapter?.(number),
             })
           : h(ChaptersWorkbench, {
-              state, root, run, busy, openDiscussion, setToast, focusChapter,
+              state, root, run, busy, setToast, focusChapter,
               onSelectChapter,
               onOpenOutline: (number) => openOutline?.(number),
             }),
       )
     }
 
-    function OutlineWorkbench({ state, run, busy, openDiscussion, setToast, focusChapter, onOpenChapter, onSelectChapter }) {
+    function OutlineWorkbench({ state, run, busy, setToast, focusChapter, onOpenChapter, onSelectChapter }) {
+      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const volumes = state.outline?.volumes ?? []
       const allChapters = flattenOutline(state.outline)
       const storedVolume = (() => {
@@ -4531,12 +3971,12 @@ window.__ModuleLoader__.load({
         ),
         h('div', { className: 'nw-card' },
           h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready, onClick: async () => { const result = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, busy ? '生成中…' : '生成后 3 章'),
+            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})), title: lockMsg('outline-generate', {}) ?? undefined, onClick: async () => { const result = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, busy ? '生成中…' : '生成后 3 章'),
             h('button', {
               type: 'button',
               className: 'nw-btn',
-              disabled: busy || !ready,
-              title: '分两批各生成 3 章，降低单次输出过长导致的失败率',
+              disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})),
+              title: lockMsg('outline-generate', {}) ?? '分两批各生成 3 章，降低单次输出过长导致的失败率',
               onClick: async () => {
                 const first = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true })
                 if (!first) return
@@ -4559,7 +3999,7 @@ window.__ModuleLoader__.load({
                 await run('outline-reverse', {}, { toast: '已从正文反推章纲' })
               },
             }, '从正文反推章纲'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !ready || chapters.length === 0, onClick: () => run('outline-commit', {}, { toast: '已确认全部章纲' }) }, '确认全部'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !ready || chapters.length === 0 || Boolean(lockMsg('outline-commit', {})), title: lockMsg('outline-commit', {}) ?? undefined, onClick: () => run('outline-commit', {}, { toast: '已确认全部章纲' }) }, '确认全部'),
             h('button', {
               type: 'button',
               className: 'nw-btn',
@@ -4613,7 +4053,8 @@ window.__ModuleLoader__.load({
                   h('button', {
                     type: 'button',
                     className: 'nw-btn primary',
-                    disabled: busy || !ready,
+                    disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})),
+                    title: lockMsg('outline-generate', {}) ?? undefined,
                     onClick: async () => {
                       const from = Math.min(regenFrom, regenTo)
                       const to = Math.max(regenFrom, regenTo)
@@ -4693,13 +4134,13 @@ window.__ModuleLoader__.load({
                                 className: 'nw-input',
                                 style: { width: 'auto', minWidth: '120px' },
                                 value: chapter.volumeId ?? volumeId ?? volumes[0]?.id,
-                                disabled: busy,
+                                disabled: busy || Boolean(lockMsg('chapter-move', { number: chapter.number })),
+                                title: lockMsg('chapter-move', { number: chapter.number }) ?? undefined,
                                 onChange: (event) => moveChapter(chapter.number, event.target.value),
                               }, volumes.map((volume) => h('option', { key: volume.id, value: volume.id }, volume.title)))
                             : null,
-                          h('button', { type: 'button', className: 'nw-btn', onClick: () => openDiscussion(`outline-${chapter.id}`, `第 ${chapter.number} 章纲要讨论`, chapter) }, '讨论'),
                           onOpenChapter ? h('button', { type: 'button', className: 'nw-btn', title: '跳到本章正文', onClick: () => onOpenChapter(chapter.number) }, '打开正文') : null,
-                          h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready, onClick: () => run('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number }, { toast: `第 ${chapter.number} 章已确认` }) }, '确认本章'),
+                          h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready || Boolean(lockMsg('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number })), title: lockMsg('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number }) ?? undefined, onClick: () => run('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number }, { toast: `第 ${chapter.number} 章已确认` }) }, '确认本章'),
                         ),
                       ),
                       h('div', { className: 'nw-grid-2' },
@@ -4725,7 +4166,7 @@ window.__ModuleLoader__.load({
                       ),
                       h('div', { className: 'nw-actions' },
                         h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !dirty, onClick: () => run('outline-update', { chapterId: chapter.id, fields }, { toast: `第 ${chapter.number} 章已保存（待确认）` }) }, '保存修改'),
-                        h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: async () => { const result = await run('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, '重生成本章'),
+                        h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number })), title: lockMsg('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number }) ?? undefined, onClick: async () => { const result = await run('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, '重生成本章'),
                         (() => {
                           const lastChapter = allChapters.reduce(
                             (max, item) => (Number(item.number) > Number(max?.number ?? 0) ? item : max),
@@ -4735,7 +4176,8 @@ window.__ModuleLoader__.load({
                             ? h('button', {
                                 type: 'button',
                                 className: 'nw-btn danger',
-                                disabled: busy,
+                                disabled: busy || Boolean(lockMsg('chapters-delete-tail', {})),
+                                title: lockMsg('chapters-delete-tail', {}) ?? undefined,
                                 onClick: async () => {
                                   const preview = await run('chapters-delete-tail', { count: 1, dryRun: true }, { silent: true })
                                   if (!preview) return
@@ -4758,7 +4200,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChaptersWorkbench({ state, root, run, busy, openDiscussion, setToast, focusChapter, onOpenOutline, onSelectChapter }) {
+    function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter }) {
+      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const allChapters = state.chapters ?? []
       const volumes = state.volumes ?? []
       const [volumeFilter, setVolumeFilter] = useState('all')
@@ -4819,25 +4262,6 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (Number.isFinite(selected)) onSelectChapter?.(selected)
       }, [selected])
-      useEffect(() => {
-        const onInstruction = (event) => {
-          const payload = event.detail ?? {}
-          if (Number(payload.number) === Number(selected) && payload.instruction) {
-            setInstruction(payload.instruction)
-            setToast('已把讨论建议写入本章修订要求')
-          }
-        }
-        const onRefresh = () => {
-          if (selected == null) return
-          fetchProjectChapter(root, selected).then((next) => setDetail(next)).catch(() => {})
-        }
-        window.addEventListener('nw-instruction-updated', onInstruction)
-        window.addEventListener('nw-chapters-refresh', onRefresh)
-        return () => {
-          window.removeEventListener('nw-instruction-updated', onInstruction)
-          window.removeEventListener('nw-chapters-refresh', onRefresh)
-        }
-      }, [selected, root])
       const [detail, setDetail] = useState(null)
       const [detailLoading, setDetailLoading] = useState(false)
       const [detailError, setDetailError] = useState(null)
@@ -4856,6 +4280,11 @@ window.__ModuleLoader__.load({
       const [rewritePreview, setRewritePreview] = useState(null)
       const [rejectedHunks, setRejectedHunks] = useState(() => new Set())
       const [previewLoading, setPreviewLoading] = useState(false)
+      const [deslopOpen, setDeslopOpen] = useState(false)
+      const [deslopLoading, setDeslopLoading] = useState(false)
+      const [deslopPreview, setDeslopPreview] = useState(null)
+      const [deslopApplying, setDeslopApplying] = useState(false)
+      const [deslopError, setDeslopError] = useState('')
       const [lastRewrite, setLastRewrite] = useState(null)
       const [continuity, setContinuity] = useState(null)
       const [continuitySelected, setContinuitySelected] = useState([])
@@ -4874,6 +4303,11 @@ window.__ModuleLoader__.load({
         setRewritePreview(null)
         setRejectedHunks(new Set())
         setLastRewrite(null)
+        setDeslopOpen(false)
+        setDeslopPreview(null)
+        setDeslopLoading(false)
+        setDeslopApplying(false)
+        setDeslopError('')
       }, [selected])
 
       useEffect(() => {
@@ -4921,11 +4355,6 @@ window.__ModuleLoader__.load({
         )
       }, [detail?.continuity?.checkedAt, selected])
 
-      useEffect(() => {
-        const pending = detail?.pendingInstruction
-        if (!pending?.instruction) return
-        setInstruction((prev) => (prev.trim() ? prev : pending.instruction))
-      }, [detail?.pendingInstruction?.createdAt, selected])
 
       const act = async (action, params) => {
         const result = await run(action, params)
@@ -5076,20 +4505,65 @@ window.__ModuleLoader__.load({
         setLastRewrite(null)
       }
 
+      const openDeslop = () => {
+        setDeslopOpen(true)
+        setDeslopPreview(null)
+        setDeslopError('')
+      }
+      const flavorText = (value) => {
+        if (!value) return '—'
+        if (typeof value === 'string') return value
+        return [value.level, value.score != null ? String(value.score) : ''].filter(Boolean).join(' · ') || '—'
+      }
+      const closeDeslop = () => {
+        if (deslopApplying) return
+        setDeslopOpen(false)
+        setDeslopPreview(null)
+        setDeslopError('')
+      }
+      const refreshChapterDetail = async () => {
+        if (selected == null) return
+        try {
+          setDetail(await fetchProjectChapter(root, selected))
+        } catch {
+          // 保留旧详情，由父级错误提示
+        }
+      }
+      const previewDeslop = async () => {
+        if (selected == null || deslopLoading) return
+        setDeslopLoading(true)
+        setDeslopError('')
+        try {
+          const result = await run('chapter-deslop', { number: selected, dryRun: true }, { silent: true, throwOnError: true })
+          if (result) setDeslopPreview(result)
+        } catch (error) {
+          setDeslopError(String(error?.message ?? error))
+        } finally {
+          setDeslopLoading(false)
+        }
+      }
+      const applyDeslop = async () => {
+        if (selected == null || deslopApplying) return
+        setDeslopApplying(true)
+        setDeslopError('')
+        try {
+          const result = await run('chapter-deslop', { number: selected }, { silent: true, throwOnError: true })
+          const changed = Number(result?.changed ?? (Array.isArray(result?.changes) ? result.changes.length : 0)) || 0
+          setDeslopOpen(false)
+          setDeslopPreview(null)
+          setToast?.(`已改写 ${changed} 处`)
+          await refreshChapterDetail()
+        } catch (error) {
+          setDeslopError(String(error?.message ?? error))
+        } finally {
+          setDeslopApplying(false)
+        }
+      }
+
       const startEditing = () => {
         setDraftText(detail?.draft ?? detail?.final ?? '')
         setEditing(true)
       }
-
-      const openChapterDiscussion = () => openDiscussion(
-        `chapter-${selected}`,
-        `第 ${selected} 章讨论`,
-        {
-          number: selected,
-          title: detail?.chapter?.title,
-          excerpt: (text ?? '').slice(0, 3000),
-        },
-      )
 
       const renderIssue = (issue, index) => {
         const paragraph = issue?.paragraph != null && Number.isFinite(Number(issue.paragraph)) ? Number(issue.paragraph) : null
@@ -5127,9 +4601,6 @@ window.__ModuleLoader__.load({
           } else if (key === 'a' && !busy) {
             event.preventDefault()
             runAudit()
-          } else if (key === 'd') {
-            event.preventDefault()
-            openChapterDiscussion()
           } else if (key === 'escape' && rangeStart != null) {
             event.preventDefault()
             clearSelection()
@@ -5342,7 +4813,7 @@ window.__ModuleLoader__.load({
           eyebrow: '05 / 章节',
           title: '逐章写作与审阅',
           status: (state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate',
-          desc: '左边选章，右边阅读与操作；讨论只针对当前章，不会把正文塞进会话历史。',
+          desc: '左边选章，右边阅读与操作；审校、修订与定稿都在本页完成。',
           hints: ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
         }),
         chapters.length === 0
@@ -5476,29 +4947,29 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'nw-sticky-actions' },
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || editing, title: '编辑正文（E）', onClick: startEditing }, editing ? '编辑中' : '编辑') : null,
                     h('button', { type: 'button', className: 'nw-btn ghost', title: '查看/编辑本章章纲', onClick: () => onOpenOutline?.(selected) }, '章纲'),
-                    h('button', { type: 'button', className: 'nw-btn', title: '讨论（D）', onClick: openChapterDiscussion }, '讨论'),
-                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim(), title: '按下方修订要求修订本章', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '按意见修订') : null,
+                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方修订要求修订本章', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '按意见修订') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '一次跑规则质检、风格检测与 AI 连续性检查', onClick: runCombinedReview }, '审校') : null,
-                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
+                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-autofix', { number: selected })), title: lockMsg('chapter-autofix', { number: selected }) ?? undefined, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
+                    hasDraft ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || Boolean(lockMsg('chapter-deslop', { number: selected })), title: lockMsg('chapter-deslop', { number: selected }) ?? '只改表达不改剧情，先预览改写结果', onClick: openDeslop }, '去 AI 味') : null,
                     hasDraft ? h('button', {
                       type: 'button',
                       className: 'nw-btn primary',
-                      disabled: busy || qa?.status === 'fail',
-                      title: qa?.status === 'fail'
+                      disabled: busy || qa?.status === 'fail' || Boolean(lockMsg('chapter-approve', { number: selected })),
+                      title: lockMsg('chapter-approve', { number: selected }) ?? (qa?.status === 'fail'
                         ? `规则质检未通过：${(qa.issues ?? []).filter((issue) => issue.level === 'error').map((issue) => issue.message).join('；') || '见质检详情'}`
-                        : '采纳为定稿',
+                        : '采纳为定稿'),
                       onClick: () => act('chapter-approve', { number: selected }),
                     }, hasFinal ? '重新定稿' : '定稿') : null,
-                    !hasDraft ? h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed', title: detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '生成本章草稿', onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, busy ? '生成中…' : '生成草稿') : null,
+                    !hasDraft ? h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '生成本章草稿'), onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, busy ? '生成中…' : '生成草稿') : null,
                     ),
                   h('div', { className: 'nw-sticky-actions nw-sticky-extra' },
                         h('button', { type: 'button', className: 'nw-btn', disabled: contextLoading, onClick: loadContext }, contextLoading ? '读取…' : '上下文'),
-                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || detail?.chapter?.status !== 'confirmed', title: detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '按当前章纲重新生成草稿', onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '重新生成草稿') : null,
+                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '按当前章纲重新生成草稿'), onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '重新生成草稿') : null,
                         hasDraft ? h('select', { className: 'nw-input', style: { width: '82px' }, value: polishMode, disabled: busy, onChange: (event) => setPolishMode(event.target.value) },
                           ['润色', '扩写', '缩写'].map((mode) => h('option', { key: mode, value: mode }, mode)),
                         ) : null,
-                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => polishChapter(polishMode) }, '润色') : null,
-                        hasFinal && nextChapter ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: writeNext }, `生成下一章（第 ${nextChapter.number} 章）`) : null,
+                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? undefined, onClick: () => polishChapter(polishMode) }, '润色') : null,
+                        hasFinal && nextChapter ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: nextChapter.number })), title: lockMsg('chapter-draft', { number: nextChapter.number }) ?? undefined, onClick: writeNext }, `生成下一章（第 ${nextChapter.number} 章）`) : null,
                         batchStart ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !batchReady, title: batchReady ? `从第 ${batchStart} 章连续生成 ${batchCount} 章` : `第 ${batchStart} 章章纲尚未确认，请先在大纲页确认`, onClick: batchWrite }, `连续写 ${batchCount} 章`) : null,
                         lastRewrite ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: undoRewrite }, '撤销重写') : null,
                         h('button', {
@@ -5545,7 +5016,8 @@ window.__ModuleLoader__.load({
                             ? h('button', {
                                 type: 'button',
                                 className: 'nw-btn danger',
-                                disabled: busy,
+                                disabled: busy || Boolean(lockMsg('chapters-delete-tail', {})),
+                                title: lockMsg('chapters-delete-tail', {}) ?? undefined,
                                 onClick: async () => {
                                   const preview = await run('chapters-delete-tail', { count: 1, dryRun: true }, { silent: true })
                                   if (!preview) return
@@ -5565,13 +5037,13 @@ window.__ModuleLoader__.load({
                 detail && detail.chapter?.status !== 'confirmed'
                   ? h('div', { className: 'nw-banner warn', style: { marginBottom: '10px' } },
                       h('span', { style: { flex: 1 } }, '本章章纲尚未确认，生成或重新生成草稿前需要先确认章纲。'),
-                      h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => act('outline-commit', { fromChapter: selected, toChapter: selected }, { toast: '已确认本章章纲' }) }, '确认本章章纲'),
+                      h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || Boolean(lockMsg('outline-commit', { fromChapter: selected, toChapter: selected })), title: lockMsg('outline-commit', { fromChapter: selected, toChapter: selected }) ?? undefined, onClick: () => act('outline-commit', { fromChapter: selected, toChapter: selected }, { toast: '已确认本章章纲' }) }, '确认本章章纲'),
                     )
                   : null,
                 detail?.outlineChanged
                   ? h('div', { className: 'nw-banner warn', style: { marginBottom: '10px' } },
                       h('span', { style: { flex: 1 } }, `本章章纲已更新，当前正文基于旧章纲${detail?.meta?.finalStale ? '；定稿也是旧版，重新生成后请重新定稿' : ''}。`),
-                      h('button', { type: 'button', className: 'nw-btn', disabled: busy || detail?.chapter?.status !== 'confirmed', onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '按新章纲重新生成'),
+                      h('button', { type: 'button', className: 'nw-btn', disabled: busy || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? undefined, onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '按新章纲重新生成'),
                     )
                   : null,
                 rewritePreview
@@ -5632,6 +5104,45 @@ window.__ModuleLoader__.load({
                       ),
                     )
                   : null,
+                deslopOpen
+                  ? h('div', { className: 'nw-modal-backdrop', onClick: closeDeslop },
+                      h('div', { className: 'nw-modal', style: { maxWidth: '760px' }, onClick: (event) => event.stopPropagation() },
+                        h('div', { className: 'nw-row' },
+                          h('h3', { className: 'nw-h3', style: { margin: 0 } }, `第 ${selected ?? '—'} 章 · 去 AI 味`),
+                          deslopPreview ? h('span', { className: 'nw-muted' }, `${deslopPreview.wordCount ?? 0} 字`) : null,
+                        ),
+                        h('p', { className: 'nw-muted' }, '只改表达不改剧情，先预览改写结果；确认后再写入正文。'),
+                        deslopPreview
+                          ? h('div', null,
+                              (deslopPreview.changes ?? []).length
+                                ? h('div', { style: { marginTop: '6px' } },
+                                    h('div', { className: 'nw-eyebrow' }, `改写 ${deslopPreview.changes.length} 处`),
+                                    deslopPreview.changes.slice(0, 10).map((change, index) => h('div', { key: index, className: 'nw-issue' },
+                                      h('span', { className: 'nw-issue-dot' }),
+                                      h('span', null, `${change?.from ?? change?.before ?? ''} → ${change?.to ?? change?.after ?? ''}${change?.reason ? `（${change.reason}）` : ''}`),
+                                    )),
+                                  )
+                                : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '没有需要改写的片段。'),
+                              h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
+                                `AI 味：${flavorText(deslopPreview.beforeAiFlavor)} → ${flavorText(deslopPreview.afterAiFlavor)}`),
+                              h('textarea', {
+                                className: 'nw-textarea',
+                                readOnly: true,
+                                style: { minHeight: '220px', maxHeight: '46vh', marginTop: '6px' },
+                                value: deslopPreview.text ?? '',
+                              }),
+                            )
+                          : null,
+                        deslopError ? h('div', { className: 'nw-error', style: { marginTop: '6px' } }, deslopError) : null,
+                        h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                          h('button', { type: 'button', className: 'nw-btn', disabled: deslopApplying || deslopLoading, onClick: closeDeslop }, '取消'),
+                          deslopPreview
+                            ? h('button', { type: 'button', className: 'nw-btn primary', disabled: deslopApplying, onClick: applyDeslop }, deslopApplying ? '应用中…' : '应用改写')
+                            : h('button', { type: 'button', className: 'nw-btn primary', disabled: deslopLoading, onClick: previewDeslop }, deslopLoading ? '预览中…' : '预览'),
+                        ),
+                      ),
+                    )
+                  : null,
                 h('div', { className: 'nw-card' },
                   h('div', { className: 'nw-row' },
                     h('div', null,
@@ -5640,6 +5151,9 @@ window.__ModuleLoader__.load({
                         h('h2', { className: 'nw-h2', style: { margin: 0 } }, detail?.chapter?.title ?? current?.title ?? ''),
                         qa ? h('span', { className: `nw-badge ${qa.status === 'pass' ? 'ok' : 'cur'}` }, `质检 ${displayStatus(qa.status)}`) : null,
                         styleQa ? h('span', { className: `nw-badge ${styleQa.status === 'pass' ? 'ok' : styleQa.status === 'warn' ? 'cur' : 'bad'}` }, `AI ${styleQa.score ?? '—'}`) : null,
+                        styleQa?.aiFlavor
+                          ? h('span', { className: `nw-badge ${styleQa.aiFlavor.level === '轻' ? 'ok' : styleQa.aiFlavor.level === '中' ? 'cur' : 'bad'}` }, `AI 味 ${styleQa.aiFlavor.level ?? '?'} · ${styleQa.aiFlavor.score ?? '—'}`)
+                          : null,
                         detail?.meta?.status === 'manual' ? h('span', { className: 'nw-badge cur' }, '手动编辑') : null,
                         needsReview ? h('span', { className: 'nw-badge bad' }, '待人工') : null,
                         hasFinal ? h('span', { className: 'nw-badge ok' }, '已定稿') : null,
@@ -5649,9 +5163,6 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'nw-field' },
                     h('label', { className: 'nw-label' }, '本章/修订要求（可留空）'),
                     h('textarea', { className: 'nw-textarea', value: instruction, disabled: busy, placeholder: '例如：开头更冷硬；压缩心理描写；加强章末钩子', onChange: (event) => setInstruction(event.target.value) }),
-                    detail?.pendingInstruction
-                      ? h('div', { className: 'nw-muted', style: { marginTop: '3px' } }, '已从讨论载入修订建议，可直接点「按意见修订」。')
-                      : null,
                     instruction.trim()
                       ? h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
                           h('button', {
@@ -5737,6 +5248,17 @@ window.__ModuleLoader__.load({
                         styleQa?.summary ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, styleQa.summary) : null,
                         styleQa?.llmError
                           ? h('div', { className: 'nw-muted', style: { marginTop: '2px', color: 'var(--dsw-alias-state-warn-primary)' } }, `LLM 审稿失败：${styleQa.llmError}`)
+                          : null,
+                        styleQa?.aiFlavor
+                          ? h('div', { style: { marginTop: '4px' } },
+                              h('div', { className: 'nw-qa-label' }, `AI 味：${styleQa.aiFlavor.level ?? '—'} · ${styleQa.aiFlavor.score ?? '—'}/100`),
+                              (Array.isArray(styleQa.aiFlavor.markers) ? styleQa.aiFlavor.markers : []).slice(0, 5).map((marker, index) =>
+                                h('div', { key: index, className: 'nw-issue' },
+                                  h('span', { className: 'nw-issue-dot' }),
+                                  h('span', null, `${marker?.type ?? '标记'} · ${marker?.quote ?? ''}${marker?.word ? `（${marker.word}）` : ''}`),
+                                ),
+                              ),
+                            )
                           : null,
                         (styleQa?.issues ?? []).slice(0, 8).map((issue, index) => renderIssue(issue, index)),
                       ),
@@ -6040,23 +5562,22 @@ window.__ModuleLoader__.load({
     }
 
     const STEP_LABELS = { project: '项目', premise: '构思', style: '文风', bible: '设定', outline: '大纲', chapters: '章节' }
-    const TEMPLATE_GROUPS = {
-      'fast-web': 3,
-      literary: 2,
-      suspense: 3,
-      daily: 4,
-      ancient: 1,
-      guqing: 1,
-      'wuxia-hard': 1,
+    // 文风模板分组顺序：服务端模板对象带 group 字段（用户模板为「自定义」），前端只负责排序与展示。
+    const STYLE_GROUP_ORDER = ['古风', '网文', '通用', '现代', '科幻', '自定义']
+    const styleGroupRank = (group) => {
+      const index = STYLE_GROUP_ORDER.indexOf(String(group ?? ''))
+      return index < 0 ? STYLE_GROUP_ORDER.length : index
     }
-    const TEMPLATE_GROUP_LABELS = { 1: '古风', 2: '通用', 3: '悬疑/网文', 4: '现代', 5: '自定义' }
-    const templateGroupOrder = (template) =>
-      String(template.id ?? '').startsWith('user-') ? 5 : (TEMPLATE_GROUPS[template.id] ?? 2)
+    const STYLE_SENTENCE_LABELS = { short: '短句为主', mixed: '长短混合', long: '长句为主' }
+    const STYLE_PARAGRAPH_LABELS = { short: '短段', medium: '中等段落', long: '长段' }
 
     const KIND_LABELS = {
       'premise.candidates': '构思候选',
       'inspiration.generate': '灵感',
       'deconstruct.analyze': '拆书',
+      'deconstruct.structure': '拆书·结构',
+      'deconstruct.characters': '拆书·人物设定',
+      'deconstruct.technique': '拆书·技法',
       'bible.generate': '生成设定',
       'bible.generate.missing': '补全设定',
       'chapter.style-audit': '风格审稿',
@@ -6067,8 +5588,6 @@ window.__ModuleLoader__.load({
       'chapter.continuity': '连续性检查',
       'outline.audit': '大纲审查',
       'outline.repair': '大纲修复',
-      'discussion.reply': '讨论',
-      'discussion.reply.stream': '讨论（流式）',
       'model.empty': '空响应',
     }
     const kindLabel = (kind) => KIND_LABELS[kind] ?? kind ?? '—'
@@ -6093,8 +5612,6 @@ window.__ModuleLoader__.load({
       'chapter-move': '移动章节',
       'snapshot-create': '创建项目快照',
       'restore-snapshot': '恢复项目快照',
-      'discussion-undo': '撤销讨论应用',
-      'discussion-applies-clear': '清理讨论应用历史',
       'chapter-batch': '连续写章',
       'chapter-restore': '恢复版本',
       'chapter-save-text': '保存正文',
@@ -6111,7 +5628,6 @@ window.__ModuleLoader__.load({
       'premise-commit': '确认构思',
       'style-apply': '套用文风',
       'style-commit': '确认文风',
-      'discussion': '讨论',
       'export-manuscript': '导出',
       'import-manuscript': '导入',
     }
@@ -6155,7 +5671,6 @@ window.__ModuleLoader__.load({
       { id: 'revise', label: '正文修订', prose: true },
       { id: 'fix', label: '质检修复', prose: true },
       { id: 'audit', label: '风格审稿' },
-      { id: 'discussion', label: '讨论' },
       { id: 'summary', label: '章节摘要' },
       { id: 'continuity', label: '连续性检查' },
     ]
@@ -6306,8 +5821,22 @@ window.__ModuleLoader__.load({
                 h('summary', { className: 'nw-qa-summary-line' },
                   `${entry.label} · ${entry.category}`,
                   entry.customized ? h('span', { className: 'nw-badge ok', style: { marginLeft: '6px' } }, '已覆盖') : null,
+                  entry.defaultUpdated ? h('span', { className: 'nw-badge cur', style: { marginLeft: '6px' } }, '默认已更新') : null,
+                  Number.isFinite(Number(entry.revision)) ? h('span', { className: 'nw-badge', style: { marginLeft: '6px' } }, `v${entry.revision}`) : null,
                 ),
                 h('p', { className: 'nw-muted', style: { marginTop: '6px' } }, entry.description ?? ''),
+                entry.defaultUpdated
+                  ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px', alignItems: 'center' } },
+                      h('span', { style: { flex: 1 } },
+                        `内置默认已更新${Number.isFinite(Number(entry.revision)) ? `（当前 v${entry.revision}）` : ''}，你保存的版本基于${Number.isFinite(Number(entry.baseRevision)) ? ` v${entry.baseRevision}` : '旧版'}；可继续用你的版本，或改用新版默认。`),
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn',
+                        disabled: busy,
+                        onClick: () => run('system-prompt-reset', { key: entry.key }, { toast: '已改用新版默认' }),
+                      }, '改用新版默认'),
+                    )
+                  : null,
                 h('textarea', {
                   className: 'nw-textarea',
                   style: { minHeight: '110px', marginTop: '6px' },
@@ -6597,7 +6126,361 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ProjectView({ state, run, busy, catalog, goTo, setToast }) {
+    /*
+     * 写作技法库：Host 在生成正文/修订时按任务与指令自动挑 1–2 张卡片注入；
+     * 这里只做卡片浏览、预览与自动注入开关，不触发注入。
+     */
+    /*
+     * 技法卡片正文分节：行首【标题】为分节，其余行归入当前节。
+     * 没有分节标题（用户自定义卡片）时回退整段文本。
+     */
+    function parseCraftBody(body) {
+      const text = String(body ?? '').replace(/\r\n?/g, '\n')
+      if (!text.trim()) return { sections: [], fallback: '' }
+      const headingPattern = /^\s*【([^】]+)】\s*(.*)$/
+      const sections = []
+      let current = null
+      for (const line of text.split('\n')) {
+        const match = headingPattern.exec(line)
+        if (match) {
+          if (current) sections.push(current)
+          current = { title: match[1].trim(), lines: [] }
+          if (match[2].trim()) current.lines.push(match[2].trim())
+          continue
+        }
+        if (current) current.lines.push(line)
+      }
+      if (current) sections.push(current)
+      if (sections.length === 0) return { sections: [], fallback: text.trim() }
+      return {
+        sections: sections
+          .map((section) => ({ title: section.title, text: section.lines.join('\n').trim() }))
+          .filter((section) => section.title || section.text),
+        fallback: '',
+      }
+    }
+    function craftSectionKind(title) {
+      const value = String(title ?? '')
+      if (value.includes('反例') || value.includes('不要这样写')) return 'counter'
+      if (value.includes('自检')) return 'selfcheck'
+      if (value.includes('适用')) return 'fit'
+      return 'normal'
+    }
+    function craftFitSummary(body, limit = 60) {
+      const parsed = parseCraftBody(body)
+      const fit = parsed.sections.find((section) => craftSectionKind(section.title) === 'fit')
+      const text = String(fit?.text ?? '').replace(/\s+/g, ' ').trim()
+      if (!text) return ''
+      return text.length > limit ? `${text.slice(0, limit)}…` : text
+    }
+    function renderCraftBody(body) {
+      const parsed = parseCraftBody(body)
+      if (parsed.sections.length === 0) {
+        return parsed.fallback
+          ? h('pre', { className: 'nw-pre', style: { maxHeight: '240px', overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0 } }, parsed.fallback)
+          : null
+      }
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '320px', overflow: 'auto' } },
+        parsed.sections.map((section, index) => {
+          const kind = craftSectionKind(section.title)
+          if (kind === 'counter') {
+            return h('div', {
+              key: index,
+              style: {
+                background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent)',
+                borderRadius: '8px',
+                padding: '6px 8px',
+              },
+            },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' } },
+                h('span', { className: 'nw-label', style: { margin: 0, color: 'var(--dsw-alias-state-error-primary)' } }, section.title),
+                h('span', { className: 'nw-badge bad' }, '不要这样写'),
+              ),
+              section.text ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, section.text) : null,
+            )
+          }
+          if (kind === 'selfcheck') {
+            return h('div', { key: index },
+              h('div', { className: 'nw-label', style: { margin: 0 } }, section.title),
+              section.text ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap', fontStyle: 'italic' } }, section.text) : null,
+            )
+          }
+          if (kind === 'fit') {
+            return h('div', { key: index },
+              h('div', { className: 'nw-label', style: { margin: 0 } }, section.title),
+              section.text ? h('div', { style: { whiteSpace: 'pre-wrap' } }, section.text) : null,
+            )
+          }
+          return h('div', { key: index },
+            h('div', { className: 'nw-label', style: { margin: 0 } }, section.title),
+            section.text ? h('div', { style: { whiteSpace: 'pre-wrap' } }, section.text) : null,
+          )
+        }),
+      )
+    }
+
+    function CraftLibraryCard({ state, run, busy, setToast }) {
+      const cards = Array.isArray(state.craftCards) ? state.craftCards : []
+      const autoEnabled = state.craftAuto !== false
+      const [preview, setPreview] = useState(null)
+      const readCard = async (card) => {
+        if (!card?.id) return
+        if (preview?.id === card.id) {
+          setPreview(null)
+          return
+        }
+        setPreview({ id: card.id, loading: true, body: '', error: null })
+        const data = await run('craft-card-read', { id: card.id }, { silent: true })
+        if (!data) {
+          setPreview((prev) => (prev && prev.id === card.id ? { ...prev, loading: false, error: '读取失败' } : prev))
+          setToast?.('读取技法卡片失败')
+          return
+        }
+        setPreview({ id: card.id, loading: false, body: String(data.body ?? ''), error: null })
+      }
+      return h('div', { className: 'nw-card' },
+        h('div', { className: 'nw-row' },
+          h('h3', { className: 'nw-h3' }, '写作技法库'),
+          h('span', { className: 'nw-muted' }, `${cards.length} 张`),
+          h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('craft-cards', {}, { toast: '技法卡片已刷新' }) }, '刷新'),
+        ),
+        h('p', { className: 'nw-muted' }, '写正文/修订时会按任务和指令自动挑 1–2 张卡片作为技法参考，不必全部套用。'),
+        h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px', flexWrap: 'wrap' } },
+          h('input', { type: 'checkbox', checked: autoEnabled, disabled: busy, onChange: () => run('craft-auto-toggle', { enabled: !autoEnabled }, { toast: !autoEnabled ? '已开启自动注入技法' : '已关闭自动注入技法' }) }),
+          h('span', { className: 'nw-label', style: { margin: 0 } }, '自动注入技法'),
+          h('span', { className: 'nw-muted' }, autoEnabled ? '开启后写正文/修订会自动带 1–2 张技法卡片' : '已关闭自动注入，可用写作助手按需读取'),
+        ),
+        cards.length === 0
+          ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有技法卡片')
+          : h('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+              cards.map((card) => {
+                const tags = Array.isArray(card?.tags) ? card.tags.map((tag) => String(tag ?? '')).filter(Boolean).slice(0, 4) : []
+                const expanded = preview?.id === card?.id
+                const cardBody = typeof card?.body === 'string' ? card.body : ''
+                const previewBody = expanded && typeof preview?.body === 'string' ? preview.body : ''
+                const fitText = craftFitSummary(cardBody || previewBody)
+                return h('div', { key: card?.id ?? card?.title, className: 'nw-field', style: { margin: 0, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '10px' } },
+                  h('div', { className: 'nw-row' },
+                    h('div', { style: { minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                      h('span', { style: { fontSize: '12px', fontWeight: 600 } }, card?.title ?? card?.id ?? '未命名'),
+                      tags.map((tag) => h('span', { key: tag, className: 'nw-badge' }, tag)),
+                    ),
+                    h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || !card?.id, onClick: () => readCard(card) }, expanded ? '收起' : '预览'),
+                  ),
+                  card?.summary ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, card.summary) : null,
+                  fitText ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, `适用：${fitText}`) : null,
+                  expanded
+                    ? h('div', { style: { marginTop: '6px' } },
+                        preview?.loading
+                          ? h('div', { className: 'nw-muted' }, '读取中…')
+                          : String(preview?.body ?? '').trim()
+                            ? renderCraftBody(preview.body)
+                            : h('div', { className: 'nw-muted' }, preview?.error ?? '这张卡片没有正文内容'),
+                      )
+                    : null,
+                )
+              }),
+            ),
+      )
+    }
+
+    /*
+     * 技能库：内置技法（随插件提供、只能开关）+ 导入技能（可删除、同名覆盖内置）。
+     * 预览沿用技法卡片分节渲染（反例警示 / 自检斜体 / 无分节回退整段）。
+     */
+    function SkillsLibraryCard({ state, run, busy, setToast }) {
+      const [skills, setSkills] = useState(() => (Array.isArray(state.skills) ? state.skills : []))
+      const [loading, setLoading] = useState(false)
+      const [preview, setPreview] = useState(null)
+      const [importOpen, setImportOpen] = useState(false)
+      const [importPath, setImportPath] = useState('')
+      const [importError, setImportError] = useState('')
+      const [importing, setImporting] = useState(false)
+      const [importScope, setImportScope] = useState('project')
+      const refreshSkills = async (showToast = false) => {
+        setLoading(true)
+        try {
+          const data = await run('skills-list', {}, { silent: true })
+          const list = Array.isArray(data?.skills) ? data.skills : Array.isArray(data) ? data : null
+          if (list) setSkills(list)
+          if (showToast) setToast?.('技能库已刷新')
+        } catch {
+          // 读取失败保留旧列表
+        } finally {
+          setLoading(false)
+        }
+      }
+      useEffect(() => {
+        refreshSkills(false)
+      }, [])
+      const toggleSkill = (skill) => {
+        if (!skill?.name || skill.source !== 'builtin') return
+        const enabled = skill.enabled === false
+        setSkills((prev) => prev.map((item) => (item?.name === skill.name ? { ...item, enabled } : item)))
+        run('skill-toggle', { name: skill.name, enabled }, { toast: enabled ? '已启用技能' : '已停用技能' })
+      }
+      const removeSkill = async (skill) => {
+        if (!skill?.name || !skill.canDelete) return
+        const scope = scopeOf(skill)
+        if (!(await requestConfirm({ title: '删除技能', message: `删除${scopeLabel(scope)}技能「${skill.name}」？删除后 AI 不会再读取它。`, danger: true, confirmLabel: '删除' }))) return
+        try {
+          await run('skill-delete', { name: skill.name, scope }, { silent: true, throwOnError: true })
+          setToast?.('技能已删除')
+          await refreshSkills(false)
+        } catch (error) {
+          setToast?.(String(error?.message ?? error))
+        }
+      }
+      const readSkill = async (skill) => {
+        if (!skill?.name) return
+        const scope = scopeOf(skill)
+        const key = `${scope}:${skill.name}`
+        if (preview?.key === key) {
+          setPreview(null)
+          return
+        }
+        setPreview({ key, loading: true, body: '', error: null })
+        const data = await run('skill-read', { name: skill.name, scope }, { silent: true })
+        if (!data) {
+          setPreview({ key, loading: false, body: '', error: '读取失败' })
+          setToast?.('读取技能失败')
+          return
+        }
+        const body = typeof data === 'string' ? data : String(data.body ?? data.content ?? '')
+        setPreview({ key, loading: false, body, error: null })
+      }
+      const openImport = () => {
+        setImportOpen(true)
+        setImportError('')
+        setImportPath('')
+      }
+      const closeImport = () => {
+        if (importing) return
+        setImportOpen(false)
+        setImportError('')
+      }
+      const doImport = async () => {
+        const path = importPath.trim()
+        if (!path || importing) return
+        setImporting(true)
+        setImportError('')
+        try {
+          await run('skill-import', { path, scope: importScope }, { silent: true, throwOnError: true })
+          setImportOpen(false)
+          setImportPath('')
+          setToast?.(`技能已导入（${importScope === 'global' ? '全局' : '项目'}）`)
+          await refreshSkills(false)
+        } catch (error) {
+          setImportError(String(error?.message ?? error))
+        } finally {
+          setImporting(false)
+        }
+      }
+      const scopeOf = (skill) => {
+        const scope = String(skill?.scope ?? '')
+        if (scope === 'builtin' || scope === 'project' || scope === 'global') return scope
+        return skill?.source === 'builtin' ? 'builtin' : 'project'
+      }
+      const scopeLabel = (scope) => (scope === 'global' ? '全局' : scope === 'builtin' ? '内置' : '项目')
+      const scopeBadge = (skill) => {
+        const scope = scopeOf(skill)
+        return h('span', { className: scope === 'builtin' ? 'nw-badge' : 'nw-badge ok' }, scopeLabel(scope))
+      }
+      return h('div', { className: 'nw-card' },
+        h('div', { className: 'nw-row' },
+          h('h3', { className: 'nw-h3' }, '技能库'),
+          h('span', { className: 'nw-muted' }, `${skills.length} 个技能`),
+          h('div', { className: 'nw-actions', style: { margin: 0 } },
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || importing, onClick: openImport }, '导入技能'),
+            h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || loading, onClick: () => refreshSkills(true) }, loading ? '刷新中…' : '刷新'),
+          ),
+        ),
+        h('p', { className: 'nw-muted' }, '内置技法随插件提供，只能开关；项目/全局导入技能可删除；助手只加载内置 + 项目/全局导入技能，不加载 DSH 公共技能。'),
+        skills.length === 0
+          ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, loading ? '正在读取技能库…' : '还没有技能。')
+          : h('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+              skills.map((skill) => {
+                const tags = Array.isArray(skill?.tags) ? skill.tags.map((tag) => String(tag ?? '')).filter(Boolean).slice(0, 4) : []
+                const expanded = preview?.key === `${scopeOf(skill)}:${skill?.name}`
+                return h('div', { key: skill?.name, className: 'nw-field', style: { margin: 0, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '10px' } },
+                  h('div', { className: 'nw-row' },
+                    h('div', { style: { minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                      h('span', { style: { fontSize: '12px', fontWeight: 600 } }, skill?.name ?? '未命名技能'),
+                      scopeBadge(skill),
+                      skill?.overridesBuiltin ? h('span', { key: 'override', className: 'nw-badge cur' }, '覆盖内置') : null,
+                      tags.map((tag) => h('span', { key: tag, className: 'nw-badge' }, tag)),
+                    ),
+                    h('div', { className: 'nw-actions', style: { margin: 0 } },
+                      skill?.source === 'builtin'
+                        ? h('label', { style: { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }, title: '内置技法只能开关' },
+                            h('input', { type: 'checkbox', checked: skill.enabled !== false, disabled: busy, onChange: () => toggleSkill(skill) }),
+                            h('span', { className: 'nw-muted' }, skill.enabled === false ? '已停用' : '启用'))
+                        : null,
+                      h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => readSkill(skill) }, expanded ? '收起' : '预览'),
+                      skill?.canDelete && scopeOf(skill) !== 'builtin'
+                        ? h('button', { type: 'button', className: 'nw-btn danger', disabled: busy, onClick: () => removeSkill(skill) }, '删除')
+                        : null,
+                    ),
+                  ),
+                  skill?.description ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, skill.description) : null,
+                  expanded
+                    ? h('div', { style: { marginTop: '6px' } },
+                        preview?.loading
+                          ? h('div', { className: 'nw-muted' }, '读取中…')
+                          : String(preview?.body ?? '').trim()
+                            ? renderCraftBody(preview.body)
+                            : h('div', { className: 'nw-muted' }, preview?.error ?? '这个技能没有正文内容'),
+                      )
+                    : null,
+                )
+              }),
+            ),
+        importOpen
+          ? h('div', { className: 'nw-modal-backdrop', onClick: closeImport },
+              h('div', { className: 'nw-modal', onClick: (event) => event.stopPropagation() },
+                h('div', { className: 'nw-eyebrow' }, '导入技能'),
+                h('p', { className: 'nw-muted' }, '输入本地技能路径（目录包或单个 .md 文件）。同名覆盖内置/低优先级技能时会先备份。'),
+                h('div', { style: { marginTop: '6px', display: 'flex', gap: '12px', flexWrap: 'wrap' } },
+                  [['project', '项目（仅当前项目）'], ['global', '全局（所有写作项目可用）']].map(([value, label]) =>
+                    h('label', { key: value, style: { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' } },
+                      h('input', {
+                        type: 'radio',
+                        name: 'skill-import-scope',
+                        checked: importScope === value,
+                        disabled: importing,
+                        onChange: () => setImportScope(value),
+                      }),
+                      h('span', { className: 'nw-label', style: { margin: 0 } }, label),
+                    ),
+                  ),
+                ),
+                h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, importScope === 'global'
+                  ? '写入：DSH_HOME/novel-writer/library/skills/（所有写作项目可用）'
+                  : '写入：项目 .dsh/skills/（仅当前项目可用）'),
+                h('input', {
+                  className: 'nw-input',
+                  style: { marginTop: '6px' },
+                  value: importPath,
+                  disabled: importing,
+                  placeholder: '例如：D:/skills/my-technique.md 或 D:/skills/my-pack',
+                  onChange: (event) => setImportPath(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' && importPath.trim() && !importing) doImport()
+                  },
+                }),
+                importError ? h('div', { className: 'nw-error', style: { marginTop: '6px' } }, importError) : null,
+                h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                  h('button', { type: 'button', className: 'nw-btn', disabled: importing, onClick: closeImport }, '取消'),
+                  h('button', { type: 'button', className: 'nw-btn primary', disabled: importing || !importPath.trim(), onClick: doImport }, importing ? '导入中…' : '确认导入'),
+                ),
+              ),
+            )
+          : null,
+      )
+    }
+
+    function ProjectView({ state, run, busy, catalog, goTo, setToast, setFocusChapter }) {
       const [title, setTitle] = useState(state.project?.title ?? '')
       const [writingNotes, setWritingNotes] = useState(state.project?.writingNotes ?? '')
       const [writingTasks, setWritingTasks] = useState(state.project?.writingNotesTasks ?? [])
@@ -6605,6 +6488,12 @@ window.__ModuleLoader__.load({
       const [models, setModels] = useState(state.project?.models ?? {})
       const [contextConfig, setContextConfig] = useState(state.project?.context ?? {})
       const [exportPath, setExportPath] = useState(null)
+      const [dataExportPath, setDataExportPath] = useState(null)
+      const [fileImportOpen, setFileImportOpen] = useState(false)
+      const [fileImportPath, setFileImportPath] = useState('')
+      const [fileImportError, setFileImportError] = useState(null)
+      const [fileImportBusy, setFileImportBusy] = useState(false)
+      const [fileImportBackupPath, setFileImportBackupPath] = useState(null)
       const [searchQuery, setSearchQuery] = useState('')
       const [searchResults, setSearchResults] = useState(null)
       const [searching, setSearching] = useState(false)
@@ -6686,6 +6575,37 @@ window.__ModuleLoader__.load({
       const effectiveDraft = state.effectiveModels?.draft
       const draftEffort = effectiveDraft?.reasoningEffort ?? draftTask.config?.reasoningEffort ?? modelDefaults.reasoningEffort ?? ''
       const highProse = ['medium', 'high', 'max', 'xhigh'].includes(String(draftEffort))
+      const formatBytes = (bytes) => {
+        const value = Number(bytes)
+        if (!Number.isFinite(value) || value < 0) return '—'
+        if (value < 1024) return `${value} B`
+        if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+        return `${(value / 1024 / 1024).toFixed(1)} MB`
+      }
+      const openFileImport = () => {
+        setFileImportOpen(true)
+        setFileImportError(null)
+      }
+      const doImportFileProject = async () => {
+        const path = fileImportPath.trim()
+        if (!path) return
+        setFileImportBusy(true)
+        setFileImportError(null)
+        try {
+          const result = await run('import-file-project', { path }, { silent: true, throwOnError: true })
+          const counts = result?.counts && typeof result.counts === 'object' ? result.counts : {}
+          const chapterCount = Number(counts.chapters ?? counts.chapterCount ?? counts.units ?? 0) || 0
+          const backupPath = typeof result?.backupPath === 'string' ? result.backupPath : null
+          setFileImportOpen(false)
+          setFileImportPath('')
+          setFileImportBackupPath(backupPath)
+          setToast?.(`已导入：${chapterCount} 章`)
+        } catch (error) {
+          setFileImportError(String(error?.message ?? error ?? '导入失败'))
+        } finally {
+          setFileImportBusy(false)
+        }
+      }
       const runSearch = async () => {
         if (!searchQuery.trim()) return
         setSearching(true)
@@ -6696,22 +6616,46 @@ window.__ModuleLoader__.load({
           setSearching(false)
         }
       }
+      const SEARCH_TYPE_LABELS = { chapter: '章节', outline: '章纲', bible: '设定', summary: '摘要' }
+      const searchTypeOf = (result) => String(result?.type ?? result?.source ?? '')
+      const markSearchSnippet = (value) => {
+        const source = String(value ?? '')
+        if (!source) return null
+        const parts = source.split(']]').flatMap((chunk) => chunk.split('[['))
+        return parts.map((part, index) => (index % 2 === 1
+          ? h('span', {
+              key: index,
+              style: {
+                background: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent)',
+                color: 'var(--dsw-alias-brand-primary)',
+                borderRadius: '3px',
+                padding: '0 2px',
+              },
+            }, part)
+          : part))
+      }
       const openSearchResult = (result) => {
         if (!goTo) return
-        if (result.source === 'chapter' && result.number) {
-          try {
-            localStorage.setItem('dsh.novelWriter.chapter', String(result.number))
-          } catch {
-            // storage unavailable
+        const type = searchTypeOf(result)
+        const number = Number(result?.number)
+        if (type === 'chapter' || type === 'summary') {
+          if (Number.isFinite(number) && number > 0) {
+            try {
+              localStorage.setItem('dsh.novelWriter.chapter', String(number))
+            } catch {
+              // storage unavailable
+            }
+            setFocusChapter?.(number)
           }
           goTo('chapters')
           return
         }
-        if (result.source === 'outline') {
+        if (type === 'outline') {
+          if (Number.isFinite(number) && number > 0) setFocusChapter?.(number)
           goTo('outline')
           return
         }
-        if (result.source === 'bible') {
+        if (type === 'bible') {
           goTo('bible')
         }
       }
@@ -6748,9 +6692,6 @@ window.__ModuleLoader__.load({
         if (!(await requestConfirm({ title: '恢复快照', message: `恢复快照「${name}」会先用当前 story/.dsh-writing 创建 pre-restore 备份，再覆盖当前数据。继续？`, danger: true, confirmLabel: '恢复' }))) return
         if (!(await requestConfirm({ title: '再次确认', message: '恢复后请刷新页面检查内容。', confirmLabel: '确定恢复' }))) return
         await run('restore-snapshot', { name }, { toast: '快照已恢复' })
-      }
-      const undoAppliedDiscussion = async (applyId) => {
-        await run('discussion-undo', { applyId }, { toast: '已撤销这次讨论应用' })
       }
       const stage = state.stage ?? {}
       const rows = [
@@ -6851,6 +6792,66 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-muted', style: { marginTop: '4px' } },
             '已生效于：设定生成、大纲生成、章节草稿、章节修订（保存后下一次生成生效）'),
         ),
+        h(SkillsLibraryCard, { state, run, busy, setToast }),
+        state.dataLayer
+          ? h('div', { className: 'nw-card' },
+              h('div', { className: 'nw-row' },
+                h('h3', { className: 'nw-h3' }, '数据层'),
+                h('span', { className: 'nw-muted' }, String(state.dataLayer.engine ?? 'SQLite')),
+                h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('data-status', {}, { toast: '数据层状态已刷新' }) }, '刷新'),
+              ),
+              h('p', { className: 'nw-muted' },
+                `${String(state.dataLayer.engine ?? 'SQLite')} · 数据库 ${formatBytes(state.dataLayer.dbBytes)}（WAL ${formatBytes(state.dataLayer.walBytes)}）· 索引 ${Number(state.dataLayer.ftsRows) || 0} 条 · schema v${state.dataLayer.schemaVersion ?? '—'}`),
+              dataExportPath
+                ? h('div', { className: 'nw-muted', style: { marginTop: '4px', wordBreak: 'break-all' } }, `已导出：${dataExportPath}`)
+                : null,
+              fileImportBackupPath
+                ? h('div', { className: 'nw-muted', style: { marginTop: '4px', wordBreak: 'break-all' } }, `上次导入备份：${fileImportBackupPath}`)
+                : null,
+              h('div', { className: 'nw-actions' },
+                h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('reindex', {}, { toast: '索引已重建' }) }, '重建检索索引'),
+                h('button', {
+                  type: 'button',
+                  className: 'nw-btn',
+                  disabled: busy,
+                  onClick: async () => {
+                    const result = await run('export-file-project', {}, { silent: true })
+                    if (!result) return
+                    const target = typeof result === 'string' ? result : (result.path ?? result.exportPath ?? result.targetPath ?? result.target)
+                    setDataExportPath(typeof target === 'string' ? target : null)
+                    setToast?.('已导出到 exports/')
+                  },
+                }, '导出纯文件项目'),
+                h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: openFileImport }, '导入纯文件项目'),
+              ),
+              fileImportOpen
+                ? h('div', { className: 'nw-modal-backdrop', onClick: () => { if (!fileImportBusy) setFileImportOpen(false) } },
+                    h('div', { className: 'nw-modal', onClick: (event) => event.stopPropagation() },
+                      h('div', { className: 'nw-eyebrow' }, '导入纯文件项目'),
+                      h('p', { className: 'nw-muted' }, '输入纯文件项目目录（绝对路径，形如 exports/file-project-<stamp>/，内含 story/）。会用该目录的 story/ 覆盖当前项目（先自动备份）。'),
+                      h('input', {
+                        className: 'nw-input',
+                        style: { marginTop: '6px' },
+                        value: fileImportPath,
+                        disabled: fileImportBusy,
+                        placeholder: '例如：D:/book/exports/file-project-20261030',
+                        onChange: (event) => setFileImportPath(event.target.value),
+                        onKeyDown: (event) => {
+                          if (event.key === 'Enter' && fileImportPath.trim() && !fileImportBusy) doImportFileProject()
+                        },
+                      }),
+                      fileImportError
+                        ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } }, fileImportError)
+                        : null,
+                      h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                        h('button', { type: 'button', className: 'nw-btn', disabled: fileImportBusy, onClick: () => setFileImportOpen(false) }, '取消'),
+                        h('button', { type: 'button', className: 'nw-btn primary', disabled: fileImportBusy || !fileImportPath.trim(), onClick: doImportFileProject }, fileImportBusy ? '导入中…' : '确认导入'),
+                      ),
+                    ),
+                  )
+                : null,
+            )
+          : null,
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '模型分配'),
           h('p', { className: 'nw-muted' }, '默认继承 DSH 当前模型；也可以给不同任务单独指定模型与思考等级。正文类任务建议关闭思考或使用低等级。'),
@@ -7053,7 +7054,7 @@ window.__ModuleLoader__.load({
               className: 'nw-input',
               value: searchQuery,
               disabled: busy,
-              placeholder: '搜章节、设定、章纲、讨论…',
+              placeholder: '搜章节、设定、章纲…',
               onChange: (event) => setSearchQuery(event.target.value),
               onKeyDown: (event) => {
                 if (event.key === 'Enter') runSearch()
@@ -7063,23 +7064,40 @@ window.__ModuleLoader__.load({
           ),
           searchResults
             ? searchResults.results.length
-              ? h('div', { className: 'nw-list', style: { marginTop: '10px' } },
-                  searchResults.results.map((result, index) =>
-                    h('button', {
-                      key: `${result.source}-${index}`,
-                      type: 'button',
-                      className: 'nw-list-item',
-                      onClick: () => openSearchResult(result),
-                    },
-                      h('span', { className: 'nw-badge' }, result.source),
-                      h('span', { style: { minWidth: 0, flex: 1 } },
-                        h('div', { className: 'nw-list-title' }, result.title),
-                        h('div', { className: 'nw-muted', style: { whiteSpace: 'normal', lineHeight: 1.4 } }, result.snippet),
-                      ),
-                    ),
+              ? h('div', { style: { marginTop: '10px' } },
+                  h('div', { className: 'nw-muted' },
+                    `${searchResults.results.length} 条${Number.isFinite(Number(searchResults.elapsed)) ? ` · ${Number(searchResults.elapsed)} ms` : ''}`),
+                  h('div', { className: 'nw-list', style: { marginTop: '6px' } },
+                    searchResults.results.map((result, index) => {
+                      const type = searchTypeOf(result)
+                      const number = Number(result?.number)
+                      const snippetSource = typeof result?.snippet === 'string' && result.snippet
+                        ? result.snippet
+                        : typeof result?.text === 'string'
+                          ? result.text.slice(0, 120)
+                          : ''
+                      return h('button', {
+                        key: `${type || 'result'}-${index}`,
+                        type: 'button',
+                        className: 'nw-list-item',
+                        title: result?.title ?? '',
+                        onClick: () => openSearchResult(result),
+                      },
+                        h('span', { className: 'nw-badge' }, SEARCH_TYPE_LABELS[type] ?? (type || '结果')),
+                        Number.isFinite(number) && number > 0 && (type === 'chapter' || type === 'summary' || type === 'outline')
+                          ? h('span', { className: 'nw-badge' }, `第 ${number} 章`)
+                          : null,
+                        h('span', { style: { minWidth: 0, flex: 1 } },
+                          h('div', { className: 'nw-list-title' }, result?.title ?? ''),
+                          snippetSource
+                            ? h('div', { className: 'nw-muted', style: { whiteSpace: 'normal', lineHeight: 1.4 } }, markSearchSnippet(snippetSource))
+                            : null,
+                        ),
+                      )
+                    }),
                   ),
                 )
-              : h('div', { className: 'nw-muted', style: { marginTop: '8px' } }, `没有找到「${searchResults.query}」`)
+              : h('div', { className: 'nw-muted', style: { marginTop: '8px' } }, `没有找到「${searchResults.query ?? searchQuery}」`)
             : null,
         ),
         h('div', { className: 'nw-card' },
@@ -7291,30 +7309,6 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有快照。'),
         ),
         h('div', { className: 'nw-card' },
-          h('div', { className: 'nw-row' },
-            h('h3', { className: 'nw-h3' }, '讨论应用历史'),
-            h('span', { className: 'nw-muted' }, `${state.discussionApplies?.length ?? 0} 次`),
-          ),
-          (state.discussionApplies ?? []).length
-            ? h('div', { style: { marginTop: '6px' } },
-                state.discussionApplies.slice(0, 8).map((item) =>
-                  h('div', { key: item.applyId, className: 'nw-kv' },
-                    h('div', { style: { minWidth: 0 } },
-                      h('div', { style: { fontSize: '11px' } }, item.topic || item.topicId),
-                      h('div', { className: 'nw-muted' }, `${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''} · ${item.appliedCount} 项`),
-                    ),
-                    h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => undoAppliedDiscussion(item.applyId) }, '撤销'),
-                  ),
-                ),
-              )
-            : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有讨论应用记录。'),
-          (state.discussionApplies ?? []).length
-            ? h('div', { className: 'nw-actions' },
-                h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('discussion-applies-clear', { keep: 20 }, { toast: '旧记录已清理' }) }, '只保留最近 20 条'),
-              )
-            : null,
-        ),
-        h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '数据维护'),
           h('p', { className: 'nw-muted' }, '检查章纲中已不存在的旧章节目录与状态文件；删除前会先确认。'),
           h('div', { className: 'nw-actions' },
@@ -7366,8 +7360,141 @@ window.__ModuleLoader__.load({
             h('li', null, '大纲：生成章纲，逐章编辑并确认'),
             h('li', null, '章节：草稿、规则/风格质检、修订、定稿、连续写作'),
           ),
-          h('p', { className: 'nw-muted' }, '讨论与改创意回到会话；写作台负责流程与审阅。'),
+          h('p', { className: 'nw-muted' }, '写作台负责流程与审阅。'),
         ),
+      )
+    }
+
+    /*
+     * 拆书结果分区渲染：当前拆解与历史记录共用。
+     * 旧记录缺 units/settings/relations/techniques 等字段时只渲染已有分区，不显示空标题。
+     */
+    function DeconstructResult({ data, stages }) {
+      const analysis = data && typeof data === 'object' ? data : {}
+      const stageList = Array.isArray(stages) ? stages : Array.isArray(analysis.stages) ? analysis.stages : []
+      const stageSectionMap = {
+        'deconstruct.structure': ['summary', 'units'],
+        'deconstruct.characters': ['characters', 'settings', 'relations'],
+        'deconstruct.technique': ['techniques', 'hooks', 'pacing'],
+      }
+      const stageCovers = (stage, key) => {
+        if (!stage) return false
+        if (Array.isArray(stage.sections)) return stage.sections.includes(key)
+        const fallback = stageSectionMap[stage.key]
+        if (Array.isArray(fallback)) return fallback.includes(key)
+        return stage.key === key
+      }
+      const failedStageFor = (key) => stageList.find((item) => item && item.ok === false && stageCovers(item, key)) ?? null
+      const stageWarnings = (keys) => {
+        const hitStages = []
+        for (const key of keys) {
+          const stage = failedStageFor(key)
+          if (stage && !hitStages.includes(stage)) hitStages.push(stage)
+        }
+        return hitStages.map((stage) => h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } }, `本阶段解析失败：${stage.error ?? '未知错误'}`))
+      }
+      const stageWarning = (key) => stageWarnings([key])[0] ?? null
+      const section = (label, body, warn) => {
+        if (!body && !warn) return null
+        return h('div', { style: { marginTop: '10px' } },
+          h('div', { className: 'nw-result-label' }, label),
+          warn,
+          body,
+        )
+      }
+      const itemText = (item) => {
+        if (item == null) return ''
+        if (typeof item === 'string') return item
+        return String(item.name ?? item.title ?? item.text ?? item.id ?? '')
+      }
+      const characterText = (item) => {
+        if (item == null) return ''
+        if (typeof item === 'string') return item
+        return [item.name ?? item.title, item.role, item.description].filter((part) => typeof part === 'string' && part.trim()).join(' · ')
+      }
+      const summary = typeof analysis.summary === 'string' ? analysis.summary.trim() : ''
+      const units = Array.isArray(analysis.units) ? analysis.units.filter(Boolean) : []
+      const characters = Array.isArray(analysis.characters) ? analysis.characters.filter(Boolean) : []
+      const settings = analysis.settings && typeof analysis.settings === 'object' ? analysis.settings : {}
+      const settingGroups = [['locations', '地点'], ['rules', '规则'], ['factions', '势力'], ['items', '物品']]
+        .map(([key, label]) => {
+          const list = Array.isArray(settings[key]) ? settings[key].filter(Boolean) : []
+          if (!list.length) return null
+          return h('div', { key, style: { marginTop: '4px' } },
+            h('div', { className: 'nw-muted' }, label),
+            list.map((item, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${itemText(item)}`)),
+          )
+        })
+        .filter(Boolean)
+      const relations = Array.isArray(analysis.relations) ? analysis.relations.filter(Boolean) : []
+      const techniques = Array.isArray(analysis.techniques) ? analysis.techniques.filter(Boolean) : []
+      const hooks = Array.isArray(analysis.hooks) ? analysis.hooks.filter(Boolean) : []
+      const pacing = typeof analysis.pacing === 'string' ? analysis.pacing.trim() : ''
+      const techniquesBlock = techniques.length
+        ? h('div', null, techniques.map((tech, index) => h('details', { key: index, className: 'nw-qa-details' },
+            h('summary', { className: 'nw-qa-summary-line' }, String(tech.name ?? `技法 ${index + 1}`)),
+            tech.how ? h('div', { className: 'nw-muted' }, `怎么做：${tech.how}`) : null,
+            tech.example ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap', marginTop: '2px' } }, `示例：${tech.example}`) : null,
+          )))
+        : null
+      const hooksBlock = hooks.length
+        ? h('div', { style: { marginTop: techniquesBlock ? '6px' : 0 } },
+            h('div', { className: 'nw-muted' }, '可复用桥段'),
+            hooks.slice(0, 8).map((hook, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${itemText(hook)}`)),
+          )
+        : null
+      const techniqueHints = stageWarnings(['techniques', 'hooks'])
+      return h('div', null,
+        section('故事梗概',
+          summary ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, summary) : null,
+          stageWarning('summary')),
+        section('分章 / 分段编年',
+          units.length
+            ? h('div', null, units.map((unit, index) => {
+                const number = Number.isFinite(Number(unit.index)) ? Number(unit.index) : index + 1
+                return h('div', {
+                  key: index,
+                  className: 'nw-result-item',
+                  style: { display: 'flex', gap: '6px', alignItems: 'flex-start', flexWrap: 'wrap' },
+                  title: unit.span ? String(unit.span) : undefined,
+                },
+                  h('span', { style: { flex: '0 0 auto' } }, `#${number}`),
+                  unit.function ? h('span', { className: 'nw-badge' }, String(unit.function)) : null,
+                  unit.summary ? h('span', { style: { flex: '1 1 200px', minWidth: 0 } }, String(unit.summary)) : null,
+                )
+              }))
+            : null,
+          stageWarning('units')),
+        section('人物',
+          characters.length
+            ? h('div', null, characters.map((item, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${characterText(item)}`)))
+            : null,
+          stageWarning('characters')),
+        section('设定',
+          settingGroups.length ? h('div', null, settingGroups) : null,
+          stageWarning('settings')),
+        section('人物关系',
+          relations.length
+            ? h('div', null, relations.map((rel, index) => {
+                const from = String(rel.from ?? rel.source ?? '?')
+                const to = String(rel.to ?? rel.target ?? '?')
+                const type = rel.type ?? rel.relation ?? ''
+                return h('div', { key: index, className: 'nw-result-item' },
+                  `${from} → ${to}${type ? ` · ${type}` : ''}${rel.note ? `（${rel.note}）` : ''}`)
+              }))
+            : null,
+          stageWarning('relations')),
+        (techniquesBlock || hooksBlock || techniqueHints.length)
+          ? h('div', { style: { marginTop: '10px' } },
+              h('div', { className: 'nw-result-label' }, '技法与钩子'),
+              techniqueHints,
+              techniquesBlock,
+              hooksBlock,
+            )
+          : null,
+        section('节奏观察',
+          pacing ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, pacing) : null,
+          stageWarning('pacing')),
       )
     }
 
@@ -7375,13 +7502,20 @@ window.__ModuleLoader__.load({
       const [title, setTitle] = useState('')
       const [text, setText] = useState('')
       const [analysis, setAnalysis] = useState(null)
+      const [stages, setStages] = useState(null)
       const [working, setWorking] = useState(false)
+      const [viewingId, setViewingId] = useState(null)
+      const history = (Array.isArray(state.deconstructions?.items) ? state.deconstructions.items : []).slice(0, 10)
       const analyze = async () => {
         if (!text.trim()) return
         setWorking(true)
         try {
           const result = await run('deconstruct-text', { title: title || undefined, text }, { silent: true })
-          if (result?.analysis) setAnalysis(result.analysis)
+          if (result?.analysis) {
+            setAnalysis(result.analysis)
+            setStages(Array.isArray(result.stages) ? result.stages : null)
+            setViewingId(null)
+          }
         } finally {
           setWorking(false)
         }
@@ -7417,30 +7551,46 @@ window.__ModuleLoader__.load({
         ),
         analysis
           ? h('div', { style: { marginTop: '8px' } },
-              h('div', { className: 'nw-result-label' }, '梗概'),
-              h('div', { className: 'nw-muted' }, analysis.summary || '—'),
-              (analysis.hooks ?? []).length
-                ? h('div', { style: { marginTop: '6px' } },
-                    h('div', { className: 'nw-result-label' }, '可复用桥段'),
-                    (analysis.hooks ?? []).slice(0, 6).map((hook, index) => h('div', { key: index, className: 'nw-result-item' }, `· ${hook}`)),
-                  )
-                : null,
+              h(DeconstructResult, { data: analysis, stages }),
               h('div', { className: 'nw-actions' },
                 h('button', { type: 'button', className: 'nw-btn', onClick: useAsDirection }, '用作构思方向'),
               ),
-              (state.deconstructions?.items ?? []).length
-                ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
-                    `历史拆书：${(state.deconstructions.items ?? []).slice(0, 3).map((item) => item.title).join('、')}`)
-                : null,
+            )
+          : null,
+        history.length
+          ? h('div', { style: { marginTop: '12px' } },
+              h('div', { className: 'nw-row' },
+                h('h3', { className: 'nw-h3' }, '历史拆书'),
+                h('span', { className: 'nw-muted' }, `${history.length} 条`),
+              ),
+              history.map((item, index) => {
+                const key = item?.id ?? `history-${index}`
+                const open = viewingId === key
+                const date = typeof item?.createdAt === 'string' ? item.createdAt.slice(0, 10) : ''
+                return h('div', { key, style: { borderTop: '1px solid var(--dsw-alias-border-l1)', marginTop: '6px', paddingTop: '6px' } },
+                  h('div', { className: 'nw-row' },
+                    h('div', { style: { minWidth: 0, flex: 1 } },
+                      h('div', { style: { fontSize: '12px', fontWeight: 600 } }, item?.title ?? '未命名拆书'),
+                      date ? h('div', { className: 'nw-muted' }, date) : null,
+                    ),
+                    h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setViewingId(open ? null : key) }, open ? '收起' : '查看'),
+                  ),
+                  open
+                    ? h(DeconstructResult, {
+                        data: item?.analysis && typeof item.analysis === 'object' ? item.analysis : item,
+                        stages: item?.stages,
+                      })
+                    : null,
+                )
+              }),
             )
           : null,
       )
     }
 
-    function PremiseChat({ state, run, busy, setToast, chosen, candidates = [] }) {
+    function PremiseChat({ state, run, busy, setToast, chosen }) {
       const storedChat = state?.premiseChat ?? { messages: [], batches: [] }
       const [mode, setMode] = useState('candidates')
-      const [baseId, setBaseId] = useState(() => chosen?.id ?? candidates[0]?.id ?? null)
       const [input, setInput] = useState('')
       const [messages, setMessages] = useState(() => storedChat.messages ?? [])
       const [batches, setBatches] = useState(() => storedChat.batches ?? [])
@@ -7457,12 +7607,6 @@ window.__ModuleLoader__.load({
         if (!messages.length) return
         chatEndRef.current?.scrollIntoView({ block: 'nearest' })
       }, [messages.length])
-      useEffect(() => {
-        if (!candidates.length) return
-        if (!candidates.some((candidate) => candidate.id === baseId)) {
-          setBaseId(chosen?.id ?? candidates[0].id)
-        }
-      }, [candidates.map((candidate) => candidate.id).join(','), chosen?.id])
       const newId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
       const persistChat = async (nextMessages, nextBatches, nextActive, nextBrief = brief) => {
         try {
@@ -7500,40 +7644,6 @@ window.__ModuleLoader__.load({
         try {
           let assistantContent = ''
           let batch = null
-          if (mode === 'discuss') {
-            const base = candidates.find((candidate) => candidate.id === baseId) ?? chosen ?? candidates[0]
-            if (!base) throw new Error('还没有候选可讨论；先生成一批候选')
-            const result = await postDiscussion(state.cwd, {
-              topicId: `premise-${base.id}`,
-              topic: `构思候选讨论：${base.title || base.premise || base.id}`,
-              item: base,
-              message: text,
-            })
-            assistantContent = String(result?.reply ?? '').trim() || '（讨论没有返回文字）'
-            batch = {
-              id: newId('batch'),
-              createdAt: new Date().toISOString(),
-              mode: 'discuss',
-              instruction: text,
-              candidates: [],
-              ideas: [],
-            }
-            const assistantMessage = {
-              id: newId('msg'),
-              role: 'assistant',
-              content: assistantContent,
-              createdAt: new Date().toISOString(),
-              batchId: batch.id,
-              actions: Array.isArray(result?.actions) ? result.actions : [],
-            }
-            const nextMessages = [...history, assistantMessage].slice(-200)
-            const nextBatches = [...batches, batch].slice(-30)
-            setMessages(nextMessages)
-            setBatches(nextBatches)
-            setActiveBatchId(batch.id)
-            await persistChat(nextMessages, nextBatches, batch.id)
-            return
-          }
           if (mode === 'sparks') {
             const result = await run('inspiration-generate', { topic: text, count: 3, history: messages }, { silent: true })
             const ideas = result?.ideas ?? []
@@ -7580,9 +7690,6 @@ window.__ModuleLoader__.load({
               candidates,
               ideas: [],
             }
-            if (candidates.length) {
-              setBaseId(candidates[0].id)
-            }
             const nextMessages = [...history, {
               id: newId('msg'),
               role: 'assistant',
@@ -7625,32 +7732,6 @@ window.__ModuleLoader__.load({
           setWorking(false)
         }
       }
-      const applyDiscussionMessage = async (message) => {
-        const base = candidates.find((candidate) => candidate.id === baseId) ?? chosen ?? candidates[0]
-        if (!base || !message.actions?.length) return
-        setWorking(true)
-        try {
-          await postDiscussionApply(state.cwd, {
-            action: 'apply',
-            topicId: `premise-${base.id}`,
-            topic: `构思候选讨论：${base.title || base.premise || base.id}`,
-            reply: message.content,
-            result: { actions: message.actions },
-            item: base,
-            actions: message.actions,
-          })
-          await run('premise-chat-save', {
-            messages,
-            batches,
-            activeBatchId,
-          }, { silent: true })
-          setToast?.('已应用讨论修改')
-        } catch (error) {
-          setToast?.(error.message)
-        } finally {
-          setWorking(false)
-        }
-      }
       const promoteIdea = (idea) => {
         setMode('candidates')
         setInput([idea.hook, idea.scene, idea.note].filter(Boolean).join('；'))
@@ -7663,30 +7744,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-row' },
           h('h3', { className: 'nw-h3' }, '构思对话'),
           h('div', { className: 'nw-actions', style: { margin: 0 } },
-            h('button', { type: 'button', className: `nw-btn${mode === 'discuss' ? ' primary' : ''}`, disabled: working || !candidates.length, onClick: () => setMode('discuss') }, '讨论当前候选'),
             h('button', { type: 'button', className: `nw-btn${mode === 'candidates' ? ' primary' : ''}`, disabled: working, onClick: () => setMode('candidates') }, '生成候选'),
             h('button', { type: 'button', className: `nw-btn${mode === 'sparks' ? ' primary' : ''}`, disabled: working, onClick: () => setMode('sparks') }, '桥段灵感'),
           ),
         ),
-        mode === 'discuss' && candidates.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
-              h('span', { className: 'nw-muted' }, '讨论对象'),
-              h('select', {
-                className: 'nw-input',
-                style: { flex: '1 1 260px' },
-                value: baseId ?? '',
-                disabled: working,
-                onChange: (event) => setBaseId(event.target.value),
-              }, candidates.map((candidate, index) =>
-                h('option', { key: candidate.id, value: candidate.id }, `${index + 1}. ${candidate.title || candidate.premise || candidate.id}`),
-              )),
-            )
-          : null,
-        h('p', { className: 'nw-muted' }, mode === 'discuss'
-          ? '这里是讨论，不会自动改候选：AI 先给判断和改法；只有点「应用修改到候选」才落盘。要换整套，再切「生成候选」。'
-          : mode === 'candidates'
-            ? '每轮生成一套新的完整候选；生成后可以切回「讨论当前候选」逐条修改。'
-            : '先要几个具体桥段，不直接定完整构思；满意后可以转成候选继续聊。'),
+        h('p', { className: 'nw-muted' }, mode === 'candidates'
+          ? '每轮生成一套新的完整候选；继续提意见可以再生成下一批。'
+          : '先要几个具体桥段，不直接定完整构思；满意后可以转成候选继续聊。'),
         brief
           ? h('div', { className: 'nw-banner', style: { marginTop: '6px' } },
               h('span', { className: 'nw-muted' }, `我理解的意图：${brief}`),
@@ -7698,11 +7762,6 @@ window.__ModuleLoader__.load({
                 h('div', { key: index, className: 'nw-card', style: { marginBottom: '6px', background: 'var(--dsw-alias-bg-layer-1)' } },
                   h('div', { className: 'nw-eyebrow' }, message.role === 'assistant' ? 'AI' : '你'),
                   h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, message.content),
-                  message.role === 'assistant' && message.actions?.length
-                    ? h('div', { className: 'nw-actions' },
-                        h('button', { type: 'button', className: 'nw-btn', disabled: working, onClick: () => applyDiscussionMessage(message) }, '应用修改到候选'),
-                      )
-                    : null,
                 ),
               ),
               h('div', { ref: chatEndRef }),
@@ -7761,7 +7820,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PremiseView({ state, run, busy, direction, setDirection, goTo, openDiscussion, setToast }) {
+    function PremiseView({ state, run, busy, direction, setDirection, goTo, setToast }) {
       const premise = state.premise ?? { candidates: [], chosen: null }
       const candidates = premise.candidates ?? []
       const chosen = premise.chosen
@@ -7774,9 +7833,9 @@ window.__ModuleLoader__.load({
           desc: '像聊天一样说要什么；AI 每轮给几个候选，继续提意见直到你确认一个。',
           hints: ['说方向或直接开始聊', '继续提修改意见', '确认一个候选，进入文风'],
         }),
-        h(PremiseChat, { state, run, busy, setToast, chosen, candidates }),
+        h(PremiseChat, { state, run, busy, setToast, chosen }),
         h(DeconstructPanel, { state, run, busy, setDirection, setToast }),
-        chosen ? h(ChosenPremiseEditor, { state, chosen, run, busy, goTo, openDiscussion }) : null,
+        chosen ? h(ChosenPremiseEditor, { state, chosen, run, busy, goTo }) : null,
         candidates.length
           ? h('div', null,
               h('div', { className: 'nw-row', style: { marginTop: '4px' } },
@@ -7797,7 +7856,6 @@ window.__ModuleLoader__.load({
                         h('div', { className: 'nw-actions' },
                           h('button', { type: 'button', className: 'nw-btn primary block', disabled: busy, onClick: () => run('premise-commit', { candidateId: candidate.id }, { next: 'style', toast: '构思已确认，下一步：文风' }) },
                             busy ? '处理中…' : '确认这个'),
-                          h('button', { type: 'button', className: 'nw-btn', onClick: () => openDiscussion?.(`premise-${candidate.id}`, `候选 ${index + 1} 讨论`, candidate) }, '讨论'),
                         ),
                       ),
                     ),
@@ -7818,7 +7876,6 @@ window.__ModuleLoader__.load({
                       h('div', { className: 'nw-actions' },
                         h('button', { type: 'button', className: 'nw-btn primary block', disabled: busy, onClick: () => run('premise-commit', { candidateId: candidate.id }, { next: 'style', toast: '构思已确认，下一步：文风' }) },
                           busy ? '处理中…' : '确认选用这个构思'),
-                        h('button', { type: 'button', className: 'nw-btn', onClick: () => openDiscussion?.(`premise-${candidate.id}`, `候选 ${index + 1} 讨论`, candidate) }, '讨论'),
                       ),
                     ),
                   ),
@@ -7830,7 +7887,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChosenPremiseEditor({ state, chosen, run, busy, goTo, openDiscussion }) {
+    function ChosenPremiseEditor({ state, chosen, run, busy, goTo }) {
       const [fields, setFields] = useState(chosen)
       useEffect(() => { setFields(chosen) }, [chosen?.id, state.premise?.updatedAt])
       const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }))
@@ -7866,16 +7923,15 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-actions' },
           h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !dirty, onClick: () => run('premise-update', { fields }, { toast: '构思已更新' }) }, '保存构思修改'),
           dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
-          h('button', { type: 'button', className: 'nw-btn', onClick: () => openDiscussion?.(`premise-${chosen.id}`, '构思讨论', chosen) }, '讨论这个构思'),
           h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => goTo('style') }, '继续：设置文风'),
         ),
       )
     }
 
-    function StyleView({ state, run, busy, goTo, openDiscussion, setToast }) {
+    function StyleView({ state, run, busy, goTo, setToast }) {
+      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const contract = state.style ?? {}
       const templates = state.styleTemplates ?? []
-      const orderedTemplates = [...templates].sort((a, b) => templateGroupOrder(a) - templateGroupOrder(b))
       const [fields, setFields] = useState(contract.fields ?? {})
       const [templateName, setTemplateName] = useState('')
       const [importOpen, setImportOpen] = useState(false)
@@ -7886,8 +7942,25 @@ window.__ModuleLoader__.load({
         setSampleText(Array.isArray(contract.samples) ? contract.samples.join('\n\n') : '')
       }, [contract.updatedAt])
       const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }))
-      const banned = Array.isArray(fields.bannedWords) ? fields.bannedWords.join('，') : fields.bannedWords ?? ''
-      const dirty = JSON.stringify(fields) !== JSON.stringify(contract.fields ?? {})
+      const textValue = (key) => (typeof fields[key] === 'string' ? fields[key] : '')
+      const listValue = (key) => (Array.isArray(fields[key]) ? fields[key].map((item) => String(item ?? '')) : [])
+      const listText = (key) => listValue(key).join('\n')
+      const commaText = (key) => listValue(key).join('，')
+      const onListText = (key) => (event) => update(key, event.target.value.split('\n'))
+      const onCommaText = (key) => (event) => update(key, event.target.value.split(/[，,]/).map((item) => item.trim()))
+      const ARRAY_FIELD_KEYS = ['must', 'never', 'adjust', 'bannedWords', 'bannedPatterns', 'genreFit', 'avoidGenre']
+      const STRING_FIELD_KEYS = ['voice', 'diction', 'imagery', 'sensoryFocus', 'dialogueStyle', 'pacing', 'chapterTitleStyle', 'notes']
+      const cleanList = (value) => (Array.isArray(value) ? value : []).map((item) => String(item ?? '').trim()).filter(Boolean)
+      const cleanString = (value) => (typeof value === 'string' ? value : '')
+      const normalizeFields = (source) => {
+        const next = { ...(source ?? {}) }
+        for (const key of ARRAY_FIELD_KEYS) next[key] = cleanList(next[key])
+        for (const key of STRING_FIELD_KEYS) next[key] = cleanString(next[key])
+        return next
+      }
+      const buildFields = () => normalizeFields(fields)
+      const dirty = JSON.stringify(buildFields()) !== JSON.stringify(normalizeFields(contract.fields))
+      const orderedTemplates = [...templates].sort((a, b) => styleGroupRank(a.group) - styleGroupRank(b.group))
       return h('div', null,
         h(StepIntro, {
           eyebrow: '03 / 文风',
@@ -7902,10 +7975,11 @@ window.__ModuleLoader__.load({
             h('span', { className: `nw-badge ${statusClass(contract.status)}` }, displayStatus(contract.status) || '未设置'),
           ),
           h('p', { className: 'nw-muted' }, '套用模板作为起点，再按需要微调；保存后才是本项目的文风契约。'),
+          h('div', { className: 'nw-eyebrow', style: { margin: '12px 2px 6px' } }, '基础'),
           h('div', { className: 'nw-grid-2' },
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '叙事视角'),
-              h('select', { className: 'nw-select', value: fields.pov ?? 'third-limited', disabled: busy, onChange: (e) => update('pov', e.target.value) },
+              h('select', { className: 'nw-select', value: textValue('pov') || 'third-limited', disabled: busy, onChange: (e) => update('pov', e.target.value) },
                 h('option', { value: 'third-limited' }, '第三人称限知'),
                 h('option', { value: 'first' }, '第一人称'),
                 h('option', { value: 'third-omniscient' }, '第三人称全知'),
@@ -7913,22 +7987,21 @@ window.__ModuleLoader__.load({
             ),
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '时态'),
-              h('select', { className: 'nw-select', value: fields.tense ?? 'past', disabled: busy, onChange: (e) => update('tense', e.target.value) },
+              h('select', { className: 'nw-select', value: textValue('tense') || 'past', disabled: busy, onChange: (e) => update('tense', e.target.value) },
                 h('option', { value: 'past' }, '过去时'),
                 h('option', { value: 'present' }, '现在时'),
               ),
             ),
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '单章目标字数'),
-              h('input', { className: 'nw-input', type: 'number', value: fields.chapterWords ?? 3000, disabled: busy, onChange: (e) => update('chapterWords', Number(e.target.value) || 0) }),
+              h('input', { className: 'nw-input', type: 'number', value: Number(fields.chapterWords) || 3000, disabled: busy, onChange: (e) => update('chapterWords', Number(e.target.value) || 0) }),
             ),
-            h('div', { className: 'nw-field' },
-              h('label', { className: 'nw-label' }, '对话占比（0–1）'),
-              h('input', { className: 'nw-input', type: 'number', step: '0.05', min: '0', max: '1', value: fields.dialogueRatio ?? 0.35, disabled: busy, onChange: (e) => update('dialogueRatio', Number(e.target.value)) }),
-            ),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '语言质感'),
+          h('div', { className: 'nw-grid-2' },
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '句长'),
-              h('select', { className: 'nw-select', value: fields.sentenceLength ?? 'mixed', disabled: busy, onChange: (e) => update('sentenceLength', e.target.value) },
+              h('select', { className: 'nw-select', value: textValue('sentenceLength') || 'mixed', disabled: busy, onChange: (e) => update('sentenceLength', e.target.value) },
                 h('option', { value: 'short' }, '短句为主'),
                 h('option', { value: 'mixed' }, '长短混合'),
                 h('option', { value: 'long' }, '长句为主'),
@@ -7936,7 +8009,7 @@ window.__ModuleLoader__.load({
             ),
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '段落长度'),
-              h('select', { className: 'nw-select', value: fields.paragraphLength ?? 'medium', disabled: busy, onChange: (e) => update('paragraphLength', e.target.value) },
+              h('select', { className: 'nw-select', value: textValue('paragraphLength') || 'medium', disabled: busy, onChange: (e) => update('paragraphLength', e.target.value) },
                 h('option', { value: 'short' }, '短段'),
                 h('option', { value: 'medium' }, '中等'),
                 h('option', { value: 'long' }, '长段'),
@@ -7944,33 +8017,96 @@ window.__ModuleLoader__.load({
             ),
             h('div', { className: 'nw-field' },
               h('label', { className: 'nw-label' }, '比喻密度'),
-              h('select', { className: 'nw-select', value: fields.metaphorDensity ?? 'low', disabled: busy, onChange: (e) => update('metaphorDensity', e.target.value) },
+              h('select', { className: 'nw-select', value: textValue('metaphorDensity') || 'low', disabled: busy, onChange: (e) => update('metaphorDensity', e.target.value) },
                 h('option', { value: 'low' }, '低'),
                 h('option', { value: 'medium' }, '中'),
                 h('option', { value: 'high' }, '高'),
               ),
             ),
             h('div', { className: 'nw-field' },
-              h('label', { className: 'nw-label' }, '章节标题风格'),
-              h('input', { className: 'nw-input', value: fields.chapterTitleStyle ?? '', disabled: busy, onChange: (e) => update('chapterTitleStyle', e.target.value) }),
+              h('label', { className: 'nw-label' }, '对话占比（0–1）'),
+              h('input', { className: 'nw-input', type: 'number', step: '0.05', min: '0', max: '1', value: Number.isFinite(Number(fields.dialogueRatio)) ? Number(fields.dialogueRatio) : 0.35, disabled: busy, onChange: (e) => update('dialogueRatio', Number(e.target.value)) }),
             ),
           ),
+          h('div', { className: 'nw-grid-2' },
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '叙述声音（voice）'),
+              h('input', { className: 'nw-input', value: textValue('voice'), disabled: busy, placeholder: '例如：克制的第三人称，冷静旁观', onChange: (e) => update('voice', e.target.value) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '用词偏好（diction）'),
+              h('input', { className: 'nw-input', value: textValue('diction'), disabled: busy, placeholder: '例如：日常口语，少用成语', onChange: (e) => update('diction', e.target.value) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '意象来源（imagery）'),
+              h('input', { className: 'nw-input', value: textValue('imagery'), disabled: busy, placeholder: '例如：器物、天象、市井细节', onChange: (e) => update('imagery', e.target.value) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '感官侧重（sensoryFocus）'),
+              h('input', { className: 'nw-input', value: textValue('sensoryFocus'), disabled: busy, placeholder: '例如：听觉与触觉优先', onChange: (e) => update('sensoryFocus', e.target.value) }),
+            ),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '对白与节奏'),
+          h('div', { className: 'nw-grid-2' },
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '对白写法（dialogueStyle）'),
+              h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: textValue('dialogueStyle'), disabled: busy, placeholder: '例如：短句交锋，少用解释性台词', onChange: (e) => update('dialogueStyle', e.target.value) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '节奏与信息密度（pacing）'),
+              h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: textValue('pacing'), disabled: busy, placeholder: '例如：每段推进一个信息点，章末留钩子', onChange: (e) => update('pacing', e.target.value) }),
+            ),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '三档规则（一行一条）'),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '必须贯彻（must）'),
+            h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: listText('must'), disabled: busy, placeholder: '例如：每章至少一次具体动作；心理描写用行为带出', onChange: onListText('must') }),
+          ),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '绝对禁止（never）'),
+            h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: listText('never'), disabled: busy, placeholder: '例如：禁止总结式抒情；禁止直接说出主题', onChange: onListText('never') }),
+          ),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '按场景调节（adjust）'),
+            h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: listText('adjust'), disabled: busy, placeholder: '例如：打斗时缩短句长；情绪段落可放慢', onChange: onListText('adjust') }),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '禁忌'),
           h('div', { className: 'nw-field' },
             h('label', { className: 'nw-label' }, '禁用词（用逗号分隔）'),
-            h('input', { className: 'nw-input', value: banned, disabled: busy, onChange: (e) => update('bannedWords', e.target.value.split(/[，,]/).map((s) => s.trim()).filter(Boolean)) }),
+            h('input', { className: 'nw-input', value: commaText('bannedWords'), disabled: busy, placeholder: '例如：不由得，缓缓，仿佛', onChange: onCommaText('bannedWords') }),
           ),
           h('div', { className: 'nw-field' },
-            h('label', { className: 'nw-label' }, '额外风格要求'),
-            h('textarea', { className: 'nw-textarea', value: fields.notes ?? '', disabled: busy, onChange: (e) => update('notes', e.target.value) }),
+            h('label', { className: 'nw-label' }, '禁用句式（一行一条）'),
+            h('textarea', { className: 'nw-textarea', style: { minHeight: '72px' }, value: listText('bannedPatterns'), disabled: busy, placeholder: '例如：不是……而是……；在……的同时', onChange: onListText('bannedPatterns') }),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '题材适配'),
+          h('div', { className: 'nw-grid-2' },
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '适用题材（用逗号分隔）'),
+              h('input', { className: 'nw-input', value: commaText('genreFit'), disabled: busy, placeholder: '例如：古风，武侠，权谋', onChange: onCommaText('genreFit') }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '不适用题材（用逗号分隔）'),
+              h('input', { className: 'nw-input', value: commaText('avoidGenre'), disabled: busy, placeholder: '例如：校园，科幻', onChange: onCommaText('avoidGenre') }),
+            ),
+          ),
+          h('div', { className: 'nw-eyebrow', style: { margin: '16px 2px 6px' } }, '标题与补充'),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '章节标题风格'),
+            h('input', { className: 'nw-input', value: textValue('chapterTitleStyle'), disabled: busy, placeholder: '例如：四字短语，偏意象', onChange: (e) => update('chapterTitleStyle', e.target.value) }),
           ),
           h('div', { className: 'nw-field' },
-            h('label', { className: 'nw-label' }, '文风示例段落（用空行分隔，最多 3 段；生成时作为语感锚点）'),
+            h('label', { className: 'nw-label' }, '补充说明（notes）'),
+            h('textarea', { className: 'nw-textarea', value: textValue('notes'), disabled: busy, placeholder: '其它需要写进文风契约的约束', onChange: (e) => update('notes', e.target.value) }),
+          ),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '文风示例段落（空行分隔，最多 3 段；建议 2–3 段、每段 80–150 字，覆盖不同场景（日常/冲突/情绪））'),
             h('textarea', {
               className: 'nw-textarea',
               style: { minHeight: '120px' },
               value: sampleText,
               disabled: busy,
-              placeholder: '粘贴 1–3 段你想要的语感示例（人物互动/战斗/日常都可以）',
+              placeholder: '粘贴 2–3 段不同场景的语感示例，每段 80–150 字（日常/冲突/情绪各一段最好）',
               onChange: (e) => setSampleText(e.target.value),
             }),
             h('div', { className: 'nw-actions' },
@@ -7985,14 +8121,13 @@ window.__ModuleLoader__.load({
             ),
           ),
           h('div', { className: 'nw-actions' },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || contract.status === 'missing', onClick: () => run('style-commit', { fields }, { next: 'outline', toast: '文风已确认，下一步：大纲' }) }, '保存并确认文风'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !contract.templateId, onClick: () => run('style-apply', { templateId: contract.templateId }, { toast: '已恢复模板值' }) }, '恢复模板值'),
-            h('button', { type: 'button', className: 'nw-btn', onClick: () => openDiscussion?.('style', '文风契约讨论', { templateId: contract.templateId, fields }) }, '讨论文风'),
+            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || contract.status === 'missing' || Boolean(lockMsg('style-commit', {})), title: lockMsg('style-commit', {}) ?? undefined, onClick: () => run('style-commit', { fields: buildFields() }, { next: 'outline', toast: '文风已确认，下一步：大纲' }) }, '保存并确认文风'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !contract.templateId || Boolean(lockMsg('style-apply', { templateId: contract.templateId })), title: lockMsg('style-apply', { templateId: contract.templateId }) ?? undefined, onClick: () => run('style-apply', { templateId: contract.templateId }, { toast: '已恢复模板值' }) }, '恢复模板值'),
             h('input', { className: 'nw-input', style: { width: '150px' }, value: templateName, placeholder: '模板名称', disabled: busy, onChange: (e) => setTemplateName(e.target.value) }),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || !templateName.trim(), onClick: async () => {
               await run('style-save-template', {
                 name: templateName,
-                fields,
+                fields: buildFields(),
                 samples: sampleText.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean),
               }, { toast: '已保存为自定义模板' })
               setTemplateName('')
@@ -8001,19 +8136,28 @@ window.__ModuleLoader__.load({
             dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
           ),
         ),
-        h('h3', { className: 'nw-eyebrow', style: { margin: '6px 2px 10px' } }, '模板（古风优先）'),
-        orderedTemplates.map((template) =>
-          h('div', { key: template.id, className: `nw-template${contract.templateId === template.id ? ' current' : ''}` },
+        h('h3', { className: 'nw-eyebrow', style: { margin: '6px 2px 10px' } }, '模板库'),
+        orderedTemplates.map((template) => {
+          const templateFields = template.fields ?? {}
+          const tags = Array.isArray(template.tags) ? template.tags.map((tag) => String(tag ?? '')).filter(Boolean) : []
+          const samples = Array.isArray(template.samples) ? template.samples : []
+          const groupLabel = template.group ?? (template.builtin === false ? '自定义' : '通用')
+          const ratio = Number(templateFields.dialogueRatio)
+          const voice = typeof templateFields.voice === 'string' ? templateFields.voice : ''
+          const summary = `${STYLE_SENTENCE_LABELS[templateFields.sentenceLength] ?? templateFields.sentenceLength ?? '—'} · ${STYLE_PARAGRAPH_LABELS[templateFields.paragraphLength] ?? templateFields.paragraphLength ?? '—'} · 对话 ${Number.isFinite(ratio) ? `${Math.round(ratio * 100)}%` : '—'} · ${samples.length} 段示例${voice ? ` · ${voice.slice(0, 20)}` : ''}`
+          return h('div', { key: template.id, className: `nw-template${contract.templateId === template.id ? ' current' : ''}` },
             h('div', { className: 'nw-row' },
               h('div', { className: 'nw-template-name' }, template.name ?? template.id),
-              h('span', { className: 'nw-badge' }, TEMPLATE_GROUP_LABELS[templateGroupOrder(template)] ?? '通用'),
-              template.builtin === false ? h('span', { className: 'nw-badge' }, '自定义') : null,
+              h('span', { className: 'nw-badge' }, groupLabel),
               contract.templateId === template.id ? h('span', { className: 'nw-badge cur' }, '当前') : null,
             ),
-            h('div', { className: 'nw-muted' }, template.description ?? ''),
-            h('div', { className: 'nw-muted' }, `单章 ${template.fields?.chapterWords ?? '—'} 字 · 对话占比 ${template.fields?.dialogueRatio ?? '—'} · ${template.fields?.sentenceLength ?? ''}`),
+            template.description ? h('div', { className: 'nw-muted' }, template.description) : null,
+            h('div', { className: 'nw-muted' }, summary),
+            tags.length
+              ? h('div', { className: 'nw-meta' }, tags.slice(0, 8).map((tag) => h('span', { key: tag }, tag)))
+              : null,
             h('div', { className: 'nw-actions' },
-              h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('style-apply', { templateId: template.id }, { toast: `已套用「${template.name ?? template.id}」` }) }, '套用此模板'),
+              h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('style-apply', { templateId: template.id })), title: lockMsg('style-apply', { templateId: template.id }) ?? undefined, onClick: () => run('style-apply', { templateId: template.id }, { toast: `已套用「${template.name ?? template.id}」` }) }, '套用此模板'),
               h('button', {
                 type: 'button',
                 className: 'nw-btn ghost',
@@ -8041,8 +8185,8 @@ window.__ModuleLoader__.load({
                   }, '删除')
                 : null,
             ),
-          ),
-        ),
+          )
+        }),
         importOpen
           ? h('div', { className: 'nw-modal-backdrop', onClick: () => setImportOpen(false) },
               h('div', { className: 'nw-modal', onClick: (event) => event.stopPropagation() },
@@ -8052,7 +8196,7 @@ window.__ModuleLoader__.load({
                   className: 'nw-textarea',
                   style: { minHeight: '160px', marginTop: '8px' },
                   value: importText,
-                  placeholder: '{"name":"...","fields":{...},"samples":[]}',
+                  placeholder: '{"name":"...","group":"古风","tags":["..."],"fields":{...},"samples":[]}',
                   onChange: (event) => setImportText(event.target.value),
                 }),
                 h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },

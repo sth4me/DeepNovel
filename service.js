@@ -1,10 +1,65 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, watch } from 'node:fs'
 import { mkdir, rename, unlink, writeFile, cp, rm, readdir, stat as fsStat, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
+import { CRAFT_CARDS } from './craft.js'
+import {
+  craftCardIdFromSkill,
+  craftSkillBody,
+  craftSkillName,
+  deleteImportedSkill,
+  allSkillRoots,
+  importSkill as importSkillToProject,
+  projectSkillRoots,
+  scanImportedSkills,
+} from './skills.js'
+
+const AI_BANNED_WORDS = [
+  '仿佛', '好像', '犹如', '宛若', '一丝', '一抹', '些许', '几分', '隐约', '深吸一口气',
+  '缓缓', '不禁', '微微', '轻轻', '淡淡', '眼中闪过', '嘴角勾起', '眉头微皱', '心中一动', '心头一震',
+  '心下了然', '不容置疑', '不易察觉', '显而易见', '坚定', '深邃', '凛冽', '突然', '瞬间', '不由自主',
+  '情不自禁', '不由得', '嘴角微扬', '脸色一变', '目光如炬',
+]
+
+/** 规范化模型返回的 aiFlavor；结构不合法返回 null。 */
+function normalizeAiFlavor(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const score = Number(raw.score)
+  if (!Number.isFinite(score)) return null
+  const level = raw.level === '轻' || raw.level === '中' || raw.level === '重'
+    ? raw.level
+    : (score >= 80 ? '轻' : score >= 60 ? '中' : '重')
+  const markers = Array.isArray(raw.markers)
+    ? raw.markers.slice(0, 20).map((marker) => ({
+        type: ['禁用词', '句式', '结构', '节奏'].includes(marker?.type) ? marker.type : '句式',
+        quote: String(marker?.quote ?? '').slice(0, 80),
+        ...(marker?.word ? { word: String(marker.word).slice(0, 20) } : {}),
+      })).filter((marker) => marker.quote)
+    : []
+  return { level, score: Math.max(0, Math.min(100, Math.round(score))), markers }
+}
+
+/** 启发式 AI 味估算（禁用词密度），用于审查兜底与 deslop 前后对比。 */
+function estimateAiFlavor(text) {
+  const source = String(text ?? '')
+  const chars = countChars(source)
+  let hits = 0
+  for (const word of AI_BANNED_WORDS) hits += (source.match(new RegExp(word, 'g')) ?? []).length
+  const density = chars > 0 ? (hits * 1000) / chars : 0
+  const score = Math.max(0, Math.min(100, Math.round(100 - density * 12)))
+  const level = score >= 80 ? '轻' : score >= 60 ? '中' : '重'
+  const markers = AI_BANNED_WORDS
+    .filter((word) => source.includes(word))
+    .slice(0, 10)
+    .map((word) => ({ type: '禁用词', word, quote: word }))
+  return { level, score, markers, density: Math.round(density * 10) / 10 }
+}
+import { openDatabase } from './db.js'
+import { migrateLegacyProject } from './migrate.js'
+import { NovelStore } from './store.js'
 import {
   BIBLE_SYSTEM_PROMPT,
   BIBLE_CHARACTERS_SYSTEM_PROMPT,
@@ -12,8 +67,10 @@ import {
   CHAPTER_REVIEW_SYSTEM_PROMPT,
   CHAPTER_SYSTEM_PROMPT,
   CONTINUITY_SYSTEM_PROMPT,
-  DECONSTRUCT_SYSTEM_PROMPT,
-  DISCUSSION_SYSTEM_PROMPT,
+  DECONSTRUCT_STRUCTURE_SYSTEM_PROMPT,
+  DECONSTRUCT_CHARACTERS_SYSTEM_PROMPT,
+  DECONSTRUCT_TECHNIQUE_SYSTEM_PROMPT,
+  DESLOP_SYSTEM_PROMPT,
   INSPIRATION_SYSTEM_PROMPT,
   OUTLINE_AUDIT_SYSTEM_PROMPT,
   OUTLINE_REPAIR_SYSTEM_PROMPT,
@@ -31,6 +88,7 @@ import {
   buildReverseOutlineUserPrompt,
   buildVolumePlanUserPrompt,
   buildChapterUserPrompt,
+  formatCraftCards,
   buildOutlineUserPrompt,
   buildPremiseUserPrompt,
   findStyleTemplate,
@@ -54,7 +112,7 @@ const DEFAULT_POWER_TIERS = [
 const BIBLE_LABELS = { characters: '角色', locations: '地点', rules: '规则', factions: '势力', items: '物品' }
 
 const PROSE_TASKS = new Set(['draft', 'revise', 'fix'])
-const MODEL_TASKS = ['premise', 'bible', 'outline', 'draft', 'revise', 'fix', 'audit', 'discussion', 'summary', 'continuity']
+const MODEL_TASKS = ['premise', 'bible', 'outline', 'draft', 'revise', 'fix', 'audit', 'summary', 'continuity']
 const progressContext = new AsyncLocalStorage()
 
 export function runWithProgress(progress, fn) {
@@ -65,7 +123,69 @@ const PROJECT_PROMPT_PATH = 'story/prompt.json'
 const DSH_HOME = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
 const GLOBAL_PROMPT_DIR = join(DSH_HOME, 'novel-writer')
 const GLOBAL_PROMPT_PATH = join(GLOBAL_PROMPT_DIR, 'prompt-injection.json')
+const LIBRARY_DIR = join(DSH_HOME, 'novel-writer', 'library')
+const LIBRARY_CHARACTER_DIR = join(LIBRARY_DIR, 'characters')
+const LIBRARY_CRAFT_DIR = join(LIBRARY_DIR, 'craft')
+const PROMPT_STORE_VERSION = 2
 const PROSE_PROMPT_TASKS = ['draft', 'revise', 'fix']
+
+/*
+ * 写作台自动刷新用的目录监听：Host 没有文件变更推送，而轮询逐章 stat 在长篇项目里
+ * 成本偏高，所以用 fs.watch 维护一个单调递增的修订号，页面只比较「指纹 + 修订号」。
+ * 监听建不起来（非本地盘、权限异常等）时由 projectSignature 退回 stat 指纹。
+ */
+/**
+ * 解析 chapters 目录监听事件的文件名（Electron 的 fs.watch 使用）：
+ * `001/draft.md` / `001\\final.md`（相对 story/chapters）→ { number: 1, file: 'draft' }。
+ */
+export function parseChapterWatchEventPath(filename) {
+  const name = String(filename ?? '').replace(/\\/g, '/')
+  const match = name.match(/(?:^|\/)(\d{1,6})\/(draft|final)\.md$/)
+  if (!match) return null
+  return { number: Number(match[1]), file: match[2] }
+}
+
+const SIGNATURE_WATCH_LIMIT = 8
+const signatureWatches = new Map()
+
+function closeSignatureWatch(hostDir) {
+  const entry = signatureWatches.get(hostDir)
+  if (!entry) return
+  signatureWatches.delete(hostDir)
+  try {
+    entry.watcher?.close()
+  } catch {
+    // 监听已经失效时忽略
+  }
+}
+
+function ensureSignatureWatch(hostDir) {
+  const existing = signatureWatches.get(hostDir)
+  if (existing) {
+    // 重新插入，保持 LRU 顺序
+    signatureWatches.delete(hostDir)
+    signatureWatches.set(hostDir, existing)
+    return existing
+  }
+  const entry = { revision: 0, watcher: null }
+  try {
+    entry.watcher = watch(hostDir, { recursive: true }, () => {
+      entry.revision += 1
+    })
+    entry.watcher.on?.('error', () => closeSignatureWatch(hostDir))
+  } catch {
+    return null
+  }
+  signatureWatches.set(hostDir, entry)
+  while (signatureWatches.size > SIGNATURE_WATCH_LIMIT) {
+    closeSignatureWatch(signatureWatches.keys().next().value)
+  }
+  return entry
+}
+
+export function disposeSignatureWatches() {
+  for (const hostDir of [...signatureWatches.keys()]) closeSignatureWatch(hostDir)
+}
 
 function defaultInjectionConfig() {
   return { enabled: false, position: 'suffix', tasks: [...PROSE_PROMPT_TASKS], text: '' }
@@ -136,6 +256,243 @@ function errorText(error) {
 
 function countChars(text) {
   return String(text ?? '').replace(/\s+/g, '').length
+}
+
+/** 角色卡库条目归一化：字段收敛为固定结构，坏值不进入库。 */
+function normalizeLibraryCharacter(raw, fallbackId = '') {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const origin = source.source && typeof source.source === 'object' ? source.source : {}
+  return {
+    id: String(source.id ?? fallbackId).slice(0, 120),
+    name: String(source.name ?? '').slice(0, 120),
+    role: String(source.role ?? '').slice(0, 120),
+    description: String(source.description ?? '').slice(0, 4000),
+    traits: Array.isArray(source.traits) ? source.traits.map(String).filter(Boolean).slice(0, 30) : [],
+    goal: String(source.goal ?? '').slice(0, 1000),
+    notes: String(source.notes ?? '').slice(0, 4000),
+    source: {
+      projectTitle: String(origin.projectTitle ?? '').slice(0, 200),
+      projectRoot: String(origin.projectRoot ?? '').slice(0, 1000),
+    },
+    createdAt: typeof source.createdAt === 'string' ? source.createdAt : null,
+  }
+}
+
+/** 角色卡文件绝对路径；只接受库目录内的安全文件名，拒绝路径穿越。 */
+function libraryCharacterFile(id) {
+  const value = String(id ?? '').trim()
+  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === '.' || value === '..') {
+    throw new Error('无效的角色卡 id')
+  }
+  return join(LIBRARY_CHARACTER_DIR, `${value}.json`)
+}
+
+/**
+ * 提示词覆盖归一化：兼容 v1（{ [key]: string }）与 v2（{ version: 2, overrides }）。
+ * 统一返回 { [key]: { text, baseHash, baseRevision } }。
+ */
+function normalizePromptOverrides(data) {
+  const source = data && typeof data === 'object' ? data : {}
+  const raw = source.overrides && typeof source.overrides === 'object' ? source.overrides : source
+  const out = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === 'version' || key === 'overrides') continue
+    let text = ''
+    let baseHash = null
+    let baseRevision = null
+    if (typeof value === 'string') {
+      text = value
+    } else if (value && typeof value === 'object') {
+      text = typeof value.text === 'string' ? value.text : ''
+      baseHash = typeof value.baseHash === 'string' && value.baseHash ? value.baseHash : null
+      baseRevision = value.baseRevision === null || value.baseRevision === undefined
+        ? null
+        : (Number.isFinite(Number(value.baseRevision)) ? Number(value.baseRevision) : null)
+    }
+    const clean = text.trim().slice(0, 20000)
+    if (!clean) continue
+    out[key] = { text: clean, baseHash, baseRevision }
+  }
+  return out
+}
+
+/** 技法卡片归一化：内置与用户卡片共用，body 保持原文。 */
+function normalizeCraftCard(raw, fallbackId = '', source = 'user') {
+  const card = raw && typeof raw === 'object' ? raw : {}
+  const id = String(card.id ?? fallbackId).trim().slice(0, 80)
+  return {
+    id,
+    title: String(card.title ?? '').trim().slice(0, 120) || id,
+    summary: String(card.summary ?? '').trim().slice(0, 300),
+    tags: Array.isArray(card.tags)
+      ? card.tags.map(String).map((tag) => tag.trim()).filter(Boolean).slice(0, 20)
+      : [],
+    tasks: Array.isArray(card.tasks)
+      ? card.tasks.map(String).map((task) => task.trim()).filter(Boolean).slice(0, 10)
+      : [],
+    body: String(card.body ?? '').slice(0, 4000),
+    source,
+  }
+}
+
+const USER_CRAFT_ID = /^[a-z0-9-]{2,32}$/
+const USER_CRAFT_TASKS = ['draft', 'revise', 'fix', 'outline', 'deslop']
+
+/** 保存用户技法卡片到 DSH_HOME/novel-writer/library/craft/<id>.json。 */
+async function saveUserCraftCard(input = {}) {
+  const id = String(input.id ?? '').trim()
+  if (!USER_CRAFT_ID.test(id)) throw new Error('技法卡片 id 需为 2–32 位小写字母、数字或连字符')
+  const body = String(input.body ?? '').trim()
+  if (body.length < 100 || body.length > 4000) throw new Error('技法卡片正文需 100–4000 字')
+  const tasks = Array.isArray(input.tasks) ? input.tasks.map(String).map((task) => task.trim()).filter(Boolean) : []
+  if (tasks.length === 0 || tasks.some((task) => !USER_CRAFT_TASKS.includes(task))) {
+    throw new Error('tasks 只能包含：' + USER_CRAFT_TASKS.join('/'))
+  }
+  const card = {
+    id,
+    title: String(input.title ?? id).trim().slice(0, 80) || id,
+    summary: String(input.summary ?? '').trim().slice(0, 200),
+    tags: (Array.isArray(input.tags) ? input.tags : []).map(String).map((tag) => tag.trim()).filter(Boolean).slice(0, 8),
+    tasks,
+    body,
+    updatedAt: now(),
+  }
+  await mkdir(LIBRARY_CRAFT_DIR, { recursive: true })
+  await writeFile(join(LIBRARY_CRAFT_DIR, `${id}.json`), JSON.stringify(card, null, 2), 'utf8')
+  return { id, source: 'user' }
+}
+
+/** 删除用户技法卡片；若是内置 id 的覆盖，删除后自动恢复内置卡片。 */
+async function deleteUserCraftCard(id) {
+  const target = join(LIBRARY_CRAFT_DIR, `${String(id ?? '').trim()}.json`)
+  if (!existsSync(target)) throw new Error(`用户技法卡片不存在：${id}`)
+  await unlink(target)
+  return { id, deleted: true }
+}
+
+/** 从 instruction 提取 2–4 字中文片段与英文词，用于与卡片标题/摘要/标签做重叠匹配。 */
+function craftInstructionKeywords(instruction) {
+  const source = String(instruction ?? '')
+  const words = new Set()
+  for (const match of source.matchAll(/[\u4e00-\u9fa5]{2,4}/g)) {
+    const run = match[0]
+    for (let start = 0; start < run.length; start += 1) {
+      for (let length = 2; length <= 4 && start + length <= run.length; length += 1) {
+        words.add(run.slice(start, start + length))
+      }
+    }
+  }
+  for (const match of source.matchAll(/[A-Za-z][A-Za-z0-9_-]{1,}/g)) words.add(match[0].toLowerCase())
+  return [...words]
+}
+
+/** 确定性 hash（FNV-1a）：用于同分轮转，保证同一章每次挑选结果稳定、不同章尽量不同。 */
+function craftSeedHash(text) {
+  let hash = 2166136261
+  for (const char of String(text)) {
+    hash ^= char.codePointAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+/** 注入提示词前加一句契约优先说明（只影响注入文本，不改卡片本身）。 */
+function withCraftContractNote(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return cards
+  const [first, ...rest] = cards
+  return [{ ...first, body: '（本卡只是参考；与文风契约冲突时，一律以文风契约为准。）\n' + first.body }, ...rest]
+}
+
+/** 读 DSH_HOME 下的用户技法卡片；坏文件跳过，同 id 由调用方覆盖内置。 */
+async function loadUserCraftCards() {
+  let entries = []
+  try {
+    entries = await readdir(LIBRARY_CRAFT_DIR, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const cards = []
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+    try {
+      const raw = JSON.parse(await readFile(join(LIBRARY_CRAFT_DIR, entry.name), 'utf8'))
+      const card = normalizeCraftCard(raw, entry.name.replace(/\.json$/, ''), 'user')
+      if (!card.id || !card.body) continue
+      cards.push(card)
+    } catch {
+      // 坏文件跳过，不影响其它卡片
+    }
+  }
+  return cards
+}
+
+/* ------------------------------ 拆书流水线归一化 ------------------------------ */
+
+function normalizeDeconstructUnits(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.slice(0, 40).map((item, index) => {
+    const unit = item && typeof item === 'object' ? item : {}
+    return {
+      index: Number.isFinite(Number(unit.index)) ? Number(unit.index) : index + 1,
+      span: String(unit.span ?? '').slice(0, 200),
+      summary: String(unit.summary ?? '').slice(0, 400),
+      function: String(unit.function ?? '').slice(0, 40),
+    }
+  })
+}
+
+function normalizeDeconstructCharacters(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.slice(0, 30).map((item) => {
+    const character = item && typeof item === 'object' ? item : {}
+    return {
+      name: String(character.name ?? '').slice(0, 120),
+      role: String(character.role ?? '').slice(0, 120),
+      description: String(character.description ?? '').slice(0, 600),
+      traits: Array.isArray(character.traits)
+        ? character.traits.map(String).map((trait) => trait.trim()).filter(Boolean).slice(0, 10)
+        : [],
+      goal: String(character.goal ?? '').slice(0, 300),
+    }
+  }).filter((character) => character.name)
+}
+
+function normalizeDeconstructSettings(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const list = (value) => (Array.isArray(value)
+    ? value.map(String).map((item) => item.trim()).filter(Boolean).slice(0, 40)
+    : [])
+  return {
+    locations: list(source.locations),
+    rules: list(source.rules),
+    factions: list(source.factions),
+    items: list(source.items),
+  }
+}
+
+function normalizeDeconstructRelations(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.slice(0, 60).map((item) => {
+    const relation = item && typeof item === 'object' ? item : {}
+    return {
+      from: String(relation.from ?? '').slice(0, 120),
+      to: String(relation.to ?? '').slice(0, 120),
+      type: String(relation.type ?? '').slice(0, 60),
+      note: String(relation.note ?? '').slice(0, 400),
+    }
+  }).filter((relation) => relation.from && relation.to)
+}
+
+function normalizeDeconstructTechniques(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.slice(0, 8).map((item) => {
+    const technique = item && typeof item === 'object' ? item : {}
+    return {
+      name: String(technique.name ?? '').slice(0, 120),
+      how: String(technique.how ?? '').slice(0, 600),
+      example: String(technique.example ?? '').slice(0, 120),
+    }
+  }).filter((technique) => technique.name)
 }
 
 const JSON_REPAIR_SYSTEM = [
@@ -319,6 +676,19 @@ export class NovelWriterService {
     this.layoutVersion = LAYOUT_VERSION
     this.schemaVersion = SCHEMA_VERSION
     this.modelInfoCache = new Map()
+    this.stores = new Map()
+    this.chapterFileCache = new Map()
+    // 外部改正文监听（轮询签名；测试可改小 poll 间隔）
+    this.chapterWatches = new Map()
+    this.chapterWatchDebounceMs = 800
+    this.chapterWatchPollMs = 5000
+    this.recentSelfWrites = new Map()
+    // Electron 生产运行时用 fs.watch；其它环境（含测试）用轮询兜底。
+    this.useNativeWatch = Boolean(process.versions?.electron)
+    // 正文存在性扫描分支计数（测试断言 DB 命中时不做目录扫描）。
+    this.proseScanCount = 0
+    // 测试注入用：failHook(stage) 抛错可验证事务回滚
+    this.failHook = null
   }
 
   shouldPause() {
@@ -347,6 +717,502 @@ export class NovelWriterService {
     return this.ctx.workingDirectory.ensure(agent)
   }
 
+  /* ------------------------------ SQLite store 接入 ------------------------------ */
+
+  dbPathFor(cwd) {
+    return join(cwd, 'story', 'project.db')
+  }
+
+  /** 相对路径 → 宿主路径；测试 stub 没有 processPath 时用 join 兜底。 */
+  hostPathOf(target, fallbackCwd = '') {
+    return this.ctx.fs.processPath?.(target) ?? join(target?.cwd ?? fallbackCwd, target?.relativePath ?? '')
+  }
+
+  /** 迁移用的 fs 适配器：优先用 ctx.fs，缺的方法用 node fs 兜底（测试 stub 常缺 listDir）。 */
+  legacyFsFor(cwd) {
+    const fs = this.ctx.fs
+    const hostOf = (target) => this.hostPathOf(target, cwd)
+    return {
+      resolve: (relativePath, options) => (fs.resolve
+        ? fs.resolve(relativePath, options)
+        : Promise.resolve({ cwd: options?.cwd ?? cwd, relativePath })),
+      stat: fs.stat
+        ? (target) => fs.stat(target)
+        : async (target) => {
+            try {
+              const info = await fsStat(hostOf(target))
+              return { version: String(info.mtimeMs) }
+            } catch {
+              return null
+            }
+          },
+      readText: fs.readText
+        ? (target) => fs.readText(target)
+        : async (target) => readFile(hostOf(target), 'utf8'),
+      listDir: fs.listDir
+        ? (target) => fs.listDir(target)
+        : async (target) => {
+            const entries = await readdir(hostOf(target), { withFileTypes: true })
+            return entries.map((entry) => ({ type: entry.isDirectory() ? 'directory' : 'file', name: entry.name }))
+          },
+    }
+  }
+
+  /**
+   * 取项目对应的 NovelStore（LRU 8）。
+   * 首次打开：DB 不存在但有 legacy story/project.json 时自动迁移，再打开 DB。
+   */
+  async storeFor(agent) {
+    const cwd = await this.cwd(agent)
+    const cached = this.stores.get(cwd)
+    if (cached) {
+      this.stores.delete(cwd)
+      this.stores.set(cwd, cached)
+      this.ensureChapterWatch(cwd)
+      return cached
+    }
+    const exists = async (relativePath) => {
+      try {
+        const target = await this.ctx.fs.resolve(relativePath, { cwd })
+        return Boolean(await this.ctx.fs.stat(target))
+      } catch {
+        return false
+      }
+    }
+    const dbExists = await exists('story/project.db')
+    if (!dbExists) {
+      const legacyExists = await exists(this.marker)
+      if (!legacyExists) {
+        const error = new Error('当前目录尚未初始化写作项目，请先调用 novel_init')
+        error.code = 'NOVEL_WRITER_NOT_INITIALIZED'
+        throw error
+      }
+      await migrateLegacyProject({
+        projectRoot: cwd,
+        fs: this.legacyFsFor(cwd),
+        resolveHostPath: (relativePath) => join(cwd, relativePath),
+      })
+    }
+    const db = openDatabase(this.dbPathFor(cwd))
+    const store = new NovelStore(db, cwd)
+    this.stores.set(cwd, store)
+    while (this.stores.size > 8) {
+      const oldestKey = this.stores.keys().next().value
+      const oldest = this.stores.get(oldestKey)
+      this.stores.delete(oldestKey)
+      try {
+        oldest.close()
+      } catch {
+        // 已关闭
+      }
+      this.closeChapterWatch(oldestKey)
+    }
+    this.ensureChapterWatch(cwd)
+    // 懒回填正文存在性（旧库升级/首次打开只扫一次；迁移项目已带标记会跳过）
+    try {
+      const project = store.readProject()
+      if (!project?.proseFlagsBackfilled) {
+        const files = await this.scanChapterFilesFromDisk(cwd)
+        this.proseScanCount += 1
+        this.backfillProseFlags(store, files)
+        store.writeProject({ ...(project ?? {}), proseFlagsBackfilled: true })
+        this.chapterFileCache.set(cwd, { at: Date.now(), files })
+      }
+    } catch {
+      // 回填失败不阻塞项目打开（下次访问再试）
+    }
+    return store
+  }
+
+  disposeStores() {
+    for (const store of this.stores.values()) {
+      try {
+        store.close()
+      } catch {
+        // 已关闭
+      }
+    }
+    this.stores.clear()
+    this.chapterFileCache.clear()
+    for (const cwd of [...this.chapterWatches.keys()]) this.closeChapterWatch(cwd)
+    this.recentSelfWrites.clear()
+  }
+
+  /* ------------------------------ 外部正文改动监听 ------------------------------ */
+
+  /**
+   * 扫 story/chapters 下 draft/final 的 (mtime:size) 签名，用于检测外部直写文件。
+   * 只读本地盘（一次递归 readdir + 并发 stat），不依赖 fs.watch。
+   */
+  async scanChapterFileSignatures(cwd) {
+    const hostDir = join(cwd, 'story', 'chapters')
+    const entries = await readdir(hostDir, { recursive: true, withFileTypes: true })
+    const signatures = new Map()
+    const files = entries.filter((entry) => entry.isFile() && (entry.name === 'draft.md' || entry.name === 'final.md'))
+    for (let index = 0; index < files.length; index += 100) {
+      await Promise.all(files.slice(index, index + 100).map(async (entry) => {
+        const parent = String(entry.parentPath ?? entry.path ?? '')
+        const parentName = parent.split(/[\\/]/).filter(Boolean).pop() ?? ''
+        const number = Number(parentName)
+        if (!Number.isFinite(number)) return
+        try {
+          const info = await fsStat(join(parent, entry.name))
+          signatures.set(`${number}/${entry.name}`, `${info.mtimeMs}:${info.size}`)
+        } catch {
+          // 文件刚被删除时忽略
+        }
+      }))
+    }
+    return signatures
+  }
+
+  /**
+   * 监听 story/chapters/<pad>/(draft|final).md 的外部写入（写作助手/编辑器直写文件）。
+   * 实现说明：Windows 上 Node 的 fs.watch(recursive) 在 debug 构建会触发 libuv 断言，
+   * 因此用轻量轮询（默认 5s 一次 mtime:size 签名对比）+ 可手动 flush，效果等价且更稳。
+   * 检测到变化后批量 reindex + 修正 wordCount + 失效正文存在性缓存；disposeStores 时关闭。
+   */
+  ensureChapterWatch(cwd) {
+    if (this.chapterWatches.has(cwd)) return this.chapterWatches.get(cwd)
+    const entry = {
+      watcher: null,
+      pending: new Set(),
+      timer: null,
+      debounceTimer: null,
+      known: new Map(),
+      primed: false,
+    }
+    this.chapterWatches.set(cwd, entry)
+    if (this.useNativeWatch) {
+      // Electron 生产运行时 fs.watch 正常：直接监听 chapters 目录（递归），事件解析后走同一 flush。
+      try {
+        const hostDir = join(cwd, 'story', 'chapters')
+        entry.watcher = watch(hostDir, { recursive: true }, (_eventType, filename) => {
+          this.collectChapterWatchEvent(cwd, filename)
+        })
+        entry.watcher.on?.('error', () => {
+          try {
+            entry.watcher?.close()
+          } catch {
+            // 忽略
+          }
+          entry.watcher = null
+          this.startChapterPolling(cwd)
+        })
+        this.flushChapterWatchByCwd(cwd).catch(() => {})
+        return entry
+      } catch {
+        entry.watcher = null
+      }
+    }
+    this.startChapterPolling(cwd)
+    // 首次立即建立签名基线（不触发 reindex）
+    this.flushChapterWatchByCwd(cwd).catch(() => {})
+    return entry
+  }
+
+  /** 轮询兜底：定期比较 mtime:size 签名（非 Electron / watch 创建失败时使用）。 */
+  startChapterPolling(cwd) {
+    const entry = this.chapterWatches.get(cwd)
+    if (!entry || entry.timer) return
+    entry.timer = setInterval(() => {
+      this.scheduleChapterFlush(cwd)
+    }, this.chapterWatchPollMs)
+    entry.timer.unref?.()
+  }
+
+  /** 原生监听事件入口（Electron）：解析 `NNN/(draft|final).md` 后并入 pending 并去抖。 */
+  collectChapterWatchEvent(cwd, filename) {
+    const parsed = parseChapterWatchEventPath(filename)
+    if (!parsed) return null
+    const entry = this.chapterWatches.get(cwd)
+    if (!entry) return null
+    entry.pending.add(parsed.number)
+    this.scheduleChapterFlush(cwd)
+    return parsed
+  }
+
+  /** 轮询发现可能变化后，按 800ms 去抖再批量处理（连续写入只重建一次）。 */
+  scheduleChapterFlush(cwd) {
+    const entry = this.chapterWatches.get(cwd)
+    if (!entry || entry.debounceTimer) return
+    entry.debounceTimer = setTimeout(() => {
+      entry.debounceTimer = null
+      this.flushChapterWatchByCwd(cwd).catch(() => {})
+    }, this.chapterWatchDebounceMs)
+    entry.debounceTimer.unref?.()
+  }
+
+  closeChapterWatch(cwd) {
+    const entry = this.chapterWatches.get(cwd)
+    if (!entry) return
+    this.chapterWatches.delete(cwd)
+    if (entry.timer) clearInterval(entry.timer)
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+    try {
+      entry.watcher?.close()
+    } catch {
+      // 已失效
+    }
+  }
+
+  /**
+   * 删除/重命名章节目录时临时关闭监听：Windows 下 libuv 的 recursive fs.watch
+   * 在监视树内目录被删除时会触发断言/误报，先暂停再操作，结束后恢复。
+   */
+  async withWatchSuspended(cwd, fn) {
+    const had = this.chapterWatches.has(cwd)
+    if (had) this.closeChapterWatch(cwd)
+    try {
+      return await fn()
+    } finally {
+      if (had) this.ensureChapterWatch(cwd)
+    }
+  }
+
+  /** 立即处理当前待处理的外部改动（测试与退出前调用）。 */
+  async flushChapterWatch(agent) {
+    const cwd = await this.cwd(agent)
+    return this.flushChapterWatchByCwd(cwd)
+  }
+
+  async flushChapterWatchByCwd(cwd) {
+    const entry = this.chapterWatches.get(cwd)
+    if (!entry) return { reindexed: [] }
+    let signatures
+    try {
+      signatures = await this.scanChapterFileSignatures(cwd)
+    } catch {
+      return { reindexed: [] }
+    }
+    const changed = new Set()
+    const changedKeys = new Set()
+    if (!entry.primed) {
+      entry.known = signatures
+      entry.primed = true
+      return { reindexed: [] }
+    }
+    for (const [key, signature] of signatures) {
+      if (entry.known.get(key) === signature) continue
+      changed.add(Number(key.split('/')[0]))
+      changedKeys.add(key)
+    }
+    for (const key of entry.known.keys()) {
+      if (signatures.has(key)) continue
+      changed.add(Number(key.split('/')[0]))
+      changedKeys.add(key)
+    }
+    entry.known = signatures
+    for (const number of entry.pending) changed.add(number)
+    entry.pending.clear()
+    if (changed.size === 0) return { reindexed: [] }
+    const numbers = [...changed].filter((number) => Number.isFinite(number))
+    const reindexed = []
+    try {
+      const store = await this.storeFor(cwd)
+      const outline = store.readOutline()
+      const titles = new Map()
+      for (const volume of outline?.volumes ?? []) {
+        for (const chapter of volume.chapters ?? []) titles.set(Number(chapter.number), String(chapter.title ?? ''))
+      }
+      const selfWrites = this.recentSelfWrites.get(cwd) ?? new Map()
+      const flagsByNumber = new Map()
+      for (const key of signatures.keys()) {
+        const [num, name] = key.split('/')
+        const number = Number(num)
+        if (!Number.isFinite(number)) continue
+        const item = flagsByNumber.get(number) ?? { hasDraft: false, hasFinal: false }
+        if (name === 'draft.md') item.hasDraft = true
+        else if (name === 'final.md') item.hasFinal = true
+        flagsByNumber.set(number, item)
+      }
+      for (const number of numbers) {
+        const lastSelf = Number(selfWrites.get(number) ?? 0)
+        if (Date.now() - lastSelf < 500) continue
+        const paths = this.chapterPaths(number)
+        let body = await this.readText(cwd, paths.final).catch(() => null)
+        if (body === null) body = await this.readText(cwd, paths.draft).catch(() => null)
+        if (body === null) body = ''
+        store.setChapterProseFlags(number, flagsByNumber.get(number) ?? { hasDraft: false, hasFinal: false })
+        store.reindexChapter(number, { title: titles.get(number) ?? '', body })
+        const actual = countChars(body)
+        const finalChanged = [...changedKeys].some((key) => key === `${number}/final.md`)
+        const meta = store.readChapterMeta(number)
+        if (!meta) {
+          if (body) {
+            store.writeChapterMeta(number, {
+              chapterId: `c${number}`,
+              number,
+              title: titles.get(number) ?? '',
+              status: 'manual',
+              wordCount: actual,
+              updatedAt: now(),
+              ...(finalChanged ? { finalStale: true } : {}),
+            })
+          }
+        } else {
+          // 非自写的外部改动：标 manual；改的是 final 则标记定稿待复核。
+          store.writeChapterMeta(number, {
+            ...meta,
+            status: 'manual',
+            wordCount: actual,
+            updatedAt: now(),
+            ...(finalChanged ? { finalStale: true } : {}),
+          })
+        }
+        this.chapterFileCache.delete(cwd)
+        reindexed.push(number)
+      }
+      if (reindexed.length > 0) {
+        await this.writeRun(cwd, {
+          runId: `run-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          kind: 'chapter.external-edit',
+          createdAt: now(),
+          model: { provider: 'fs', model: 'watch' },
+          system: null,
+          messages: [],
+          output: JSON.stringify({ numbers: reindexed }),
+          usage: null,
+          durationMs: 0,
+          inputHash: null,
+        })
+      }
+      if (reindexed.length >= 20) store.checkpoint()
+    } catch {
+      // 项目可能在 flush 期间被关闭/切换：静默降级
+    }
+    return { reindexed }
+  }
+
+  /** 识别需要改走 SQLite 的实体路径（其余文件路径继续走 fs）。 */
+  dataPathKind(relativePath) {
+    const path = String(relativePath ?? '').replace(/\\/g, '/')
+    if (path === this.marker) return { type: 'project' }
+    if (path === 'story/premise.json') return { type: 'premise' }
+    if (path === 'story/style/contract.json') return { type: 'styleContract' }
+    if (path === 'story/bible/index.json') return { type: 'bible' }
+    if (path === 'story/bible/relations.json') return { type: 'relations' }
+    if (path === POWER_FILE) return { type: 'power' }
+    if (path === 'story/plot/outline.json') return { type: 'outline' }
+    if (path === 'story/state/index.json') return { type: 'stateIndex' }
+    if (path === 'story/stats.json') return { type: 'stats' }
+    if (path === 'story/prompts/system.json') return { type: 'promptOverrides' }
+    let match = path.match(/^story\/chapters\/(\d+)\/(meta|qa|style-qa|continuity|summary)\.json$/)
+    if (match) return { type: 'chapterPart', number: Number(match[1]), part: match[2] }
+    match = path.match(/^story\/state\/(\d+)\.json$/)
+    if (match) return { type: 'chapterState', number: Number(match[1]) }
+    match = path.match(/^\.dsh-writing\/runs\/([^/]+)\.json$/)
+    if (match) return { type: 'run', runId: match[1] }
+    match = path.match(/^\.dsh-writing\/notes\/chapter-(\d+)\.json$/)
+    if (match) return { type: 'notes', number: Number(match[1]) }
+    match = path.match(/^story\/style\/templates\/([^/]+)\.json$/)
+    if (match) return { type: 'styleTemplate', id: match[1] }
+    return null
+  }
+
+  storeRead(kind, store, agent) {
+    switch (kind.type) {
+      case 'project': return store.readProject()
+      case 'premise': return store.readPremise()
+      case 'styleContract': return store.readStyleContract()
+      case 'bible': return store.readBible()
+      case 'relations': return store.readRelations()
+      case 'power': return store.readPower()
+      case 'outline': return store.readOutline()
+      case 'stateIndex': return store.readStateIndex()
+      case 'stats': return store.readStats()
+      case 'promptOverrides': return store.readPromptOverrides()
+      case 'chapterPart': {
+        if (kind.part === 'meta') return store.readChapterMeta(kind.number)
+        if (kind.part === 'summary') return store.readChapterSummary(kind.number)
+        const qa = store.readChapterQa(kind.number)
+        if (kind.part === 'qa') return qa.qa
+        if (kind.part === 'style-qa') return qa.styleQa
+        return qa.continuity
+      }
+      case 'chapterState': return store.readChapterState(kind.number)
+      case 'run': return store.readRun(kind.runId)
+      case 'notes': return store.listNotes(kind.number)
+      case 'styleTemplate': return store.listStyleTemplates().find((item) => item.id === kind.id) ?? null
+      default: return null
+    }
+  }
+
+  storeWrite(kind, store, value) {
+    switch (kind.type) {
+      case 'project':
+        store.writeProject(value)
+        break
+      case 'premise':
+        store.writePremise(value)
+        break
+      case 'styleContract':
+        store.writeStyleContract(value)
+        break
+      case 'bible':
+        store.writeBible(value)
+        store.reindexBible()
+        break
+      case 'relations':
+        store.writeRelations(value)
+        break
+      case 'power':
+        store.writePower(value)
+        break
+      case 'outline':
+        store.writeOutline(value)
+        store.reindexOutline()
+        break
+      case 'stateIndex':
+        store.writeStateIndex(value)
+        break
+      case 'stats':
+        store.writeStats(value)
+        break
+      case 'promptOverrides': {
+        const source = value && typeof value === 'object' ? value : {}
+        const overrides = source.overrides && typeof source.overrides === 'object' ? source.overrides : source
+        const existing = store.readPromptOverrides()
+        for (const key of Object.keys(existing)) {
+          if (!overrides[key]) store.deletePromptOverride(key)
+        }
+        for (const [key, item] of Object.entries(overrides)) {
+          if (key === 'version' || key === 'overrides') continue
+          store.writePromptOverride(key, item)
+        }
+        break
+      }
+      case 'chapterPart': {
+        if (kind.part === 'meta') {
+          store.writeChapterMeta(kind.number, value)
+        } else if (kind.part === 'summary') {
+          store.writeChapterSummary(kind.number, value)
+          store.reindexSummaries()
+        } else {
+          const current = store.readChapterQa(kind.number)
+          if (kind.part === 'qa') store.writeChapterQa(kind.number, { ...current, qa: value })
+          else if (kind.part === 'style-qa') store.writeChapterQa(kind.number, { ...current, styleQa: value })
+          else store.writeChapterQa(kind.number, { ...current, continuity: value })
+        }
+        break
+      }
+      case 'chapterState':
+        store.writeChapterState(kind.number, value)
+        break
+      case 'run':
+        store.saveRun(value)
+        break
+      case 'notes':
+        store.replaceNotes(kind.number, value?.notes ?? [])
+        break
+      case 'styleTemplate':
+        store.saveStyleTemplate(value)
+        break
+      default:
+        break
+    }
+  }
+
   async policy(agent) {
     if (typeof agent === 'string') {
       return { mode: 'workspace-write', workspaceRoot: agent }
@@ -355,7 +1221,42 @@ export class NovelWriterService {
   }
 
   async readJson(agent, relativePath) {
+    const kind = this.dataPathKind(relativePath)
+    if (kind) {
+      try {
+        const store = await this.storeFor(agent)
+        return this.storeRead(kind, store, agent)
+      } catch (error) {
+        if (error?.code === 'NOVEL_WRITER_NOT_INITIALIZED') return null
+        throw error
+      }
+    }
+    return this.readJsonFile(agent, relativePath)
+  }
+
+  async readJsonFile(agent, relativePath) {
     const cwd = await this.cwd(agent)
+    const hostPath = join(cwd, relativePath)
+    // 本地盘优先直读（免 ctx.fs 沙箱往返，stateFor 里多个只读 JSON 收益明显）。
+    try {
+      return JSON.parse(await readFile(hostPath, 'utf8'))
+    } catch {
+      // 本地读不到：若项目目录本身在本地，则「文件不存在」直接返回 null，不再空跑 ctx.fs；
+      // 只有「文件存在但读/解析失败」才回退 ctx.fs（兼容虚拟 fs / 沙箱读）。
+    }
+    let localProject = false
+    try {
+      localProject = Boolean(await fsStat(cwd))
+    } catch {
+      localProject = false
+    }
+    if (localProject) {
+      try {
+        await fsStat(hostPath)
+      } catch {
+        return null
+      }
+    }
     const target = await this.ctx.fs.resolve(relativePath, { cwd })
     const info = await this.ctx.fs.stat(target)
     if (!info) return null
@@ -370,6 +1271,25 @@ export class NovelWriterService {
   }
 
   async writeJson(agent, relativePath, value) {
+    const kind = this.dataPathKind(relativePath)
+    if (kind) {
+      try {
+        const store = await this.storeFor(agent)
+        this.storeWrite(kind, store, value)
+      } catch (error) {
+        if (error?.code !== 'NOVEL_WRITER_NOT_INITIALIZED') throw error
+        // 未初始化时（初始化前写 marker 的极端路径）退回文件写。
+        return this.writeJsonFile(agent, relativePath, value)
+      }
+      return { path: relativePath, operation: 'db', version: null }
+    }
+    return this.writeJsonFile(agent, relativePath, value)
+  }
+
+  async writeJsonFile(agent, relativePath, value) {
+    if (typeof relativePath !== 'string') {
+      throw new Error(`writeJson 收到非法路径：${String(relativePath)}\n${new Error().stack}`)
+    }
     const cwd = await this.cwd(agent)
     const parent = dirname(relativePath)
     await this.ensureDir(agent, parent)
@@ -394,6 +1314,26 @@ export class NovelWriterService {
 
   async readText(agent, relativePath) {
     const cwd = await this.cwd(agent)
+    const hostPath = join(cwd, relativePath)
+    // 本地盘优先直读，失败再按「本地是否存在」决定是否回退 ctx.fs。
+    try {
+      return await readFile(hostPath, 'utf8')
+    } catch {
+      // fall through
+    }
+    let localProject = false
+    try {
+      localProject = Boolean(await fsStat(cwd))
+    } catch {
+      localProject = false
+    }
+    if (localProject) {
+      try {
+        await fsStat(hostPath)
+      } catch {
+        return null
+      }
+    }
     const target = await this.ctx.fs.resolve(relativePath, { cwd })
     const info = await this.ctx.fs.stat(target)
     if (!info) return null
@@ -414,6 +1354,7 @@ export class NovelWriterService {
     await this.ensureDir(agent, dirname(relativePath))
     const target = await this.ctx.fs.resolve(relativePath, { cwd })
     const policy = await this.policy(agent)
+    let result = null
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const info = await this.ctx.fs.stat(target)
@@ -421,13 +1362,58 @@ export class NovelWriterService {
           ? { kind: 'replaceIfVersion', version: info.version }
           : { kind: 'createIfAbsent' }
         const outcome = await this.ctx.fs.writeText(target, content, expected, undefined, policy)
-        return { path: relativePath, operation: outcome.operation, version: outcome.version }
+        result = { path: relativePath, operation: outcome.operation, version: outcome.version }
+        break
       } catch (error) {
         if (attempt === 0 && isStaleWriteError(error)) continue
         throw new Error(`写入 ${relativePath} 失败：${errorText(error)}`)
       }
     }
-    throw new Error(`写入 ${relativePath} 失败：未知写入错误`)
+    if (!result) throw new Error(`写入 ${relativePath} 失败：未知写入错误`)
+    // 正文变化后同步更新 FTS（draft/final 才会命中），并让正文存在性缓存失效。
+    const match = String(relativePath).replace(/\\/g, '/').match(/^story\/chapters\/(\d+)\/(draft|final)\.md$/)
+    if (match) {
+      try {
+        const cwd = await this.cwd(agent)
+        this.chapterFileCache.delete(cwd)
+        // 记录「最近自写章节」，watcher 500ms 内跳过同章，避免与自身写入重复。
+        let selfWrites = this.recentSelfWrites.get(cwd)
+        if (!selfWrites) {
+          selfWrites = new Map()
+          this.recentSelfWrites.set(cwd, selfWrites)
+        }
+        selfWrites.set(Number(match[1]), Date.now())
+        this.ensureChapterWatch(cwd)
+        // 正文存在性入库（schema v2），之后 project-state 不再扫目录判断。
+        const store = await this.storeFor(agent).catch(() => null)
+        if (store) {
+          store.setChapterProseFlags(Number(match[1]), match[2] === 'final' ? { hasFinal: true } : { hasDraft: true })
+        }
+      } catch {
+        // 缓存失效失败不影响写入
+      }
+      await this.reindexChapterText(agent, Number(match[1]), String(content ?? ''))
+    }
+    return result
+  }
+
+  /** 写正文后更新 FTS；标题取大纲里的章节标题，失败不阻塞写作。 */
+  async reindexChapterText(agent, number, body) {
+    try {
+      const store = await this.storeFor(agent)
+      let title = ''
+      const outline = store.readOutline()
+      for (const volume of outline?.volumes ?? []) {
+        const chapter = (volume.chapters ?? []).find((item) => Number(item.number) === Number(number))
+        if (chapter) {
+          title = chapter.title ?? ''
+          break
+        }
+      }
+      store.reindexChapter(number, { title, body })
+    } catch {
+      // 索引失败不影响正文写入
+    }
   }
 
   /* --------------------------- 提示词注入（项目级 / 全局级） --------------------------- */
@@ -505,6 +1491,18 @@ export class NovelWriterService {
 
   async isInitialized(agent) {
     const cwd = await this.cwd(agent)
+    // 已打开的 store 一定来自已初始化项目（storeFor 只在 DB/legacy 就绪时缓存）：
+    // 直接命中缓存，避免每个 service 调用都重复 stat DB 与 legacy 标记。
+    if (this.stores.has(cwd)) return true
+    const dbTarget = await this.ctx.fs.resolve('story/project.db', { cwd })
+    if (await this.ctx.fs.stat(dbTarget)) {
+      try {
+        const store = await this.storeFor(agent)
+        if (store.readProject()) return true
+      } catch {
+        // DB 打不开时退回 legacy 判断
+      }
+    }
     const target = await this.ctx.fs.resolve(this.marker, { cwd })
     return Boolean(await this.ctx.fs.stat(target))
   }
@@ -796,12 +1794,18 @@ export class NovelWriterService {
     const createdAt = now()
     const title = options.title?.trim() || basename(cwd)
 
+    // 先建 SQLite 库并放进缓存：下面的 writeJson 会路由到 store，不再写 JSON 文件。
+    const db = openDatabase(this.dbPathFor(cwd))
+    const store = new NovelStore(db, cwd)
+    this.stores.set(cwd, store)
+
     const files = [
       [
         this.marker,
         {
           schemaVersion: SCHEMA_VERSION,
           layoutVersion: LAYOUT_VERSION,
+          proseFlagsBackfilled: true,
           title,
           language: options.language ?? 'zh',
           presetId: options.presetId ?? 'novel-writer',
@@ -883,12 +1887,16 @@ export class NovelWriterService {
     for (const [path, value] of files) {
       written.push(await this.writeJson(agent, path, value))
     }
+    store.reindexOutline()
+    store.reindexBible()
+    store.reindexSummaries()
 
     return { initialized: true, cwd, title, written, next: 'premise' }
   }
 
   async uninitializeProject(agent) {
     const cwd = await this.cwd(agent)
+    this.disposeStores()
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const backupRelative = `.deepnovel-backup/${stamp}`
     const backupAbsolute = join(cwd, backupRelative)
@@ -911,6 +1919,13 @@ export class NovelWriterService {
 
   async createProjectSnapshot(agent) {
     const cwd = await this.cwd(agent)
+    // 快照会复制 story/（内含 project.db）：先 checkpoint 把 WAL 合并进主文件。
+    try {
+      const store = await this.storeFor(agent)
+      store.checkpoint()
+    } catch {
+      // 快照允许在未初始化/无 store 时继续
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const name = stamp
     const root = join(cwd, '.deepnovel-snapshots', name)
@@ -963,6 +1978,14 @@ export class NovelWriterService {
     if (!name || name.includes('..') || /[\\/]/.test(name)) throw new Error('无效的快照名称')
     const snapshot = join(cwd, '.deepnovel-snapshots', name)
     await fsStat(join(snapshot, 'story'))
+    // 恢复会替换 story/project.db：先 checkpoint，再关闭缓存连接，恢复后下次调用重新打开。
+    try {
+      const store = await this.storeFor(agent)
+      store.checkpoint()
+    } catch {
+      // 无 store 时直接恢复
+    }
+    this.disposeStores()
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const backupRoot = join(cwd, '.deepnovel-backup', `pre-restore-${stamp}`)
     await mkdir(backupRoot, { recursive: true })
@@ -1002,7 +2025,162 @@ export class NovelWriterService {
     }
   }
 
-  async projectStatus(agent) {
+  /**
+   * 一次性读取写作台页面需要的批量数据：
+   * DB 用聚合查询（chapter_meta/chapter_qa/chapter_summary 一次取全），
+   * 文件只做「一次 listDir + 分块并发 listDir」判断正文存在性，
+   * 供 projectStatus / chaptersSummary / buildHealthReport / buildCharacterIndex / storyOverview 复用。
+   */
+  async readProjectSnapshotData(agent) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const parse = (text) => {
+      if (text === null || text === undefined || text === '') return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        return null
+      }
+    }
+    const metas = new Map()
+    for (const row of store.db.prepare('SELECT number, json FROM chapter_meta').all()) {
+      metas.set(Number(row.number), parse(row.json))
+    }
+    const qaMap = new Map()
+    for (const row of store.db.prepare('SELECT number, qa_json, style_qa_json, continuity_json FROM chapter_qa').all()) {
+      qaMap.set(Number(row.number), {
+        qa: parse(row.qa_json),
+        styleQa: parse(row.style_qa_json),
+        continuity: parse(row.continuity_json),
+      })
+    }
+    const sums = new Map()
+    for (const item of store.listChapterSummaries()) sums.set(Number(item.number), item)
+    const cwd = await this.cwd(agent)
+    const files = await this.scanChapterFiles(agent, cwd)
+    return {
+      project: store.readProject(),
+      premise: store.readPremise(),
+      style: store.readStyleContract(),
+      bible: store.readBible(),
+      power: store.readPower(),
+      outline: store.readOutline(),
+      stateIndex: store.readStateIndex(),
+      relations: store.readRelations(),
+      sums,
+      metas,
+      qaMap,
+      files,
+    }
+  }
+
+  /**
+   * 扫描 story/chapters 下各章的 draft.md / final.md 存在性。
+   * - 优先用一次 Node 原生递归 readdir（本地盘一次系统调用，零 ctx.fs 往返）；
+   * - 结果按 cwd 缓存 5 秒，写正文/快照恢复/切项目时主动失效；
+   * - 无 processPath 的虚拟 fs 回退到「顶层 listDir + 分块并发 listDir」。
+   */
+  /** 从磁盘扫描正文存在性（唯一需要目录 IO 的路径，仅回填/回填未完成时使用）。 */
+  async scanChapterFilesFromDisk(cwd) {
+    const files = new Map()
+    let scanned = false
+    try {
+      const target = await this.ctx.fs.resolve('story/chapters', { cwd })
+      const hostDir = this.ctx.fs.processPath?.(target) ?? join(target?.cwd ?? cwd, target?.relativePath ?? 'story/chapters')
+      const top = await readdir(hostDir, { withFileTypes: true })
+      for (const entry of top) {
+        if (!entry.isDirectory()) continue
+        const number = Number(entry.name)
+        if (Number.isFinite(number)) files.set(number, { hasDraft: false, hasFinal: false })
+      }
+      const entries = await readdir(hostDir, { recursive: true, withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isFile()) continue
+        if (entry.name !== 'draft.md' && entry.name !== 'final.md') continue
+        const parent = String(entry.parentPath ?? entry.path ?? '')
+        const parentName = parent.split(/[\\/]/).filter(Boolean).pop() ?? ''
+        const number = Number(parentName)
+        if (!Number.isFinite(number)) continue
+        const item = files.get(number) ?? { hasDraft: false, hasFinal: false }
+        if (entry.name === 'draft.md') item.hasDraft = true
+        else item.hasFinal = true
+        files.set(number, item)
+      }
+      scanned = true
+    } catch {
+      scanned = false
+    }
+    if (!scanned) {
+      let entries = []
+      try {
+        entries = await this.ctx.fs.listDir(await this.ctx.fs.resolve('story/chapters', { cwd }))
+      } catch {
+        entries = []
+      }
+      const dirs = entries.filter((entry) => entry.type === 'directory' && Number.isFinite(Number(entry.name)))
+      for (let index = 0; index < dirs.length; index += 50) {
+        await Promise.all(dirs.slice(index, index + 50).map(async (entry) => {
+          const number = Number(entry.name)
+          try {
+            const items = await this.ctx.fs.listDir(await this.ctx.fs.resolve(`story/chapters/${entry.name}`, { cwd }))
+            const names = new Set(items.filter((item) => item.type === 'file').map((item) => item.name))
+            files.set(number, { hasDraft: names.has('draft.md'), hasFinal: names.has('final.md') })
+          } catch {
+            files.set(number, { hasDraft: false, hasFinal: false })
+          }
+        }))
+      }
+    }
+    return files
+  }
+
+  /** 把扫描结果写回 DB flags（只写有变化的章，并清掉已不存在的正文标记）。 */
+  backfillProseFlags(store, files) {
+    const existing = store.listChapterProseFlags()
+    for (const [number, item] of files) {
+      const previous = existing.get(number)
+      if (!previous || previous.hasDraft !== item.hasDraft || previous.hasFinal !== item.hasFinal) {
+        store.setChapterProseFlags(number, { hasDraft: item.hasDraft, hasFinal: item.hasFinal })
+      }
+    }
+    for (const number of existing.keys()) {
+      if (!files.has(number)) store.setChapterProseFlags(number, { hasDraft: false, hasFinal: false })
+    }
+  }
+
+  /**
+   * 正文存在性：优先读 DB flags（schema v2，零文件 IO）；只有回填未完成时才扫一次目录。
+   * 回填完成后由 writeTextFile / 监听 flush / reindex 维护 flags。
+   */
+  async scanChapterFiles(agent, cwd) {
+    const store = await this.storeFor(agent).catch(() => null)
+    if (store) {
+      try {
+        const project = store.readProject()
+        if (project?.proseFlagsBackfilled) {
+          const flags = store.listChapterProseFlags()
+          this.chapterFileCache.set(cwd, { at: Date.now(), files: flags })
+          return flags
+        }
+        const files = await this.scanChapterFilesFromDisk(cwd)
+        this.proseScanCount += 1
+        this.backfillProseFlags(store, files)
+        store.writeProject({ ...(project ?? {}), proseFlagsBackfilled: true })
+        this.chapterFileCache.set(cwd, { at: Date.now(), files })
+        return files
+      } catch {
+        // DB 不可用时退回磁盘扫描
+      }
+    }
+    const cached = this.chapterFileCache.get(cwd)
+    if (cached && Date.now() - cached.at < 5000) return cached.files
+    const files = await this.scanChapterFilesFromDisk(cwd)
+    this.proseScanCount += 1
+    this.chapterFileCache.set(cwd, { at: Date.now(), files })
+    return files
+  }
+
+  async projectStatus(agent, snapshot = null) {
     const cwd = await this.cwd(agent)
     const initialized = await this.isInitialized(agent)
     if (!initialized) {
@@ -1014,21 +2192,25 @@ export class NovelWriterService {
       }
     }
 
-    const project = await this.readJson(agent, this.marker)
-    const premise = await this.readJson(agent, 'story/premise.json')
-    const style = await this.readJson(agent, 'story/style/contract.json')
-    const bible = await this.readBible(agent)
-    const power = await this.readPower(agent).catch(() => null)
-    const outline = await this.readJson(agent, 'story/plot/outline.json')
-    const state = await this.readJson(agent, 'story/state/index.json')
+    const project = snapshot ? snapshot.project : await this.readJson(agent, this.marker)
+    const premise = snapshot ? snapshot.premise : await this.readJson(agent, 'story/premise.json')
+    const style = snapshot ? snapshot.style : await this.readJson(agent, 'story/style/contract.json')
+    const bible = snapshot ? snapshot.bible : await this.readBible(agent)
+    const power = snapshot ? snapshot.power : await this.readPower(agent).catch(() => null)
+    const outline = snapshot ? snapshot.outline : await this.readJson(agent, 'story/plot/outline.json')
+    const state = snapshot ? snapshot.stateIndex : await this.readJson(agent, 'story/state/index.json')
 
     let chapters = 0
-    try {
-      const target = await this.ctx.fs.resolve('story/chapters', { cwd })
-      const entries = await this.ctx.fs.listDir(target)
-      chapters = entries.filter((entry) => entry.type === 'directory').length
-    } catch {
-      chapters = 0
+    if (snapshot) {
+      chapters = snapshot.files.size
+    } else {
+      try {
+        const target = await this.ctx.fs.resolve('story/chapters', { cwd })
+        const entries = await this.ctx.fs.listDir(target)
+        chapters = entries.filter((entry) => entry.type === 'directory').length
+      } catch {
+        chapters = 0
+      }
     }
 
     const outlineChapters = (outline?.volumes ?? []).reduce(
@@ -1045,7 +2227,7 @@ export class NovelWriterService {
     const styleHash = style?.fieldsHash ?? null
     const bibleHash = this.hashInputs(bible)
     const powerHash = this.hashInputs(power ?? {})
-    const characterIndex = await this.buildCharacterIndex(agent)
+    const characterIndex = await this.buildCharacterIndex(agent, snapshot)
     const volumes = (outline?.volumes ?? []).map((volume) => this.normalizeVolumeSummary(volume))
     const stale = []
     for (const volume of outline?.volumes ?? []) {
@@ -1131,6 +2313,93 @@ export class NovelWriterService {
         stale: stale.filter((item) => item.kind === 'outline').length,
       },
       stale,
+    }
+  }
+
+  /**
+   * 轻量指纹：只 stat 写作台关心的关键文件与目录，供 UI 判断项目是否被改动。
+   * 不读文件内容，开销固定，可以安全地高频轮询。
+   */
+  async projectSignature(agent) {
+    const cwd = await this.cwd(agent)
+    const paths = [
+      this.marker,
+      'story/project.db',
+      'story/project.db-wal',
+      'story/premise.json',
+      'story/style/contract.json',
+      'story/bible/index.json',
+      'story/plot/outline.json',
+      'story/state/index.json',
+      'story/chapters',
+      'story/plot',
+    ]
+    const parts = []
+    for (const relative of paths) {
+      try {
+        const target = await this.ctx.fs.resolve(relative, { cwd })
+        const hostPath = this.ctx.fs.processPath?.(target) ?? target
+        const info = await fsStat(hostPath)
+        parts.push(`${relative}:${Math.trunc(info.mtimeMs)}:${info.size}`)
+      } catch {
+        parts.push(`${relative}:-`)
+      }
+    }
+    /*
+     * 优先用目录监听：story/ 下任何文件变动都会抬高修订号，长篇项目也不用逐章 stat。
+     * 监听不可用（非本地盘、权限异常等）时退回逐章 stat 指纹。
+     */
+    let watchRevision = null
+    try {
+      const storyTarget = await this.ctx.fs.resolve('story', { cwd })
+      const hostStory = this.ctx.fs.processPath?.(storyTarget) ?? null
+      if (hostStory) {
+        const entry = ensureSignatureWatch(hostStory)
+        if (entry) watchRevision = entry.revision
+      }
+    } catch {
+      watchRevision = null
+    }
+    if (watchRevision !== null) parts.push(`watch:${watchRevision}`)
+    /*
+     * 章节正文文件的内容修改不会改变所在目录的 mtime，所以逐章 stat draft/final，
+     * 否则「只改正文内容」不会触发页面刷新。分块并发，章节多时也不至于堵住事件循环。
+     */
+    if (watchRevision === null) try {
+      const chaptersTarget = await this.ctx.fs.resolve('story/chapters', { cwd })
+      const entries = await this.ctx.fs.listDir(chaptersTarget)
+      const dirs = entries
+        .filter((entry) => entry.type === 'directory')
+        .map((entry) => entry.name)
+        .sort()
+      parts.push(`chapters:${dirs.join(',')}`)
+      const hostChapters = this.ctx.fs.processPath?.(chaptersTarget) ?? null
+      const statChapterFile = async (name, file) => {
+        try {
+          const hostPath = hostChapters
+            ? join(hostChapters, name, file)
+            : this.ctx.fs.processPath?.(await this.ctx.fs.resolve(`story/chapters/${name}/${file}`, { cwd }))
+          if (!hostPath) return `${name}/${file}:-`
+          const info = await fsStat(hostPath)
+          return `${name}/${file}:${Math.trunc(info.mtimeMs)}:${info.size}`
+        } catch {
+          return `${name}/${file}:-`
+        }
+      }
+      const tasks = []
+      for (const name of dirs) {
+        for (const file of ['draft.md', 'final.md']) tasks.push(() => statChapterFile(name, file))
+      }
+      for (let index = 0; index < tasks.length; index += 32) {
+        const chunk = tasks.slice(index, index + 32).map((task) => task())
+        parts.push(...(await Promise.all(chunk)))
+      }
+    } catch {
+      parts.push('chapters:-')
+    }
+    return {
+      cwd,
+      signature: createHash('sha1').update(parts.join('|')).digest('hex').slice(0, 16),
     }
   }
 
@@ -1397,23 +2666,9 @@ export class NovelWriterService {
   }
 
   async userStyleTemplates(agent) {
-    const cwd = await this.cwd(agent)
     try {
-      const dir = await this.ctx.fs.resolve('story/style/templates', { cwd })
-      const entries = await this.ctx.fs.listDir(dir)
-      const templates = []
-      for (const entry of entries.filter((item) => item.type === 'file' && item.name.endsWith('.json'))) {
-        const raw = await this.readJson(agent, `story/style/templates/${entry.name}`).catch(() => null)
-        if (raw?.fields) {
-          templates.push({
-            id: raw.id ?? entry.name.replace(/\.json$/, ''),
-            name: raw.name ?? raw.id ?? entry.name,
-            fields: raw.fields,
-            builtin: false,
-          })
-        }
-      }
-      return templates
+      const store = await this.storeFor(agent)
+      return store.listStyleTemplates().map((item) => ({ ...item, builtin: false }))
     } catch {
       return []
     }
@@ -1474,11 +2729,11 @@ export class NovelWriterService {
     await this.assertInitialized(agent)
     const id = String(options.id ?? '')
     if (!/^user-[A-Za-z0-9-]+$/.test(id)) throw new Error('只能删除自定义模板')
-    const cwd = await this.cwd(agent)
-    const target = await this.ctx.fs.resolve(`story/style/templates/${id}.json`, { cwd })
-    const hostPath = this.ctx.fs.processPath?.(target)
-    if (!hostPath) throw new Error('无法解析模板路径')
-    await unlink(hostPath)
+    const store = await this.storeFor(agent)
+    if (!store.listStyleTemplates().some((item) => item.id === id)) {
+      throw new Error(`未知文风模板 ${id}`)
+    }
+    store.deleteStyleTemplate(id)
     return { deleted: id }
   }
 
@@ -1526,7 +2781,12 @@ export class NovelWriterService {
     await this.assertInitialized(agent)
     const contract = await this.readJson(agent, 'story/style/contract.json')
     if (!contract) throw new Error('还没有文风契约')
-    const allowed = ['pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity', 'bannedWords', 'chapterTitleStyle', 'notes']
+    const allowed = [
+      'pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity',
+      'bannedWords', 'chapterTitleStyle', 'notes',
+      'voice', 'diction', 'imagery', 'sensoryFocus', 'dialogueStyle', 'pacing',
+      'must', 'never', 'adjust', 'bannedPatterns', 'genreFit', 'avoidGenre',
+    ]
     const nextFields = { ...(contract.fields ?? {}) }
     for (const key of allowed) {
       if (fields[key] !== undefined) nextFields[key] = fields[key]
@@ -1709,34 +2969,66 @@ export class NovelWriterService {
 
   async readSystemOverrides(agent) {
     const data = await this.readJson(agent, 'story/prompts/system.json').catch(() => null)
-    return data && typeof data === 'object' ? data : {}
+    return normalizePromptOverrides(data)
   }
 
+  async writeSystemOverrides(agent, overrides = {}) {
+    await this.writeJson(agent, 'story/prompts/system.json', {
+      version: PROMPT_STORE_VERSION,
+      overrides,
+    })
+    return overrides
+  }
+
+  promptDefaultHash(entry) {
+    return this.hashInputs(entry.default).slice(0, 16)
+  }
+
+  /**
+   * 取某条提示词实际生效的 system：
+   * - 无覆盖 → 用当前默认；
+   * - 覆盖文本就是当前默认，或覆盖所基于的默认正是它自己（用户没手改，只是旧版默认）
+   *   → 自动跟进当前默认；
+   * - 其余（用户确实改过）→ 用用户文本。
+   */
   async systemFor(agent, key, fallback) {
     const overrides = await this.readSystemOverrides(agent)
-    const value = overrides?.[key]
-    return typeof value === 'string' && value.trim() ? value : fallback
+    const entry = overrides?.[key]
+    if (!entry) return fallback
+    if (entry.text === fallback) return fallback
+    if (entry.baseHash && this.hashInputs(entry.text).slice(0, 16) === entry.baseHash) return fallback
+    return entry.text
   }
 
   async saveSystemOverrides(agent, overrides = {}) {
     await this.assertInitialized(agent)
-    const keys = new Set(PROMPT_CATALOG.map((entry) => entry.key))
     const clean = {}
-    for (const key of keys) {
-      const value = overrides?.[key]
-      if (typeof value === 'string' && value.trim()) clean[key] = value.trim().slice(0, 20000)
+    for (const entry of PROMPT_CATALOG) {
+      const raw = overrides?.[entry.key]
+      const text = typeof raw === 'string'
+        ? raw
+        : (raw && typeof raw === 'object' && typeof raw.text === 'string' ? raw.text : '')
+      const content = text.trim().slice(0, 20000)
+      if (!content || content === entry.default) continue
+      clean[entry.key] = {
+        text: content,
+        baseHash: this.promptDefaultHash(entry),
+        baseRevision: entry.revision ?? 1,
+      }
     }
-    await this.writeJson(agent, 'story/prompts/system.json', clean)
+    await this.writeSystemOverrides(agent, clean)
     return clean
   }
 
   async promptCatalog(agent) {
     const overrides = await this.readSystemOverrides(agent)
     const prompts = PROMPT_CATALOG.map((entry) => {
-      const custom = typeof overrides?.[entry.key] === 'string' && overrides[entry.key].trim()
-        ? overrides[entry.key]
-        : ''
-      const content = custom || entry.default
+      const revision = entry.revision ?? 1
+      const override = overrides?.[entry.key]
+      const defaultHash = this.promptDefaultHash(entry)
+      const customized = Boolean(override && override.text !== entry.default)
+      const baseRevision = override?.baseRevision ?? null
+      const content = customized ? override.text : entry.default
       return {
         key: entry.key,
         label: entry.label,
@@ -1744,9 +3036,16 @@ export class NovelWriterService {
         description: entry.description,
         content,
         default: entry.default,
-        customized: Boolean(custom),
+        customized,
+        revision,
+        baseRevision,
+        defaultUpdated: Boolean(
+          customized &&
+          override.baseHash !== defaultHash &&
+          baseRevision !== revision,
+        ),
         hash: this.hashInputs(content).slice(0, 16),
-        defaultHash: this.hashInputs(entry.default).slice(0, 16),
+        defaultHash,
       }
     })
     return { prompts }
@@ -1755,74 +3054,112 @@ export class NovelWriterService {
   async saveSystemPrompt(agent, options = {}) {
     await this.assertInitialized(agent)
     const key = String(options.key ?? '')
-    if (!PROMPT_CATALOG.some((entry) => entry.key === key)) throw new Error(`未知提示词：${key}`)
+    const entry = PROMPT_CATALOG.find((item) => item.key === key)
+    if (!entry) throw new Error(`未知提示词：${key}`)
     const overrides = await this.readSystemOverrides(agent)
     const content = typeof options.content === 'string' ? options.content.trim().slice(0, 20000) : ''
-    if (content) overrides[key] = content
-    else delete overrides[key]
-    await this.writeJson(agent, 'story/prompts/system.json', overrides)
+    if (!content || content === entry.default) {
+      delete overrides[key]
+    } else {
+      overrides[key] = {
+        text: content,
+        baseHash: this.promptDefaultHash(entry),
+        baseRevision: entry.revision ?? 1,
+      }
+    }
+    await this.writeSystemOverrides(agent, overrides)
     return this.promptCatalog(agent)
   }
 
   async resetSystemPrompt(agent, options = {}) {
     await this.assertInitialized(agent)
     const key = String(options.key ?? '')
-    if (!PROMPT_CATALOG.some((entry) => entry.key === key)) throw new Error(`未知提示词：${key}`)
+    if (!PROMPT_CATALOG.some((item) => item.key === key)) throw new Error(`未知提示词：${key}`)
     const overrides = await this.readSystemOverrides(agent)
     delete overrides[key]
-    await this.writeJson(agent, 'story/prompts/system.json', overrides)
+    await this.writeSystemOverrides(agent, overrides)
     return this.promptCatalog(agent)
   }
 
   async exportSystemPrompts(agent) {
     const overrides = await this.readSystemOverrides(agent)
     return {
-      version: 1,
+      version: PROMPT_STORE_VERSION,
       exportedAt: now(),
-      prompts: PROMPT_CATALOG.map((entry) => ({
-        key: entry.key,
-        label: entry.label,
-        customized: typeof overrides?.[entry.key] === 'string' && Boolean(overrides[entry.key].trim()),
-        content: typeof overrides?.[entry.key] === 'string' && overrides[entry.key].trim()
-          ? overrides[entry.key]
-          : entry.default,
-      })),
+      prompts: PROMPT_CATALOG.map((entry) => {
+        const override = overrides?.[entry.key]
+        const customized = Boolean(override && override.text !== entry.default)
+        return {
+          key: entry.key,
+          label: entry.label,
+          customized,
+          content: customized ? override.text : entry.default,
+          revision: entry.revision ?? 1,
+          baseRevision: override?.baseRevision ?? null,
+          baseHash: override?.baseHash ?? null,
+        }
+      }),
     }
   }
 
   async importSystemPrompts(agent, options = {}) {
     await this.assertInitialized(agent)
     const source = options.data && typeof options.data === 'object' ? options.data : options
-    const incoming = Array.isArray(source.prompts)
+    const entries = new Map(PROMPT_CATALOG.map((entry) => [entry.key, entry]))
+    let incoming = Array.isArray(source.prompts)
       ? source.prompts
       : (Array.isArray(source.systemPrompts) ? source.systemPrompts : [])
-    const known = new Set(PROMPT_CATALOG.map((entry) => entry.key))
+    if (incoming.length === 0 && source && typeof source === 'object') {
+      // 兼容最早期直接导出 { [key]: string } 的形式。
+      const mapped = Object.entries(source)
+        .filter(([key, value]) => entries.has(key) && typeof value === 'string')
+        .map(([key, content]) => ({ key, content }))
+      if (mapped.length) incoming = mapped
+    }
     const overrides = await this.readSystemOverrides(agent)
     let imported = 0
     for (const item of incoming) {
       if (!item || typeof item !== 'object') continue
       const key = String(item.key ?? '')
-      if (!known.has(key)) continue
+      const entry = entries.get(key)
+      if (!entry) continue
       if (item.customized === false) {
         delete overrides[key]
         continue
       }
       const content = typeof item.content === 'string' ? item.content.trim().slice(0, 20000) : ''
-      if (!content) continue
-      overrides[key] = content
+      if (!content || content === entry.default) {
+        delete overrides[key]
+        continue
+      }
+      // 导入视为「用户此刻确认了这份内容」：重新锚定到当前默认，忽略导出文件里的旧版本信息。
+      overrides[key] = {
+        text: content,
+        baseHash: this.promptDefaultHash(entry),
+        baseRevision: entry.revision ?? 1,
+      }
       imported += 1
     }
-    await this.writeJson(agent, 'story/prompts/system.json', overrides)
+    await this.writeSystemOverrides(agent, overrides)
     return { imported, catalog: await this.promptCatalog(agent) }
   }
 
-  async buildHealthReport(agent) {
+  async buildHealthReport(agent, snapshot = null) {
     await this.assertInitialized(agent)
-    const bible = await this.readBible(agent).catch(() => ({ characters: [] }))
-    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+    let data = snapshot
+    if (!data) {
+      // 兼容无 snapshot 的直接调用/测试 stub：按原路径读取一次。
+      const bible = await this.readBible(agent).catch(() => ({ characters: [] }))
+      const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+      const relations = (await this.readRelations(agent).catch(() => ({ relations: [] }))).relations
+      const chapterStats = await this.chaptersSummary(agent).catch(() => [])
+      data = { bible, outline, relations: { relations }, chapterStats }
+    }
+    const bible = data.bible ?? { characters: [] }
+    const outline = data.outline ?? null
     const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-    const chapterStats = await this.chaptersSummary(agent).catch(() => [])
-    const relations = (await this.readRelations(agent).catch(() => ({ relations: [] }))).relations
+    const chapterStats = data.chapterStats ?? await this.chaptersSummary(agent, data).catch(() => [])
+    const relations = (data.relations ?? { relations: [] }).relations
     const names = new Set((bible.characters ?? []).map((entry) => String(entry.name ?? '')).filter(Boolean))
     const issues = []
     const unconfirmed = chapters.filter((chapter) => chapter.status !== 'confirmed')
@@ -1881,9 +3218,9 @@ export class NovelWriterService {
         count: badRelations.length,
       })
     }
+    const budgetByNumber = new Map(chapters.map((chapter) => [Number(chapter.number), Number(chapter.wordBudget ?? 0)]))
     const overWords = chapterStats.filter((item) => {
-      const chapter = chapters.find((entry) => Number(entry.number) === Number(item.number))
-      const target = Number(chapter?.wordBudget ?? 0)
+      const target = budgetByNumber.get(Number(item.number)) ?? 0
       return target > 0 && Number(item.wordCount) > target * 1.45
     })
     if (overWords.length) {
@@ -1928,7 +3265,21 @@ export class NovelWriterService {
         numbers: [...new Set(staleForeshadow.map((plant) => plant.chapter))],
       })
     }
-    const orphans = await this.findOrphans(agent).catch(() => ({ chapterDirs: [], stateFiles: [] }))
+    const outlineNumbers = new Set(chapters.map((chapter) => Number(chapter.number)))
+    let orphans = null
+    if (snapshot) {
+      // DB 为唯一真源：孤儿 = 章节目录/章节状态在 DB 之外多出来（不再逐目录做 fs 扫描）。
+      orphans = {
+        chapterDirs: [...(snapshot.files?.keys() ?? [])]
+          .filter((number) => !outlineNumbers.has(number))
+          .map((number) => String(number)),
+        stateFiles: (snapshot.stateIndex?.chapters ?? [])
+          .filter((state) => !outlineNumbers.has(Number(state.number)))
+          .map((state) => `${String(Number(state.number)).padStart(3, '0')}.json`),
+      }
+    } else {
+      orphans = await this.findOrphans(agent).catch(() => ({ chapterDirs: [], stateFiles: [] }))
+    }
     const orphanDirs = (orphans.chapterDirs ?? []).map((name) => Number(name))
     const orphanCount = (orphans.chapterDirs ?? []).length + (orphans.stateFiles ?? []).length
     if (orphanCount) {
@@ -2141,11 +3492,16 @@ export class NovelWriterService {
     await this.assertInitialized(agent)
     const keep = Math.max(1, Math.min(500, Number(options.keep) || 20))
     const cwd = await this.cwd(agent)
+    const pruneDb = async () => {
+      const store = await this.storeFor(agent).catch(() => null)
+      store?.pruneRuns(keep)
+    }
     const dir = await this.ctx.fs.resolve('.dsh-writing/runs', { cwd })
     let entries = []
     try {
       entries = await this.ctx.fs.listDir(dir)
     } catch {
+      if (!options.dryRun) await pruneDb()
       return { removed: 0, kept: 0 }
     }
     const names = entries
@@ -2169,6 +3525,7 @@ export class NovelWriterService {
         // ignore
       }
     }
+    await pruneDb()
     return { removed, kept: names.length - removed }
   }
 
@@ -2182,30 +3539,71 @@ export class NovelWriterService {
     const text = String(options.text ?? '').trim()
     if (!text) throw new Error('请粘贴要拆解的小说文本')
     const title = String(options.title ?? '').trim() || '拆书'
-    const system = await this.systemFor(agent, 'deconstruct', DECONSTRUCT_SYSTEM_PROMPT)
-    const messages = [{ role: 'user', content: [{ type: 'text', text: `标题：${title}\n\n文本：\n${text.slice(0, 12000)}` }] }]
-    const generated = await this.callJsonModel(agent, {
-      kind: 'deconstruct.analyze',
-      task: 'outline',
-      system,
-      messages,
-      signal,
-      maxTokens: 6000,
-      temperature: 0.4,
+    const source = text.slice(0, 12000)
+    const stages = []
+    const runStage = async ({ key, kind, promptKey, fallback, detail, sections }) => {
+      this.reportStage(key, detail)
+      try {
+        const system = await this.systemFor(agent, promptKey, fallback)
+        const generated = await this.callJsonModel(agent, {
+          kind,
+          task: 'outline',
+          system,
+          messages: [{ role: 'user', content: [{ type: 'text', text: `标题：${title}\n\n文本：\n${source}` }] }],
+          signal,
+          maxTokens: 6000,
+          temperature: 0.4,
+        })
+        stages.push({ key, ok: true, sections })
+        return generated.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
+      } catch (error) {
+        stages.push({ key, ok: false, error: errorText(error), sections })
+        return {}
+      }
+    }
+    const structure = await runStage({
+      key: 'deconstruct.structure',
+      kind: 'deconstruct.structure',
+      promptKey: 'deconstructStructure',
+      fallback: DECONSTRUCT_STRUCTURE_SYSTEM_PROMPT,
+      detail: '拆书·结构',
+      sections: ['summary', 'units'],
     })
-    const parsed = generated.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
+    const cast = await runStage({
+      key: 'deconstruct.characters',
+      kind: 'deconstruct.characters',
+      promptKey: 'deconstructCharacters',
+      fallback: DECONSTRUCT_CHARACTERS_SYSTEM_PROMPT,
+      detail: '拆书·人物设定',
+      sections: ['characters', 'settings', 'relations'],
+    })
+    const technique = await runStage({
+      key: 'deconstruct.technique',
+      kind: 'deconstruct.technique',
+      promptKey: 'deconstructTechnique',
+      fallback: DECONSTRUCT_TECHNIQUE_SYSTEM_PROMPT,
+      detail: '拆书·技法',
+      sections: ['techniques', 'hooks', 'pacing'],
+    })
     const analysis = {
       title,
-      summary: String(parsed.summary ?? '').slice(0, 2000),
-      style: parsed.style && typeof parsed.style === 'object' ? parsed.style : {},
-      characters: Array.isArray(parsed.characters) ? parsed.characters.slice(0, 30) : [],
-      hooks: Array.isArray(parsed.hooks) ? parsed.hooks.map(String).slice(0, 30) : [],
+      summary: String(structure.summary ?? '').slice(0, 2000),
+      style: {},
+      characters: normalizeDeconstructCharacters(cast.characters),
+      hooks: Array.isArray(technique.hooks)
+        ? technique.hooks.map(String).map((hook) => hook.trim()).filter(Boolean).slice(0, 30)
+        : [],
+      units: normalizeDeconstructUnits(structure.units),
+      settings: normalizeDeconstructSettings(cast.settings),
+      relations: normalizeDeconstructRelations(cast.relations),
+      techniques: normalizeDeconstructTechniques(technique.techniques),
+      pacing: String(technique.pacing ?? '').slice(0, 1000),
     }
     const path = '.dsh-writing/deconstructions.json'
     const data = (await this.readJson(agent, path).catch(() => null)) ?? { items: [] }
-    const items = [{ ...analysis, createdAt: now() }, ...(Array.isArray(data.items) ? data.items : [])].slice(0, 10)
+    const items = [{ ...analysis, stages, createdAt: now() }, ...(Array.isArray(data.items) ? data.items : [])].slice(0, 10)
     await this.writeJson(agent, path, { items, updatedAt: now() })
-    return { analysis, items }
+    return { analysis, items, stages }
   }
 
   async readInspirations(agent) {
@@ -2389,6 +3787,376 @@ export class NovelWriterService {
     bible.updatedAt = now()
     await this.writeJson(agent, 'story/bible/index.json', bible)
     return bible
+  }
+
+  /* --------------------- 跨项目角色卡库（全局，位于 DSH_HOME） --------------------- */
+
+  async listLibraryCharacters() {
+    let entries = []
+    try {
+      entries = await readdir(LIBRARY_CHARACTER_DIR, { withFileTypes: true })
+    } catch {
+      return { characters: [] }
+    }
+    const characters = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      try {
+        const raw = JSON.parse(await readFile(join(LIBRARY_CHARACTER_DIR, entry.name), 'utf8'))
+        const item = normalizeLibraryCharacter(raw, entry.name.replace(/\.json$/, ''))
+        if (!item.name) continue
+        characters.push(item)
+      } catch {
+        // 坏文件跳过，不影响其它角色卡
+      }
+    }
+    return {
+      characters: characters.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
+    }
+  }
+
+  async saveLibraryCharacter(agent, options = {}) {
+    const name = String(options.name ?? '').trim()
+    if (!name) throw new Error('请指定要保存的角色')
+    const bible = await this.readBible(agent)
+    const characters = bible.characters ?? []
+    const entry = characters.find((item) => item.name === name) ??
+      characters.find((item) => String(item.name ?? '').trim() === name)
+    if (!entry) throw new Error('当前项目里没有这个角色')
+    const project = await this.readJson(agent, 'story/project.json').catch(() => null)
+    const root = await this.cwd(agent)
+    const library = await this.listLibraryCharacters()
+    const existing = library.characters.find((item) => item.name === String(entry.name ?? '').trim())
+    const id = existing?.id || randomUUID()
+    const record = normalizeLibraryCharacter({
+      id,
+      name: String(entry.name ?? '').trim(),
+      role: entry.role ?? '',
+      description: entry.description ?? '',
+      traits: entry.traits ?? [],
+      goal: entry.goal ?? '',
+      notes: existing?.notes ?? '',
+      source: { projectTitle: String(project?.title ?? ''), projectRoot: root },
+      createdAt: existing?.createdAt ?? now(),
+    })
+    await mkdir(LIBRARY_CHARACTER_DIR, { recursive: true })
+    await writeFile(join(LIBRARY_CHARACTER_DIR, `${id}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8')
+    return { saved: record, updated: Boolean(existing) }
+  }
+
+  async importLibraryCharacter(agent, options = {}) {
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定要导入的角色卡')
+    const file = libraryCharacterFile(id)
+    let raw = null
+    try {
+      raw = JSON.parse(await readFile(file, 'utf8'))
+    } catch {
+      throw new Error('找不到要导入的角色卡')
+    }
+    const card = normalizeLibraryCharacter(raw, id)
+    if (!card.name) throw new Error('角色卡缺少角色名')
+    const bible = await this.readBible(agent)
+    const characters = bible.characters ?? []
+    const existing = characters.find((item) => item.name === card.name) ??
+      characters.find((item) => String(item.name ?? '').trim() === card.name)
+    if (existing) {
+      existing.description = card.description
+      existing.traits = [...card.traits]
+      existing.goal = card.goal
+      if (card.role) existing.role = card.role
+      bible.status = 'candidate'
+      bible.updatedAt = now()
+      await this.writeJson(agent, 'story/bible/index.json', bible)
+      return { imported: true, merged: true, name: card.name }
+    }
+    const used = new Set(characters.map((item) => String(item.id ?? '')))
+    let index = characters.length + 1
+    let newId = `${BIBLE_PREFIX.characters}#${String(index).padStart(2, '0')}`
+    while (used.has(newId)) {
+      index += 1
+      newId = `${BIBLE_PREFIX.characters}#${String(index).padStart(2, '0')}`
+    }
+    characters.push({
+      id: newId,
+      name: card.name,
+      role: card.role,
+      description: card.description,
+      traits: [...card.traits],
+      goal: card.goal,
+    })
+    bible.status = 'candidate'
+    bible.updatedAt = now()
+    await this.writeJson(agent, 'story/bible/index.json', bible)
+    return { imported: true, merged: false, name: card.name }
+  }
+
+  async deleteLibraryCharacter(options = {}) {
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定要删除的角色卡')
+    const file = libraryCharacterFile(id)
+    try {
+      await unlink(file)
+    } catch {
+      throw new Error('找不到要删除的角色卡')
+    }
+    return { deleted: id }
+  }
+
+  /* --------------------------- 写作技法库（内置 + 用户卡片） --------------------------- */
+
+  /** 合并内置技法卡片与 DSH_HOME 用户卡片；同 id 用户卡片覆盖内置，并带上 enabled/hasOverride。 */
+  async allCraftCards(agent = null) {
+    const disabled = new Set(agent ? await this.readCraftDisabled(agent) : [])
+    const builtinIds = new Set(CRAFT_CARDS.map((card) => normalizeCraftCard(card, '', 'builtin').id).filter(Boolean))
+    const merged = new Map()
+    for (const card of CRAFT_CARDS) {
+      const normalized = normalizeCraftCard(card, '', 'builtin')
+      if (!normalized.id) continue
+      merged.set(normalized.id, { ...normalized, enabled: !disabled.has(normalized.id), hasOverride: false })
+    }
+    for (const card of await loadUserCraftCards()) {
+      merged.set(card.id, {
+        ...card,
+        enabled: !disabled.has(card.id),
+        hasOverride: builtinIds.has(card.id),
+      })
+    }
+    return [...merged.values()]
+  }
+
+  /** 卡片目录（不含 body，省流量）：带 source/enabled/hasOverride。 */
+  async listCraftCards(agent = null) {
+    const cards = await this.allCraftCards(agent)
+    return {
+      cards: cards.map(({ id, title, summary, tags, tasks, source, enabled, hasOverride }) => ({
+        id, title, summary, tags, tasks, source, enabled, hasOverride,
+      })),
+    }
+  }
+
+  /** 读取完整卡片（含 body、source、enabled）；未知 id 抛错。 */
+  async readCraftCard(agent, options = {}) {
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定技法卡片 id')
+    const cards = await this.allCraftCards(agent)
+    const card = cards.find((item) => item.id === id)
+    if (!card) throw new Error(`找不到技法卡片：${id}`)
+    return card
+  }
+
+  /** 项目级逐卡禁用列表（story/project.json 的 craftDisabled，缺省空）。 */
+  async readCraftDisabled(agent) {
+    const project = await this.readJson(agent, this.marker).catch(() => null)
+    if (!project || typeof project !== 'object') return []
+    return Array.isArray(project.craftDisabled) ? project.craftDisabled.filter((id) => typeof id === 'string') : []
+  }
+
+  /** 逐卡启用/禁用（写 project.craftDisabled）。 */
+  async setCraftCardEnabled(agent, options = {}) {
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定技法卡片 id')
+    const cards = await this.allCraftCards(agent)
+    if (!cards.some((card) => card.id === id)) throw new Error(`找不到技法卡片：${id}`)
+    const project = await this.readJson(agent, this.marker)
+    const disabled = new Set(Array.isArray(project.craftDisabled) ? project.craftDisabled : [])
+    if (options.enabled === false) disabled.add(id)
+    else disabled.delete(id)
+    project.craftDisabled = [...disabled]
+    await this.writeJson(agent, this.marker, project)
+    return { id, enabled: !disabled.has(id) }
+  }
+
+  /** 保存/删除用户卡片（Host 侧管理；同 id 覆盖内置，删除后恢复内置）。 */
+  async saveCraftCard(agent, options = {}) {
+    return saveUserCraftCard(options)
+  }
+
+  async deleteCraftCard(agent, id) {
+    return deleteUserCraftCard(id)
+  }
+
+  /**
+   * 按任务 / 指令 / 题材给卡片打分，返回前 max 张（默认 2，最多 5）。
+   * task 命中 +3；instruction 命中 tags 每个 +2；instruction/title/summary 关键词重叠每个 +1（上限 +3）；genre +1。
+   * 同分用 hash(chapterNumber + card.id) 确定性轮转，避免每章固定选文件前两张；
+   * instruction 为空且没有 genre 命中时只返回 1 张（降低固定偏向）。
+   */
+  async selectCraftCards(agent = null, options = {}) {
+    const task = String(options.task ?? '').trim()
+    const instruction = String(options.instruction ?? '').trim()
+    const genre = Array.isArray(options.genre) ? options.genre.map(String) : []
+    const chapterNumber = Number(options.chapterNumber) || 0
+    const max = Math.max(1, Math.min(5, Number(options.max ?? 2) || 2))
+    const cards = await this.allCraftCards(agent)
+    const keywords = craftInstructionKeywords(instruction)
+    const scored = []
+    for (const card of cards) {
+      if (card.enabled === false) continue
+      let score = 0
+      if (task && card.tasks.includes(task)) score += 3
+      for (const tag of card.tags) {
+        if (tag && instruction.includes(tag)) score += 2
+      }
+      let overlap = 0
+      const haystack = [card.title, card.summary, ...card.tags].join(' ')
+      for (const keyword of keywords) {
+        if (keyword && haystack.includes(keyword)) overlap += 1
+      }
+      score += Math.min(3, overlap)
+      let genreHit = false
+      for (const item of genre) {
+        if (!item) continue
+        if (card.tags.some((tag) => tag === item || tag.includes(item) || item.includes(tag))) {
+          score += 1
+          genreHit = true
+        }
+      }
+      if (score <= 0) continue
+      scored.push({ card, score, genreHit })
+    }
+    const seedBase = chapterNumber > 0 ? String(chapterNumber) : instruction
+    scored.sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score
+      return craftSeedHash(seedBase + left.card.id) - craftSeedHash(seedBase + right.card.id)
+    })
+    const anyGenreHit = scored.some((entry) => entry.genreHit)
+    const limit = (!instruction && !anyGenreHit) ? 1 : max
+    return {
+      cards: scored.slice(0, limit).map(({ card, score }) => ({
+        ...card,
+        score,
+        body: card.body.length > 1200 ? card.body.slice(0, 1200) : card.body,
+      })),
+    }
+  }
+
+  /** 项目开关：story/project.json 的 craftAuto，缺省 true（未初始化也返回 true）。 */
+  async readCraftAuto(agent) {
+    const project = await this.readJson(agent, this.marker).catch(() => null)
+    if (!project || typeof project !== 'object') return true
+    return project.craftAuto !== false
+  }
+
+  async setCraftAuto(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const project = await this.readJson(agent, this.marker)
+    const enabled = options.enabled !== false
+    project.craftAuto = enabled
+    await this.writeJson(agent, this.marker, project)
+    return { craftAuto: enabled }
+  }
+
+  /** 章节生成/修订/修复时按项目题材挑卡；关闭 craftAuto 时返回空数组。注入前加契约优先说明。 */
+  async craftCardsFor(agent, options = {}) {
+    if (!(await this.readCraftAuto(agent))) return []
+    const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
+    const genre = Array.isArray(premise?.chosen?.genre) ? premise.chosen.genre : []
+    const { cards } = await this.selectCraftCards(agent, {
+      task: options.task,
+      instruction: options.instruction,
+      genre,
+      chapterNumber: options.chapterNumber,
+    })
+    return withCraftContractNote(cards)
+  }
+
+  /** provider 用：按 cwd 读项目 craftDisabled（未初始化/无 DB → 空）。 */
+  async readCraftDisabledByCwd(cwd) {
+    if (typeof cwd !== 'string' || !cwd) return []
+    try {
+      const store = await this.storeFor(cwd)
+      const project = store.readProject()
+      return Array.isArray(project?.craftDisabled) ? project.craftDisabled.filter((id) => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  /** 合并后的技能目录：内置 craft-* + 项目导入（scope project）+ 全局导入（scope global）；同名按 rank 小者胜。 */
+  async listSkills(agent) {
+    const cwd = await this.cwd(agent)
+    const disabled = await this.readCraftDisabled(agent)
+    const imported = await scanImportedSkills(allSkillRoots(cwd, DSH_HOME))
+    const builtinNames = new Set(CRAFT_CARDS.map((card) => craftSkillName(card.id)))
+    const merged = new Map()
+    for (const card of CRAFT_CARDS) {
+      merged.set(craftSkillName(card.id), {
+        name: craftSkillName(card.id),
+        description: card.summary,
+        source: 'builtin',
+        scope: 'builtin',
+        enabled: !disabled.includes(card.id),
+        canDelete: false,
+        overridesBuiltin: false,
+        tags: card.tags ?? [],
+        tasks: card.tasks ?? [],
+      })
+    }
+    for (const skill of imported) {
+      merged.set(skill.name, {
+        name: skill.name,
+        description: skill.description,
+        source: 'imported',
+        scope: skill.scope === 'global' ? 'global' : 'project',
+        enabled: true,
+        canDelete: true,
+        overridesBuiltin: builtinNames.has(skill.name),
+        rank: skill.rank,
+        path: skill.filePath,
+      })
+    }
+    return { skills: [...merged.values()] }
+  }
+
+  /** 技能开关：内置 craft-* 写项目 craftDisabled；导入技能不支持开关（应删除）。 */
+  async toggleSkill(agent, options = {}) {
+    const name = String(options.name ?? '').trim()
+    const cardId = craftCardIdFromSkill(name)
+    if (!cardId || !CRAFT_CARDS.some((card) => card.id === cardId)) {
+      throw new Error('导入技能不支持开关；如需移除请删除')
+    }
+    return this.setCraftCardEnabled(agent, { id: cardId, enabled: options.enabled !== false })
+  }
+
+  /** 导入技能：scope=project 写项目 .dsh/skills；scope=global 写 DSH_HOME/novel-writer/library/skills。 */
+  async importSkill(agent, options = {}) {
+    const cwd = await this.cwd(agent)
+    return importSkillToProject({
+      projectRoot: cwd,
+      sourcePath: options.path,
+      scope: options.scope === 'global' ? 'global' : 'project',
+      dshHome: DSH_HOME,
+    })
+  }
+
+  /** 删除导入技能（项目或全局；内置不可删；路径必须位于技能根目录内）。 */
+  async deleteSkill(agent, options = {}) {
+    const cwd = await this.cwd(agent)
+    const name = typeof options === 'string' ? options : String(options?.name ?? '').trim()
+    const scope = typeof options === 'object' ? options?.scope : undefined
+    return deleteImportedSkill({
+      roots: allSkillRoots(cwd, DSH_HOME),
+      name,
+      scope: scope === 'global' || scope === 'project' ? scope : undefined,
+    })
+  }
+
+  /** 读取技能全文：内置返回卡片正文（带适配性提示），项目/全局导入返回 SKILL.md 正文。 */
+  async readSkill(agent, name, scope) {
+    const cwd = await this.cwd(agent)
+    const skillName = String(name ?? '').trim()
+    const cardId = craftCardIdFromSkill(skillName)
+    if (cardId) {
+      const card = CRAFT_CARDS.find((item) => item.id === cardId)
+      if (!card) throw new Error(`找不到技能：${skillName}`)
+      return { name: skillName, source: 'builtin', scope: 'builtin', description: card.summary, content: craftSkillBody(card) }
+    }
+    const imported = await scanImportedSkills(allSkillRoots(cwd, DSH_HOME))
+    const wantedScope = scope === 'global' || scope === 'project' ? scope : null
+    const skill = imported.find((item) => item.name === skillName && (!wantedScope || item.scope === wantedScope))
+    if (!skill) throw new Error(`找不到技能：${skillName}`)
+    return { name: skill.name, source: 'imported', scope: skill.scope, description: skill.description, content: skill.content, path: skill.filePath }
   }
 
   async buildChapterFacts(agent, chapter, number) {
@@ -2797,8 +4565,22 @@ export class NovelWriterService {
     }
     const volumes = Array.isArray(outline.volumes) ? outline.volumes : []
     const requestedVolumeId = String(options.volumeId ?? '')
-    let volume = volumes.find((item) => item.id === requestedVolumeId) ??
-      volumes[0] ?? { id: 'vol-1', title: '第一卷', goal: '', chapters: [] }
+    // 未指定卷时落到“最新章所在卷”，避免第二卷续写被挂回第一卷。
+    let volume = volumes.find((item) => item.id === requestedVolumeId) ?? null
+    if (!volume) {
+      let latest = null
+      let latestNumber = -1
+      for (const item of volumes) {
+        for (const chapter of item.chapters ?? []) {
+          const number = Number(chapter.number) || 0
+          if (number >= latestNumber) {
+            latestNumber = number
+            latest = item
+          }
+        }
+      }
+      volume = latest ?? volumes[0] ?? { id: 'vol-1', title: '第一卷', goal: '', chapters: [] }
+    }
     // 新开一卷：当前卷最后一章已标阶段收束时，下一次“续写/生成后”自动落到下一卷，
     // 不要求用户先手动切卷；重生成仍留在原卷。
     if (!options.regenerate && Array.isArray(volume.chapters) && volume.chapters.length > 0) {
@@ -3433,217 +5215,6 @@ export class NovelWriterService {
     return target
   }
 
-  async readAssistantThread(agent) {
-    return (await this.readJson(agent, 'story/assistant/thread.json').catch(() => null)) ?? {
-      messages: [],
-      summary: '',
-      updatedAt: null,
-    }
-  }
-
-  async writeAssistantThread(agent, thread) {
-    await this.writeJson(agent, 'story/assistant/thread.json', {
-      ...thread,
-      updatedAt: now(),
-    })
-  }
-
-  async assistantChat(agent, options = {}) {
-    await this.assertInitialized(agent)
-    const message = String(options.message ?? '').trim()
-    if (!message) throw new Error('指令不能为空')
-    const project = await this.readJson(agent, this.marker)
-    const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
-    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
-    const bible = await this.readJson(agent, 'story/bible/index.json').catch(() => null)
-    const thread = await this.readAssistantThread(agent)
-    const chapters = (outline?.volumes ?? []).flatMap((volume) =>
-      (volume.chapters ?? []).map((chapter) => ({
-        number: chapter.number,
-        title: chapter.title,
-        status: chapter.status,
-        synopsis: String(chapter.synopsis ?? '').slice(0, 140),
-      })),
-    )
-    const volumes = (outline?.volumes ?? []).map((volume) => ({
-      id: volume.id,
-      title: volume.title,
-      goal: String(volume.goal ?? '').slice(0, 200),
-      map: String(volume.map ?? '').slice(0, 200),
-      exitCriteria: String(volume.exitCriteria ?? '').slice(0, 200),
-      chapters: (volume.chapters ?? []).length,
-    }))
-    const characters = (bible?.characters ?? []).map((item) => ({
-      name: item.name,
-      role: item.role,
-      description: String(item.description ?? '').slice(0, 300),
-    })).slice(0, 30)
-    const style = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
-    const readChapterText = async (number) => {
-      const paths = this.chapterPaths(number)
-      return (await this.readText(agent, paths.final).catch(() => null)) ??
-        (await this.readText(agent, paths.draft).catch(() => null)) ?? ''
-    }
-    const mentioned = (() => {
-      const match = message.match(/第\s*(\d+)\s*章/)
-      return match ? Number(match[1]) : null
-    })()
-    const bodyParts = []
-    if (mentioned) {
-      const text = await readChapterText(mentioned)
-      if (text) bodyParts.push(`第${mentioned}章正文（前4000字）：\n${text.slice(0, 4000)}`)
-    }
-    const lastNumbers = chapters.map((item) => Number(item.number)).sort((a, b) => a - b).slice(-2)
-    for (const number of lastNumbers) {
-      const text = await readChapterText(number)
-      if (text) bodyParts.push(`第${number}章正文（开头400字）：\n${text.slice(0, 400)}`)
-    }
-    const history = thread.messages.slice(-12).map((item) => `${item.role === 'user' ? '用户' : '助手'}：${String(item.content ?? '').slice(0, 300)}`).join('\n')
-    const context = [
-      `项目：${project?.title ?? '未命名'}`,
-      premise?.chosen ? `已确认构思：${JSON.stringify(premise.chosen).slice(0, 1200)}` : '构思未确认',
-      `写作要求摘要：${String(project?.writingNotes ?? '').slice(0, 1500)}`,
-      `文风契约：${JSON.stringify(style?.fields ?? {}).slice(0, 1200)}`,
-      `分卷：${JSON.stringify(volumes).slice(0, 1500)}`,
-      `章纲：${JSON.stringify(chapters).slice(0, 4000)}`,
-      `角色：${JSON.stringify(characters).slice(0, 4000)}`,
-      bodyParts.length ? `正文节选：\n${bodyParts.join('\n\n')}` : '正文：尚未写。',
-    ].join('\n')
-    const system = [
-      '你是这部小说的写作助手，只操作这一部小说。',
-      '思考过程与回复都用中文；不要用英文思考（除非用户要求英文）。',
-      '你可以阅读项目里的章纲、设定、文风与正文（已按需附上）；作答只依据提供的内容，不要编造未出现的设定。',
-      '先判断用户意图，分成三类：',
-      '1) discuss：讨论、评价、提意见——只回复分析与建议，不要改任何文件。',
-      '2) propose：用户要改东西但还没确认（如“第9章太水，压一压”）——给出变更计划，不要落盘。',
-      '3) execute：用户明确确认执行（“就按这个改/执行”）——给出可执行动作。',
-      '输出 JSON：{"intent":"discuss|propose|execute","reply":"给用户的话","plan":null 或 {"summary":"一句话","actions":[动作...]}}',
-      '动作格式：{"type":"outline-update","number":章号,"fields":{"title":"...","synopsis":"..."}}；{"type":"chapter-edit","number":章号,"instruction":"怎么改这一章正文"}；{"type":"setting-update","fields":{"writingNotes":"..."}}；{"type":"generate","kind":"outline","count":N,"instruction":"..."}。',
-      '改章纲时保留原有情节骨架与人物关系，只按用户要求增删改；synopsis 用结构化平实写法。',
-      '不要输出 Markdown 代码围栏。',
-    ].join('\n')
-    const result = await this.callJsonModel(agent, {
-      kind: 'assistant.chat',
-      task: 'discussion',
-      system,
-      messages: [{ role: 'user', content: [{ type: 'text', text: `${context}\n\n历史：\n${history}\n\n用户：${message}` }] }],
-      maxTokens: 8000,
-      temperature: 0.4,
-    })
-    const parsed = result?.parsed ?? {}
-    const intent = String(parsed.intent ?? 'discuss')
-    const reply = String(parsed.reply ?? '').trim() || '我明白了。'
-    const plan = intent !== 'discuss' && parsed.plan && Array.isArray(parsed.plan.actions)
-      ? { summary: String(parsed.plan.summary ?? ''), actions: parsed.plan.actions }
-      : null
-    thread.messages.push(
-      { role: 'user', content: message, at: now() },
-      { role: 'assistant', content: reply, at: now() },
-    )
-    await this.writeAssistantThread(agent, thread)
-    return {
-      intent,
-      reply,
-      plan,
-      thinking: String(result?.first?.reasoning ?? '').slice(0, 8000),
-      thread,
-    }
-  }
-
-  async assistantApply(agent, options = {}) {
-    await this.assertInitialized(agent)
-    const actions = Array.isArray(options.actions) ? options.actions : []
-    if (actions.length === 0) throw new Error('没有可执行的变更')
-    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
-    const project = await this.readJson(agent, this.marker).catch(() => null)
-    const contract = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
-    const backup = {
-      outline: outline ? JSON.parse(JSON.stringify(outline)) : null,
-      project: project ? JSON.parse(JSON.stringify(project)) : null,
-      contract: contract ? JSON.parse(JSON.stringify(contract)) : null,
-      drafts: {},
-      createdAt: now(),
-    }
-    const done = []
-    for (const action of actions) {
-      if (action.type === 'outline-update') {
-        const before = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-          .find((chapter) => Number(chapter.number) === Number(action.number))
-        const beforeTitle = String(before?.title ?? '')
-        const beforeSynopsis = String(before?.synopsis ?? '')
-        const updated = await this.updateOutlineChapter(agent, { number: action.number, fields: action.fields ?? {} })
-        done.push({
-          type: action.type,
-          number: action.number,
-          before: { title: beforeTitle, synopsis: beforeSynopsis },
-          after: { title: updated.title, synopsis: updated.synopsis },
-        })
-      } else if (action.type === 'setting-update') {
-        await this.updateProject(agent, action.fields ?? {})
-        done.push({ type: action.type, fields: Object.keys(action.fields ?? {}) })
-      } else if (action.type === 'chapter-edit') {
-        const number = Number(action.number)
-        const paths = this.chapterPaths(number)
-        const before = (await this.readText(agent, paths.draft).catch(() => null)) ??
-          (await this.readText(agent, paths.final).catch(() => null)) ?? ''
-        backup.drafts[number] = before
-        const { chapter } = await this.findOutlineChapter(agent, number)
-        const system = [
-          '你是这部小说的写作助手，只改写指定的这一章正文。',
-          '按用户指令修改，保持文风、人物与既有情节连续；不改动其他章节。',
-          '只输出正文，不要标题、说明或 Markdown。',
-        ].join('\n')
-        const result = await this.callModel(agent, {
-          task: 'draft',
-          system,
-          messages: [{
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: `第${number}章《${chapter?.title ?? ''}》\n章纲：${chapter?.synopsis ?? ''}\n\n修改要求：${action.instruction ?? '按章纲润色并修正问题'}\n\n当前正文：\n${before}`,
-            }],
-          }],
-          maxTokens: 256000,
-          temperature: 0.7,
-        })
-        const text = String(result.text ?? '').trim()
-        if (!text) throw new Error(`第${number}章改写失败：模型没有返回正文`)
-        await this.saveChapterText(agent, { number, text })
-        done.push({ type: action.type, number, before: before.slice(0, 120), after: text.slice(0, 120) })
-      } else if (action.type === 'generate') {
-        if (action.kind === 'outline') {
-          const result = await this.outlineGenerate(agent, {
-            count: Number(action.count) || 3,
-            volumeId: action.volumeId,
-            instruction: action.instruction,
-            deferAudit: true,
-          })
-          done.push({ type: action.type, kind: 'outline', from: result.fromChapter, to: result.toChapter })
-        } else {
-          done.push({ type: action.type, kind: action.kind ?? 'unknown', skipped: true })
-        }
-      } else {
-        done.push({ type: action.type, skipped: true })
-      }
-    }
-    await this.writeJson(agent, 'story/assistant/backup.json', backup)
-    return { done, backupSaved: true }
-  }
-
-  async assistantUndo(agent) {
-    await this.assertInitialized(agent)
-    const backup = await this.readJson(agent, 'story/assistant/backup.json').catch(() => null)
-    if (!backup) throw new Error('没有可撤销的变更')
-    if (backup.outline) await this.writeJson(agent, 'story/plot/outline.json', backup.outline)
-    if (backup.project) await this.writeJson(agent, this.marker, backup.project)
-    if (backup.contract) await this.writeJson(agent, 'story/style/contract.json', backup.contract)
-    for (const [number, text] of Object.entries(backup.drafts ?? {})) {
-      await this.writeTextFile(agent, this.chapterPaths(Number(number)).draft, text)
-    }
-    await this.writeJson(agent, 'story/assistant/backup.json', {})
-    return { restored: true }
-  }
-
   async createOutlineVolume(agent, options = {}) {
     await this.assertInitialized(agent)
     const outline = (await this.readJson(agent, 'story/plot/outline.json').catch(() => null)) ?? {
@@ -3738,7 +5309,6 @@ export class NovelWriterService {
       final: `${dir}/final.md`,
       qa: `${dir}/qa.json`,
       styleQa: `${dir}/style-qa.json`,
-      instruction: `${dir}/instruction.json`,
       continuity: `${dir}/continuity.json`,
       revisions: `${dir}/revisions`,
     }
@@ -3854,6 +5424,20 @@ export class NovelWriterService {
     }
   }
 
+  /** 相对路径 → 宿主路径（虚拟 fs 无 processPath 时用 join 兜底；失败返回 null）。 */
+  async resolveHostPath(relativePath, cwd) {
+    try {
+      const target = await this.ctx.fs.resolve(relativePath, { cwd })
+      return this.ctx.fs.processPath?.(target) ?? join(target?.cwd ?? cwd, target?.relativePath ?? relativePath)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 删除尾部连续章节。文件删除先做（失败即报错，DB 未动→现场保留），
+   * DB 的删行/大纲落库/状态时间戳在同一个事务里提交。
+   */
   async deleteTailChapters(agent, options = {}) {
     await this.assertInitialized(agent)
     const outline = await this.readJson(agent, 'story/plot/outline.json')
@@ -3877,42 +5461,232 @@ export class NovelWriterService {
     const snapshot = options.snapshot === false ? null : await this.createProjectSnapshot(agent)
     const cwd = await this.cwd(agent)
     const removed = []
-    for (const number of tail) {
-      const paths = this.chapterPaths(number)
-      try {
-        const dirTarget = await this.ctx.fs.resolve(paths.dir, { cwd })
-        const dirHost = this.ctx.fs.processPath?.(dirTarget)
+    await this.withWatchSuspended(cwd, async () => {
+      for (const number of tail) {
+        const paths = this.chapterPaths(number)
+        const dirHost = await this.resolveHostPath(paths.dir, cwd)
         if (dirHost) {
-          await rm(dirHost, { recursive: true, force: true })
+          try {
+            await rm(dirHost, { recursive: true, force: true })
+          } catch (error) {
+            throw new Error(`删除第 ${number} 章目录失败：${errorText(error)}`)
+          }
           removed.push(paths.dir)
         }
-      } catch {
-        // ignore
-      }
-      try {
-        const stateTarget = await this.ctx.fs.resolve(`story/state/${paths.pad}.json`, { cwd })
-        const stateHost = this.ctx.fs.processPath?.(stateTarget)
+        const stateHost = await this.resolveHostPath(`story/state/${paths.pad}.json`, cwd)
         if (stateHost) {
-          await unlink(stateHost)
-          removed.push(`story/state/${paths.pad}.json`)
+          try {
+            await unlink(stateHost)
+            removed.push(`story/state/${paths.pad}.json`)
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw new Error(`删除第 ${number} 章状态文件失败：${errorText(error)}`)
+          }
         }
-      } catch {
-        // ignore
       }
-    }
+    })
     const tailSet = new Set(tail)
     for (const volume of volumes) {
       volume.chapters = (volume.chapters ?? []).filter((chapter) => !tailSet.has(Number(chapter.number)))
     }
     outline.updatedAt = now()
-    await this.writeJson(agent, 'story/plot/outline.json', outline)
-    const state = await this.readJson(agent, 'story/state/index.json').catch(() => null)
-    if (state && Array.isArray(state.chapters)) {
-      state.chapters = state.chapters.filter((entry) => !tailSet.has(Number(entry.number)))
-      state.updatedAt = now()
-      await this.writeJson(agent, 'story/state/index.json', state)
-    }
+    const store = await this.storeFor(agent)
+    // DB 一个事务：删行 + 大纲落库 + 状态时间戳一起提交。
+    store.tx(() => {
+      if (this.failHook) this.failHook('delete-tail')
+      for (const number of tail) store.deleteChapterRows(number)
+      store.writeOutline(outline)
+      // 大纲删除后同步 FTS（与 DB 同事务，失败一起回滚）。
+      store.reindexOutline()
+      store.writeStateMeta(now())
+    })
+    store.checkpoint()
     return { ...preview, removed, snapshot }
+  }
+
+  /**
+   * 删除单章正文产物（草稿/定稿/质检/修订/状态/摘要），保留章纲，便于重新生成。
+   * 用于清理生成失败或写错的章节；删除前自动创建项目快照。
+   */
+  /** 把一章的正文目录与状态文件从 fromNumber 移到 toNumber（删除中间章后的章号重排）。 */
+  async moveChapterArtifacts(agent, fromNumber, toNumber, cwd, options = {}) {
+    const strict = options.strict === true
+    const writeMeta = options.writeMeta !== false
+    const from = this.chapterPaths(fromNumber)
+    const to = this.chapterPaths(toNumber)
+    const resolveHost = async (relative) => {
+      const target = await this.ctx.fs.resolve(relative, { cwd })
+      return { target, host: this.ctx.fs.processPath?.(target) ?? null }
+    }
+    const movePath = async (fromRelative, toRelative) => {
+      const fromResolved = await resolveHost(fromRelative)
+      if (!fromResolved.host) return false
+      const fromInfo = await fsStat(fromResolved.host).catch(() => null)
+      if (!fromInfo) return false
+      const toResolved = await resolveHost(toRelative)
+      if (!toResolved.host) return false
+      const exists = await this.ctx.fs.stat(toResolved.target).catch(() => null)
+      if (exists) {
+        if (strict) throw new Error(`重命名目标已存在：${toRelative}`)
+        return false
+      }
+      try {
+        await rename(fromResolved.host, toResolved.host)
+      } catch (error) {
+        if (strict) throw new Error(`重命名 ${fromRelative} → ${toRelative} 失败：${errorText(error)}`)
+        return false
+      }
+      return true
+    }
+    const movedDir = await movePath(from.dir, to.dir)
+    if (movedDir && writeMeta) {
+      const meta = await this.readJson(agent, to.meta).catch(() => null)
+      if (meta && typeof meta === 'object') {
+        meta.number = toNumber
+        await this.writeJson(agent, to.meta, meta).catch(() => {})
+      }
+    }
+    const movedState = await movePath(`story/state/${from.pad}.json`, `story/state/${to.pad}.json`)
+    if (movedState && writeMeta) {
+      const state = await this.readJson(agent, `story/state/${to.pad}.json`).catch(() => null)
+      if (state && typeof state === 'object') {
+        state.number = toNumber
+        await this.writeJson(agent, `story/state/${to.pad}.json`, state).catch(() => {})
+      }
+    }
+    return { movedDir, movedState }
+  }
+
+  /**
+   * 删除单章（可选删除章纲并重排后续章号）。
+   * 顺序：文件操作（删除/改名，失败即报错，DB 未动→现场保留）→ DB 单事务（删行/行迁移/大纲/状态/力量体系）。
+   */
+  async deleteChapter(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定要删除的章号')
+    const { chapter } = await this.findOutlineChapter(agent, number)
+    const paths = this.chapterPaths(number)
+    const cwd = await this.cwd(agent)
+    const exists = async (relative) => {
+      try {
+        const target = await this.ctx.fs.resolve(relative, { cwd })
+        return Boolean(await this.ctx.fs.stat(target))
+      } catch {
+        return false
+      }
+    }
+    const hasDir = await exists(paths.dir)
+    const hasState = await exists(`story/state/${paths.pad}.json`)
+    if (!chapter && !hasDir && !hasState) throw new Error(`第 ${number} 章不存在`)
+    const preview = {
+      number,
+      title: chapter?.title ?? null,
+      hasOutline: Boolean(chapter),
+      hasDir,
+      hasState,
+    }
+    if (options.dryRun) return { ...preview, dryRun: true }
+    const snapshot = options.snapshot === false ? null : await this.createProjectSnapshot(agent)
+    const removed = []
+    // 1) 删除目标章的文件产物：失败直接抛错（DB 未动，现场保留）。
+    await this.withWatchSuspended(cwd, async () => {
+      if (hasDir) {
+        const dirHost = await this.resolveHostPath(paths.dir, cwd)
+        if (dirHost) {
+          try {
+            await rm(dirHost, { recursive: true, force: true })
+          } catch (error) {
+            throw new Error(`删除第 ${number} 章目录失败：${errorText(error)}`)
+          }
+          removed.push(paths.dir)
+        }
+      }
+      if (hasState) {
+        const stateHost = await this.resolveHostPath(`story/state/${paths.pad}.json`, cwd)
+        if (stateHost) {
+          try {
+            await unlink(stateHost)
+            removed.push(`story/state/${paths.pad}.json`)
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw new Error(`删除第 ${number} 章状态文件失败：${errorText(error)}`)
+          }
+        }
+      }
+    })
+    const store = await this.storeFor(agent)
+    let outlineRemoved = false
+    let renumbered = false
+    let outline = null
+    let maxNumberBefore = 0
+    let power = null
+    if (options.removeOutline && chapter) {
+      outline = await this.readJson(agent, 'story/plot/outline.json')
+      const volumes = Array.isArray(outline?.volumes) ? outline.volumes : []
+      const allBefore = volumes.flatMap((volume) => volume.chapters ?? [])
+      maxNumberBefore = allBefore.reduce((max, item) => Math.max(max, Number(item.number) || 0), 0)
+      for (const volume of volumes) {
+        volume.chapters = (volume.chapters ?? []).filter((item) => Number(item.number) !== number)
+      }
+      outlineRemoved = true
+      if (options.renumber !== false) {
+        for (const volume of volumes) {
+          for (const item of volume.chapters ?? []) {
+            const current = Number(item.number) || 0
+            if (current > number) item.number = current - 1
+          }
+        }
+        renumbered = true
+        power = await this.readJson(agent, 'story/power.json').catch(() => null)
+      }
+      outline.updatedAt = now()
+      // 2) 后续章产物前移：strict 模式，失败即报错（DB 尚未提交）。
+      if (renumbered) {
+        await this.withWatchSuspended(cwd, async () => {
+          for (let current = number + 1; current <= maxNumberBefore; current += 1) {
+            await this.moveChapterArtifacts(agent, current, current - 1, cwd, { strict: true, writeMeta: false })
+          }
+        })
+      }
+    }
+    // 3) DB：一个事务内完成删行/行迁移/大纲/状态/力量体系，抛错自动回滚。
+    store.tx(() => {
+      if (this.failHook) this.failHook('delete-chapter')
+      store.deleteChapterRows(number)
+      store.deleteOutlineChapter(number)
+      if (outline) {
+        if (renumbered) {
+          for (let current = number + 1; current <= maxNumberBefore; current += 1) {
+            store.renameChapterRows(current, current - 1)
+          }
+          if (power && power.chapterChanges && typeof power.chapterChanges === 'object') {
+            const next = {}
+            for (const [key, value] of Object.entries(power.chapterChanges)) {
+              const current = Number(key)
+              if (Number.isFinite(current) && current > number) {
+                if (current - 1 >= 1) next[String(current - 1)] = value
+              } else {
+                next[key] = value
+              }
+            }
+            power.chapterChanges = next
+            store.writePower(power)
+          }
+        }
+        store.writeOutline(outline)
+        // 大纲删除/重排后同步 FTS（与 DB 行同事务，失败一起回滚）。
+        store.reindexOutline()
+      }
+      store.writeStateMeta(now())
+    })
+    store.checkpoint()
+    return {
+      ...preview,
+      removed,
+      snapshot,
+      outlineKept: Boolean(chapter) && !outlineRemoved,
+      outlineRemoved,
+      renumbered,
+    }
   }
 
   async findOutlineChapter(agent, number) {
@@ -3954,7 +5728,6 @@ export class NovelWriterService {
     const final = await this.readText(agent, paths.final).catch(() => null)
     const qa = await this.readJson(agent, paths.qa).catch(() => null)
     const styleQa = await this.readJson(agent, paths.styleQa).catch(() => null)
-    const pendingInstruction = await this.readJson(agent, paths.instruction).catch(() => null)
     const continuity = await this.readJson(agent, paths.continuity).catch(() => null)
     const summary = await this.readChapterSummary(agent, number)
     let revisions = []
@@ -3984,9 +5757,10 @@ export class NovelWriterService {
       outlineChanged,
       draft,
       final,
+      hasDraft: Boolean(draft),
+      hasFinal: Boolean(final),
       qa,
       styleQa,
-      pendingInstruction,
       continuity,
       summary,
       revisions,
@@ -3994,40 +5768,141 @@ export class NovelWriterService {
     }
   }
 
-  async chaptersSummary(agent) {
+  /** 章节列表分页（助手上下文预算）：只返回 limit 条，带 total/offset/truncated/nextOffset。 */
+  async listChaptersPage(agent, options = {}) {
     await this.assertInitialized(agent)
-    const outline = await this.readJson(agent, 'story/plot/outline.json')
-    const chapters = (outline?.volumes ?? []).flatMap((volume) =>
+    const limit = Math.max(1, Math.min(200, Number(options.limit) || 30))
+    const offset = Math.max(0, Number(options.offset) || 0)
+    const volumeId = String(options.volumeId ?? '').trim()
+    const status = String(options.status ?? '').trim()
+    const all = await this.chaptersSummary(agent)
+    let filtered = all
+    if (volumeId) filtered = filtered.filter((item) => String(item.volumeId ?? '') === volumeId)
+    if (status) {
+      filtered = filtered.filter((item) => item.status === status || item.outlineStatus === status)
+    }
+    const page = filtered.slice(offset, offset + limit).map((item) => ({
+      number: item.number,
+      title: item.title,
+      volumeId: item.volumeId,
+      volumeTitle: item.volumeTitle,
+      status: item.status,
+      outlineStatus: item.outlineStatus,
+      hasDraft: item.hasDraft,
+      hasFinal: item.hasFinal,
+      wordCount: item.wordCount,
+      qaStatus: item.qaStatus,
+      finalStale: item.finalStale,
+      summary: String(item.summary ?? '').slice(0, 60),
+    }))
+    const truncated = offset + page.length < filtered.length
+    return {
+      total: filtered.length,
+      offset,
+      limit,
+      chapters: page,
+      truncated,
+      nextOffset: truncated ? offset + page.length : null,
+    }
+  }
+
+  /** 单章正文分块读取（助手上下文预算）：支持 range 区间 / maxChars 截断 / draft|final|both。 */
+  async readChapterParts(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    const detail = await this.chapterDetail(agent, number)
+    const part = ['draft', 'final', 'both'].includes(options.part) ? options.part : 'both'
+    const maxChars = Math.max(200, Math.min(40000, Number(options.maxChars) || 6000))
+    const rawRange = options.range && typeof options.range === 'object' ? options.range : null
+    const hasRange = Boolean(rawRange && Number.isFinite(Number(rawRange.start)) && Number.isFinite(Number(rawRange.end)))
+    const slicePart = (text) => {
+      const source = String(text ?? '')
+      if (hasRange) {
+        const start = Math.max(0, Math.min(source.length, Math.floor(Number(rawRange.start))))
+        const end = Math.max(start, Math.min(source.length, Math.floor(Number(rawRange.end))))
+        return {
+          text: source.slice(start, end),
+          start,
+          end,
+          truncated: start > 0 || end < source.length,
+          nextRange: end < source.length ? { start: end, end: Math.min(source.length, end + Math.max(1, end - start)) } : null,
+        }
+      }
+      const truncated = source.length > maxChars
+      return {
+        text: source.slice(0, maxChars),
+        start: 0,
+        end: Math.min(source.length, maxChars),
+        truncated,
+        nextRange: truncated ? { start: maxChars, end: Math.min(source.length, maxChars * 2) } : null,
+      }
+    }
+    const result = {
+      number,
+      title: detail.chapter?.title ?? '',
+      wordCount: detail.wordCount,
+      hasDraft: detail.hasDraft,
+      hasFinal: detail.hasFinal,
+      outlineChanged: detail.outlineChanged,
+      meta: detail.meta,
+      qa: detail.qa,
+      styleQa: detail.styleQa,
+      summary: detail.summary,
+      revisionCount: (detail.revisions ?? []).length,
+      revisions: (detail.revisions ?? []).slice(0, 3),
+    }
+    if (part === 'draft' || part === 'both') result.draft = detail.draft ? slicePart(detail.draft) : null
+    if (part === 'final' || part === 'both') result.final = detail.final ? slicePart(detail.final) : null
+    result.truncated = Boolean(result.draft?.truncated || result.final?.truncated)
+    return result
+  }
+
+  /** 单章正文片段检索（patch 前定位精确原文）：返回命中位置与前后 80 字上下文。 */
+  async searchChapterText(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    const query = String(options.query ?? '')
+    if (!query) throw new Error('请提供要查找的片段 query')
+    const limit = Math.max(1, Math.min(20, Number(options.limit) || 5))
+    const target = ['draft', 'final'].includes(options.target) ? options.target : 'both'
+    const detail = await this.chapterDetail(agent, number)
+    const hits = []
+    for (const key of target === 'both' ? ['draft', 'final'] : [target]) {
+      const text = String(detail[key] ?? '')
+      let index = text.indexOf(query)
+      while (index >= 0 && hits.length < limit) {
+        hits.push({
+          target: key,
+          index,
+          context: text.slice(Math.max(0, index - 80), Math.min(text.length, index + query.length + 80)),
+        })
+        index = text.indexOf(query, index + Math.max(1, query.length))
+      }
+    }
+    return { number, query, hits, truncated: hits.length >= limit }
+  }
+
+  async chaptersSummary(agent, snapshot = null) {
+    await this.assertInitialized(agent)
+    const data = snapshot ?? await this.readProjectSnapshotData(agent)
+    const chapters = (data.outline?.volumes ?? []).flatMap((volume) =>
       (volume.chapters ?? []).map((chapter) => ({
         ...chapter,
         volumeId: chapter.volumeId ?? volume.id,
         volumeTitle: volume.title,
       })),
     )
-    const cwd = await this.cwd(agent)
     const list = []
     for (const chapter of chapters) {
-      const paths = this.chapterPaths(chapter.number)
-      const meta = await this.readJson(agent, paths.meta).catch(() => null)
-      const summary = await this.readChapterSummary(agent, chapter.number).catch(() => null)
-      let hasDraft = false
-      let hasFinal = false
-      try {
-        const target = await this.ctx.fs.resolve(paths.draft, { cwd })
-        hasDraft = Boolean(await this.ctx.fs.stat(target))
-      } catch {
-        hasDraft = false
-      }
-      try {
-        const target = await this.ctx.fs.resolve(paths.final, { cwd })
-        hasFinal = Boolean(await this.ctx.fs.stat(target))
-      } catch {
-        hasFinal = false
-      }
-      const qa = hasDraft ? await this.readJson(agent, paths.qa).catch(() => null) : null
-      const styleQa = hasDraft ? await this.readJson(agent, paths.styleQa).catch(() => null) : null
+      const number = Number(chapter.number)
+      const meta = data.metas.get(number) ?? null
+      const summary = data.sums.get(number) ?? null
+      const files = data.files.get(number) ?? { hasDraft: false, hasFinal: false }
+      const hasDraft = files.hasDraft
+      const hasFinal = files.hasFinal
+      const qaEntry = data.qaMap.get(number) ?? {}
       list.push({
-        number: Number(chapter.number),
+        number,
         title: chapter.title || `第 ${chapter.number} 章`,
         volumeId: chapter.volumeId,
         volumeTitle: chapter.volumeTitle,
@@ -4037,20 +5912,21 @@ export class NovelWriterService {
         wordCount: meta?.wordCount ?? 0,
         hasDraft,
         hasFinal,
-        qaStatus: qa?.status ?? null,
-        styleStatus: styleQa?.status ?? null,
-        styleScore: styleQa?.score ?? null,
+        qaStatus: hasDraft ? (qaEntry.qa?.status ?? null) : null,
+        styleStatus: hasDraft ? (qaEntry.styleQa?.status ?? null) : null,
+        styleScore: hasDraft ? (qaEntry.styleQa?.score ?? null) : null,
         finalStale: Boolean(meta?.finalStale),
       })
     }
     return list
   }
 
-  async storyOverview(agent) {
+  async storyOverview(agent, snapshot = null) {
     await this.assertInitialized(agent)
-    const outline = await this.readJson(agent, 'story/plot/outline.json')
+    const data = snapshot ?? await this.readProjectSnapshotData(agent)
+    const outline = data.outline
     const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-    const state = await this.readJson(agent, 'story/state/index.json').catch(() => null)
+    const state = data.stateIndex
     const timeline = chapters.map((chapter) => ({
       number: Number(chapter.number),
       title: chapter.title ?? '',
@@ -4162,65 +6038,485 @@ export class NovelWriterService {
     return { imported: chapters.length, chapters: chapters.map((chapter) => ({ number: chapter.number, title: chapter.title })) }
   }
 
+  /* ------------------------------ 数据层诊断 / 索引 / 导出 ------------------------------ */
+
+  /** 最近运行记录（走 SQLite runs 表，不再列文件目录）。 */
+  async recentRuns(agent, limit = 6) {
+    const store = await this.storeFor(agent).catch(() => null)
+    if (!store) return []
+    return store.listRuns(limit).map((run) => ({
+      runId: run.runId,
+      kind: run.kind,
+      number: run.number ?? null,
+      createdAt: run.createdAt,
+      usage: run.usage ?? null,
+      parseError: run.parseError ?? null,
+    }))
+  }
+
+  /** 重建全部 FTS 索引（正文读文件，其余来自 DB）；顺带全量刷新正文存在性 flags；完成后截断 WAL。 */
+  async reindexProject(agent) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const counts = await store.reindexAll()
+    // 全量扫描一次正文，刷新正文存在性 flags（之后 project-state 不再扫目录）
+    try {
+      const cwd = await this.cwd(agent)
+      const files = await this.scanChapterFilesFromDisk(cwd)
+      this.proseScanCount += 1
+      this.backfillProseFlags(store, files)
+      this.chapterFileCache.delete(cwd)
+      const project = store.readProject()
+      if (!project?.proseFlagsBackfilled) store.writeProject({ ...(project ?? {}), proseFlagsBackfilled: true })
+    } catch {
+      // 刷新失败不影响 reindex 结果
+    }
+    store.checkpoint()
+    return { indexed: true, ...counts }
+  }
+
+  /** 数据层状态：库体积、FTS 行数、章节数、schema 版本、是否还有旧 JSON 存档。 */
+  async dataStatus(agent) {
+    await this.assertInitialized(agent)
+    const cwd = await this.cwd(agent)
+    const store = await this.storeFor(agent)
+    // 体积/旧存档判断直读本地文件系统，避免每次 stateFor 都走 ctx.fs 沙箱往返。
+    const localSize = async (relativePath) => {
+      try {
+        const info = await fsStat(join(cwd, relativePath))
+        return Number(info.size) || 0
+      } catch {
+        try {
+          const target = await this.ctx.fs.resolve(relativePath, { cwd })
+          const info = await this.ctx.fs.stat(target)
+          return Number(info?.size) || 0
+        } catch {
+          return 0
+        }
+      }
+    }
+    const dbBytes = await localSize('story/project.db')
+    const walBytes = await localSize('story/project.db-wal')
+    const ftsRows = store.ftsRowCounts()
+    const outline = store.readOutline()
+    const chapters = (outline?.volumes ?? []).reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
+    let legacyFiles = false
+    try {
+      legacyFiles = Boolean(await fsStat(join(cwd, this.marker)))
+    } catch {
+      legacyFiles = false
+    }
+    return {
+      engine: 'sqlite',
+      dbBytes,
+      walBytes,
+      ftsRows,
+      chapters,
+      schemaVersion: store.schemaVersion(),
+      projectSchemaVersion: this.schemaVersion,
+      legacyFiles,
+    }
+  }
+
+  /** 导出为纯文件项目（JSON 镜像 + 正文复制），用于可移植/备份；反向导入由 migrate 支持。 */
+  async exportFileProject(agent) {
+    await this.assertInitialized(agent)
+    const data = await this.readProjectSnapshotData(agent)
+    const store = await this.storeFor(agent)
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const base = `exports/file-project-${stamp}`
+    const cwd = await this.cwd(agent)
+    const files = []
+    const pushJson = async (relativePath, value) => {
+      await this.writeJsonFile(agent, `${base}/${relativePath}`, value)
+      files.push(`${base}/${relativePath}`)
+    }
+    await pushJson('story/project.json', data.project)
+    await pushJson('story/premise.json', data.premise)
+    await pushJson('story/style/contract.json', data.style)
+    await pushJson('story/bible/index.json', data.bible)
+    await pushJson('story/bible/relations.json', data.relations)
+    await pushJson('story/power.json', data.power)
+    await pushJson('story/plot/outline.json', data.outline)
+    await pushJson('story/state/index.json', data.stateIndex)
+    for (const template of store.listStyleTemplates()) {
+      await pushJson(`story/style/templates/${template.id}.json`, {
+        id: template.id,
+        name: template.name,
+        fields: template.fields,
+        samples: template.samples,
+        createdAt: template.createdAt ?? null,
+      })
+    }
+    const chapters = (data.outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
+    for (const chapter of chapters) {
+      const number = Number(chapter.number)
+      const pad = String(number).padStart(3, '0')
+      const dir = `story/chapters/${pad}`
+      const meta = data.metas.get(number)
+      if (meta) await pushJson(`${dir}/meta.json`, meta)
+      const qaEntry = data.qaMap.get(number)
+      if (qaEntry?.qa) await pushJson(`${dir}/qa.json`, qaEntry.qa)
+      if (qaEntry?.styleQa) await pushJson(`${dir}/style-qa.json`, qaEntry.styleQa)
+      if (qaEntry?.continuity) await pushJson(`${dir}/continuity.json`, qaEntry.continuity)
+      const summary = data.sums.get(number)
+      if (summary) await pushJson(`${dir}/summary.json`, summary)
+      for (const name of ['draft.md', 'final.md']) {
+        try {
+          const target = await this.ctx.fs.resolve(`${dir}/${name}`, { cwd })
+          if (!(await this.ctx.fs.stat(target))) continue
+          const text = await this.ctx.fs.readText(target)
+          await this.writeTextFile(agent, `${base}/${dir}/${name}`, text)
+          files.push(`${base}/${dir}/${name}`)
+        } catch {
+          // 正文缺失时跳过
+        }
+      }
+    }
+    await pushJson('story/stats.json', store.readStats())
+    for (const run of store.listRuns(50)) await pushJson(`.dsh-writing/runs/${run.runId}.json`, run)
+    store.checkpoint()
+    return { path: base, files: files.length, chapters: chapters.length }
+  }
+
+  /**
+   * 纯文件项目反向导入：用导出的 file-project 目录（story/ JSON + 正文）覆盖当前项目。
+   * 流程：校验源 → 备份当前 story 到 .dsh-writing/backups/import-<stamp>/ → disposeStores
+   *      → 覆盖 story/ → 删旧 db/-wal/-shm → 迁移 + reindexAll。
+   * 任一步失败：恢复备份并抛错（不静默半套）。
+   */
+  async importFileProject(agent, options = {}) {
+    const sourcePath = String(options.path ?? '').trim()
+    if (!/^([A-Za-z]:[\\/]|\/)/.test(sourcePath)) throw new Error('请提供要导入的纯文件项目绝对路径')
+    const cwd = await this.cwd(agent)
+    const sourceRoot = sourcePath.replace(/[\\/]+$/, '')
+    const sourceStory = join(sourceRoot, 'story')
+    const sourceProject = join(sourceStory, 'project.json')
+    const sourceDb = join(sourceStory, 'project.db')
+    if (!existsSync(sourceProject) && !existsSync(sourceDb)) {
+      throw new Error('源目录不是可导入的纯文件项目（缺少 story/project.json）')
+    }
+    let chapterDirs = []
+    try {
+      chapterDirs = (await readdir(join(sourceStory, 'chapters'), { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+    } catch {
+      chapterDirs = []
+    }
+    if (chapterDirs.length === 0) throw new Error('源目录至少需要一个章节目录（story/chapters/<章号>/）')
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupRel = `.dsh-writing/backups/import-${stamp}`
+    const backupStory = join(cwd, backupRel, 'story')
+    const storyPath = join(cwd, 'story')
+    const hadStory = existsSync(storyPath)
+    await mkdir(join(cwd, backupRel), { recursive: true })
+    if (hadStory) await cp(storyPath, backupStory, { recursive: true })
+
+    this.closeChapterWatch(cwd)
+    this.disposeStores()
+    try {
+      if (hadStory) await rm(storyPath, { recursive: true, force: true })
+      await cp(sourceStory, storyPath, { recursive: true })
+      let migration = { migrated: false, counts: null }
+      if (existsSync(sourceDb)) {
+        // 源自带 DB：保留，直接打开即可（reindexAll 会重建 FTS）
+      } else {
+        for (const name of ['project.db', 'project.db-wal', 'project.db-shm']) {
+          await rm(join(storyPath, name), { force: true })
+        }
+        migration = await migrateLegacyProject({
+          projectRoot: cwd,
+          fs: this.legacyFsFor(cwd),
+          resolveHostPath: (relativePath) => join(cwd, relativePath),
+        })
+      }
+      const store = await this.storeFor(agent)
+      await store.reindexAll()
+      store.checkpoint()
+      this.chapterFileCache.delete(cwd)
+      return {
+        imported: true,
+        path: sourceRoot,
+        counts: migration.counts ?? {},
+        backupPath: backupRel,
+      }
+    } catch (error) {
+      // 恢复导入前的项目（story/ 与旧 DB 从备份重建）
+      try {
+        if (existsSync(storyPath)) await rm(storyPath, { recursive: true, force: true })
+        if (hadStory) await cp(backupStory, storyPath, { recursive: true })
+      } catch {
+        // 恢复失败也继续抛出原始错误
+      }
+      this.disposeStores()
+      throw new Error(`导入失败，已恢复导入前的项目：${errorText(error)}`)
+    }
+  }
+
+  /** 写作助手只读查询（白名单 kind，不开放裸 SQL）。 */
+  async queryProjectData(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const kind = String(options.kind ?? '').trim()
+    const number = Number.isFinite(Number(options.number)) && Number(options.number) > 0 ? Number(options.number) : null
+    const limit = Math.max(1, Math.min(500, Number(options.limit) || 30))
+    const keyword = String(options.keyword ?? '').trim()
+    const store = await this.storeFor(agent)
+    const match = (text) => !keyword || String(text ?? '').includes(keyword)
+    switch (kind) {
+      case 'chapter': {
+        if (number) {
+          const detail = await this.chapterDetail(agent, number)
+          return {
+            kind,
+            number,
+            chapter: detail.chapter,
+            meta: detail.meta,
+            qa: detail.qa,
+            styleQa: detail.styleQa,
+            continuity: detail.continuity,
+            summary: detail.summary,
+            hasDraft: Boolean(detail.draft),
+            hasFinal: Boolean(detail.final),
+            wordCount: detail.wordCount,
+            draftPreview: detail.draft ? String(detail.draft).slice(0, 600) : null,
+          }
+        }
+        const outline = store.readOutline()
+        const chapterLimit = Math.max(1, Math.min(200, Number(options.limit) || 30))
+        const filtered = (outline?.volumes ?? [])
+          .flatMap((volume) => volume.chapters ?? [])
+          .filter((chapter) => match(chapter.title) || match(chapter.synopsis))
+        const chapters = filtered.slice(0, chapterLimit).map((chapter) => ({
+          number: chapter.number,
+          id: chapter.id,
+          title: chapter.title,
+          status: chapter.status,
+          synopsis: String(chapter.synopsis ?? '').slice(0, 200),
+        }))
+        return {
+          kind,
+          total: filtered.length,
+          chapters,
+          truncated: chapters.length < filtered.length,
+          nextOffset: chapters.length < filtered.length ? chapters.length : null,
+        }
+      }
+      case 'outline': {
+        const outline = store.readOutline()
+        const expand = options.expand === 'chapters'
+        const volumeId = String(options.volumeId ?? '').trim()
+        const fromNumber = Number.isFinite(Number(options.fromNumber)) ? Number(options.fromNumber) : null
+        const toNumber = Number.isFinite(Number(options.toNumber)) ? Number(options.toNumber) : null
+        const volumes = (outline?.volumes ?? []).map((volume) => ({
+          id: volume.id,
+          title: volume.title,
+          goal: volume.goal,
+          map: volume.map,
+          chapterCount: (volume.chapters ?? []).length,
+        }))
+        if (!expand) {
+          return {
+            kind,
+            status: outline?.status ?? null,
+            logline: outline?.logline ?? null,
+            volumes,
+            expanded: false,
+            hint: '默认不展开章节；需要章节明细时用 expand=chapters（可配 volumeId/fromNumber/toNumber/limit）',
+          }
+        }
+        const chapterLimit = Math.max(1, Math.min(200, Number(options.limit) || 20))
+        const collected = []
+        for (const volume of outline?.volumes ?? []) {
+          if (volumeId && String(volume.id) !== volumeId) continue
+          for (const chapter of volume.chapters ?? []) {
+            const chapterNo = Number(chapter.number)
+            if (fromNumber !== null && chapterNo < fromNumber) continue
+            if (toNumber !== null && chapterNo > toNumber) continue
+            collected.push({
+              number: chapterNo,
+              id: chapter.id,
+              volumeId: volume.id,
+              title: chapter.title,
+              status: chapter.status,
+              synopsis: String(chapter.synopsis ?? '').slice(0, 160),
+            })
+          }
+        }
+        const chapters = collected.slice(0, chapterLimit)
+        return {
+          kind,
+          status: outline?.status ?? null,
+          logline: outline?.logline ?? null,
+          volumes,
+          expanded: true,
+          chapters,
+          total: collected.length,
+          truncated: chapters.length < collected.length,
+          nextNumber: chapters.length < collected.length ? chapters[chapters.length - 1].number + 1 : null,
+        }
+      }
+      case 'bible': {
+        const bible = store.readBible()
+        const pick = (category) => (bible[category] ?? [])
+          .filter((entry) => match(entry.name) || match(entry.role) || match(entry.description))
+          .slice(0, limit)
+        return {
+          kind,
+          status: bible.status,
+          characters: pick('characters'),
+          locations: pick('locations'),
+          rules: pick('rules'),
+          factions: pick('factions'),
+          items: pick('items'),
+        }
+      }
+      case 'state': {
+        const states = store.listChapterStates()
+        return {
+          kind,
+          chapters: (number ? states.filter((state) => Number(state.number) === number) : states).slice(0, limit),
+        }
+      }
+      case 'summary': {
+        const summaries = store.listChapterSummaries()
+        const list = (number ? summaries.filter((item) => Number(item.number) === number) : summaries)
+          .filter((item) => match(item.summary) || match((item.characters ?? []).join(' ')))
+          .slice(0, limit)
+        return { kind, summaries: list }
+      }
+      case 'stats':
+        return { kind, stats: store.readStats() }
+      case 'runs':
+        return { kind, runs: store.listRuns(limit) }
+      case 'relations': {
+        const data = await this.readRelations(agent)
+        const relations = (data.relations ?? [])
+          .filter((item) => match(item.from) || match(item.to) || match(item.type) || match(item.note))
+          .slice(0, limit)
+        return { kind, status: data.status, relations, positions: data.positions }
+      }
+      case 'power': {
+        const power = await this.readPower(agent)
+        const tiers = (power.system?.tiers ?? []).filter((tier) => match(tier.name) || match(tier.description))
+        const characters = (power.characters ?? [])
+          .filter((item) => match(item.name) || match(item.current) || match(item.tierName))
+          .slice(0, limit)
+        const changes = Object.entries(power.chapterChanges ?? {})
+          .map(([chapter, detail]) => ({ chapter: Number(chapter), detail }))
+          .sort((a, b) => b.chapter - a.chapter)
+          .slice(0, limit)
+        return {
+          kind,
+          status: power.status,
+          system: { name: power.system?.name ?? '', summary: power.system?.summary ?? '' },
+          tiers,
+          characters,
+          changes,
+        }
+      }
+      case 'inspirations': {
+        const data = await this.readInspirations(agent)
+        const items = (data.items ?? [])
+          .filter((item) => match(item.topic) || match((item.ideas ?? []).join(' ')) || match(item.title) || match(item.hook) || match(item.scene))
+          .slice(0, Number(options.limit) || 10)
+          .map((item) => ({
+            topic: item.topic ?? '',
+            ideas: (item.ideas ?? []).slice(0, 6).map((idea) => String(idea).slice(0, 200)),
+            createdAt: item.createdAt ?? null,
+          }))
+        return { kind, items }
+      }
+      case 'deconstructions': {
+        const data = await this.readDeconstructions(agent)
+        const items = data.items ?? []
+        const entryId = String(options.entryId ?? '').trim()
+        const index = Number(options.number)
+        if (entryId || (Number.isFinite(index) && index > 0)) {
+          const item = entryId
+            ? items.find((entry) => String(entry.title ?? '') === entryId || String(entry.createdAt ?? '') === entryId)
+            : items[Math.floor(index) - 1]
+          if (!item) throw new Error(`找不到拆书记录：${entryId || `第 ${index} 条`}`)
+          return { kind, item }
+        }
+        const list = items.slice(0, Number(options.limit) || 5).map((item) => ({
+          title: item.title ?? '',
+          createdAt: item.createdAt ?? null,
+          summary: String(item.summary ?? '').slice(0, 300),
+          counts: {
+            units: Array.isArray(item.units) ? item.units.length : 0,
+            characters: Array.isArray(item.characters) ? item.characters.length : 0,
+            techniques: Array.isArray(item.techniques) ? item.techniques.length : 0,
+            hooks: Array.isArray(item.hooks) ? item.hooks.length : 0,
+            settings: Array.isArray(item.settings) ? item.settings.length : 0,
+            relations: Array.isArray(item.relations) ? item.relations.length : 0,
+          },
+        }))
+        return { kind, items: list }
+      }
+      case 'prompt-overrides': {
+        const catalog = await this.promptCatalog(agent)
+        const overrides = (catalog.prompts ?? [])
+          .filter((prompt) => prompt.customized)
+          .filter((prompt) => match(prompt.key) || match(prompt.label))
+          .slice(0, limit)
+          .map((prompt) => ({
+            key: prompt.key,
+            customized: prompt.customized,
+            baseRevision: prompt.baseRevision,
+            revision: prompt.revision,
+            preview: String(prompt.content ?? '').slice(0, 120),
+          }))
+        return { kind, overrides }
+      }
+      case 'premise-chat': {
+        const chat = await this.readPremiseChat(agent)
+        const messages = (chat.messages ?? [])
+          .filter((message) => match(message.content))
+          .slice(-(Number(options.limit) || 20))
+          .map((message) => ({
+            role: message.role,
+            content: String(message.content ?? '').slice(0, 400),
+            at: message.createdAt ?? null,
+          }))
+        const batches = (chat.batches ?? []).map((batch) => ({
+          id: batch.id,
+          mode: batch.mode,
+          createdAt: batch.createdAt ?? null,
+          candidateCount: (batch.candidates ?? []).length,
+        }))
+        return { kind, messages, batches }
+      }
+      default:
+        throw new Error(`未知查询类型：${kind}；可用：chapter/outline/bible/state/summary/stats/runs/relations/power/inspirations/deconstructions/prompt-overrides/premise-chat`)
+    }
+  }
+
   async searchProject(agent, options = {}) {
     await this.assertInitialized(agent)
     const query = String(options.query ?? '').trim()
     if (!query) return { query, results: [], total: 0 }
-    const needle = query.toLowerCase()
-    const results = []
-    const add = (source, title, text, extra = {}) => {
-      const haystack = String(text ?? '')
-      const index = haystack.toLowerCase().indexOf(needle)
-      if (index < 0) return false
-      const start = Math.max(0, index - 42)
-      const end = Math.min(haystack.length, index + query.length + 72)
-      results.push({
-        source,
-        title,
-        snippet: `${start > 0 ? '…' : ''}${haystack.slice(start, end).replace(/\s+/g, ' ')}${end < haystack.length ? '…' : ''}`,
-        ...extra,
-      })
-      return true
+    const store = await this.storeFor(agent)
+    // 结构化数据可能在迁移/初始化后更新过，搜索前惰性重建非正文章节的 FTS（幂等且很快）。
+    store.reindexOutline()
+    store.reindexBible()
+    store.reindexSummaries()
+    const { results } = store.search(query, { limit: Number(options.limit ?? 60) || 60 })
+    return {
+      query,
+      results: results.map((item) => ({
+        source: item.type,
+        type: item.type,
+        title: item.title,
+        text: item.snippet,
+        snippet: item.snippet,
+        number: item.number ?? null,
+        entryId: item.entryId ?? null,
+        id: item.entryId ?? null,
+        score: item.score ?? null,
+      })),
+      total: results.length,
     }
-    const outline = await this.readJson(agent, 'story/plot/outline.json')
-    const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-    for (const chapter of chapters) {
-      const number = Number(chapter.number)
-      const title = `第 ${number} 章 ${chapter.title || ''}`.trim()
-      add('outline', title, [
-        chapter.title,
-        chapter.synopsis,
-      ].filter(Boolean).join(' '), { number })
-      const paths = this.chapterPaths(number)
-      const final = await this.readText(agent, paths.final).catch(() => null)
-      const draft = await this.readText(agent, paths.draft).catch(() => null)
-      if (final || draft) add('chapter', title, final ?? draft, { number })
-      if (results.length >= 60) break
-    }
-    const bible = await this.readBible(agent)
-    for (const category of BIBLE_CATEGORIES) {
-      for (const entry of bible[category] ?? []) {
-        add('bible', `${BIBLE_LABELS[category]} · ${entry.name}`, [entry.name, entry.role, entry.description].filter(Boolean).join(' '), {
-          category,
-          id: entry.id,
-        })
-        if (results.length >= 60) break
-      }
-    }
-    try {
-      const cwd = await this.cwd(agent)
-      const target = await this.ctx.fs.resolve('.dsh-writing/discussions', { cwd })
-      const entries = await this.ctx.fs.listDir(target)
-      for (const entry of entries.filter((item) => item.type === 'file' && item.name.endsWith('.json'))) {
-        const thread = await this.readJson(agent, `.dsh-writing/discussions/${entry.name}`).catch(() => null)
-        if (!thread) continue
-        const text = (thread.messages ?? []).map((message) => message.text).join('\n')
-        add('discussion', thread.topic || entry.name, text, { topicId: thread.topicId ?? null })
-      }
-    } catch {
-      // discussion folder may not exist
-    }
-    return { query, results: results.slice(0, 60), total: results.length }
   }
 
   async recordWritingEvent(agent, entry = {}) {
@@ -4458,6 +6754,7 @@ export class NovelWriterService {
       }
     }) : []
     const issues = [...heuristics.issues, ...llmIssues]
+    const aiFlavor = normalizeAiFlavor(llm.aiFlavor) ?? estimateAiFlavor(text)
     const score = llmError ? null : Number(llm.score ?? (issues.length > 0 ? 60 : 85))
     const status = llmError
       ? heuristics.status
@@ -4470,6 +6767,7 @@ export class NovelWriterService {
       status,
       score,
       summary: String(llm.summary ?? ''),
+      aiFlavor,
       issues,
       heuristics,
       metrics: heuristics.metrics,
@@ -4555,6 +6853,7 @@ export class NovelWriterService {
       }
     }) : []
     const styleIssues = [...heuristics.issues, ...llmStyleIssues]
+    const aiFlavor = normalizeAiFlavor(llm.aiFlavor) ?? estimateAiFlavor(text)
     const score = llmError ? null : Number(llm.score ?? (styleIssues.length > 0 ? 60 : 85))
     const styleStatus = llmError
       ? heuristics.status
@@ -4567,6 +6866,7 @@ export class NovelWriterService {
       status: styleStatus,
       score,
       summary: String(llm.summary ?? ''),
+      aiFlavor,
       issues: styleIssues,
       heuristics,
       metrics: heuristics.metrics,
@@ -4610,6 +6910,7 @@ export class NovelWriterService {
       fixBase,
       '- 这是质检修复任务：只修复列出的问题，不改变情节、事实、人物关系、段落顺序；不要新增剧情。',
       '- 如果问题涉及 AI 味，优先做具体化改写：删套话、把解释改成动作、拆掉模板句式，而不是同义替换。',
+      '- 若质检 issues 含 AI味 或正文命中禁用词（仿佛/一丝/缓缓/微微/眼中闪过/嘴角勾起/说道/感到…），按去 AI 味规则改：禁用词换具体动作或白描、抽象情绪外化、删章末总结/升华、拆排比、去“说道”标签；只改相关句子，不要重写无关段落。',
     ].join('\n')
     const attempts = []
     let lastUsage = null
@@ -5311,9 +7612,10 @@ ${sections.join('\n')}
     this.reportStage('context', '组装修订上下文')
     const storyContext = await this.buildStoryContext(agent, detail.chapter, number)
     const reviseBase = await this.systemFor(agent, 'revise', CHAPTER_SYSTEM_PROMPT)
+    const deslopRule = '- 去 AI 味：禁用词（仿佛/一丝/缓缓/微微/眼中闪过/嘴角勾起…）换成具体动作或白描，抽象情绪外化，删章末总结/升华，拆掉“，带着…”“XX说道”等模板句式；只改相关句子，不重写无关段落。'
     const system = hasRange
-      ? `${reviseBase}\n- 这是局部重写任务：只重写指定段落，保持其他段落与前后衔接不变。`
-      : `${reviseBase}\n- 这是修订任务：在保留章纲事实与前文衔接的前提下，按修订要求重写整章。`
+      ? `${reviseBase}\n- 这是局部重写任务：只重写指定段落，保持其他段落与前后衔接不变。\n${deslopRule}`
+      : `${reviseBase}\n- 这是修订任务：在保留章纲事实与前文衔接的前提下，按修订要求重写整章。\n${deslopRule}`
     const userText = [
       `项目：${project.title}（语言：${project.language ?? 'zh'}）`,
       `任务：${hasRange ? `局部重写第 ${number} 章的第 ${fromParagraph}–${toParagraph} 段（全文共 ${paragraphs.length} 段）。` : `修订第 ${number} 章《${detail.chapter.title || '未命名'}》。`}`,
@@ -5339,6 +7641,8 @@ ${sections.join('\n')}
       '',
       '【修订要求】',
       instruction,
+      '',
+      craftCards.length ? formatCraftCards(craftCards) : '',
       '',
       hasRange ? '【需要重写的原段落】\n' + targetText : '',
       '',
@@ -5557,6 +7861,243 @@ ${sections.join('\n')}
     return { number, wordCount: meta.wordCount, status: 'manual' }
   }
 
+  /**
+   * 碎片化改正文：只替换一小段，不生成整章、不调用 LLM。
+   * 适合模型输出受限/内容审查中断时小步推进；find 必须唯一（或 all=true）。
+   */
+  /**
+   * 去 AI 味改写：只改“怎么说”不改“说什么”。先备份再写回，失败不落盘；
+   * 长度变化超出 ±30% 视为乱改，直接失败。dryRun 只返回预览。
+   */
+  async deslopChapter(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
+    const detail = await this.chapterDetail(agent, number)
+    if (!detail.chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const paths = this.chapterPaths(number)
+    const explicitTarget = options.target === 'final' || options.target === 'draft' ? options.target : null
+    const target = explicitTarget ?? (detail.final ? 'final' : 'draft')
+    const original = target === 'final' ? detail.final : detail.draft
+    if (!original) throw new Error(`第 ${number} 章还没有${target === 'final' ? '定稿' : '草稿'}，先 action=read 确认`)
+    const instruction = String(options.instruction ?? '').trim()
+    const dryRun = options.dryRun === true
+    const inputs = await this.currentInputs(agent)
+    const bannedWords = Array.isArray(inputs.styleFields?.bannedWords) ? inputs.styleFields.bannedWords : []
+    const system = await this.systemFor(agent, 'deslop', DESLOP_SYSTEM_PROMPT)
+    const userText = [
+      `任务：对第 ${number} 章《${detail.chapter.title || '未命名'}》做去 AI 味改写。只改“怎么说”，不改“说什么”；改最少、效果最大。`,
+      '',
+      '【文风契约】',
+      JSON.stringify(inputs.styleFields ?? {}, null, 2),
+      '',
+      '【一级禁用词（正文中不得出现）】',
+      AI_BANNED_WORDS.join('、'),
+      bannedWords.length ? `【项目自定义禁用词】${bannedWords.join('、')}` : '',
+      '',
+      instruction ? `【额外要求】\n${instruction}` : '',
+      '',
+      '【当前正文】',
+      original,
+      '',
+      '请输出 JSON：{"text": "改写后全文", "changes": [...]}。',
+    ].filter((line) => line !== '').join('\n')
+    const messages = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
+    this.reportStage('deslop', '去 AI 味改写')
+    const generated = await this.callJsonModel(agent, {
+      kind: 'chapter.deslop',
+      task: 'deslop',
+      number,
+      system,
+      messages,
+      signal,
+      maxTokens: 256000,
+      temperature: 0.4,
+      inputHash: this.hashInputs({ chapter: detail.chapter.id, target, text: this.hashInputs(original), instruction }),
+    })
+    const parsed = generated?.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
+    const nextText = String(parsed.text ?? '').trim()
+    if (!nextText) throw new Error('模型没有返回改写后的正文')
+    const changes = Array.isArray(parsed.changes) ? parsed.changes.slice(0, 30).map((change) => ({
+      from: String(change?.from ?? '').slice(0, 200),
+      to: String(change?.to ?? '').slice(0, 200),
+      reason: String(change?.reason ?? '').slice(0, 60),
+    })) : []
+    const beforeChars = countChars(original)
+    const afterChars = countChars(nextText)
+    if (beforeChars > 0 && (afterChars < beforeChars * 0.7 || afterChars > beforeChars * 1.3)) {
+      throw new Error(`改写后字数变化过大（${beforeChars} → ${afterChars}），已放弃写入；可减少改写幅度后重试`)
+    }
+    const beforeAiFlavor = estimateAiFlavor(original)
+    const afterAiFlavor = estimateAiFlavor(nextText)
+    if (dryRun) {
+      return {
+        number,
+        target,
+        dryRun: true,
+        changed: changes.length,
+        changes,
+        beforeAiFlavor,
+        afterAiFlavor,
+        wordCount: afterChars,
+        text: nextText,
+      }
+    }
+    // 先备份原文，再写回；写回失败恢复原文（失败不落盘）。
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const revisionPath = `${paths.revisions}/deslop-${stamp}.md`
+    await this.writeTextFile(agent, revisionPath, original)
+    const targetPath = target === 'final' ? paths.final : paths.draft
+    try {
+      await this.writeTextFile(agent, targetPath, nextText)
+    } catch (error) {
+      await this.writeTextFile(agent, targetPath, original).catch(() => {})
+      throw error
+    }
+    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const meta = {
+      ...((await this.readJson(agent, paths.meta).catch(() => null)) ?? {}),
+      chapterId: detail.chapter.id,
+      number,
+      title: detail.chapter.title,
+      status: 'manual',
+      wordCount: afterChars,
+      updatedAt: now(),
+      lastRunId: runId,
+      lastInstruction: instruction,
+      inputs: { premise: inputs.premiseHash, style: inputs.styleHash },
+      outlineHash: this.hashInputs(detail.chapter),
+    }
+    if (target === 'final') meta.finalStale = true
+    await this.writeJson(agent, paths.meta, meta)
+    // 正文变了，旧质检失效（与 saveChapterText / patchChapterText 一致）。
+    const cwd = await this.cwd(agent)
+    for (const file of [paths.qa, paths.styleQa]) {
+      try {
+        const qaTarget = await this.ctx.fs.resolve(file, { cwd })
+        const hostPath = this.ctx.fs.processPath?.(qaTarget)
+        if (hostPath) await unlink(hostPath)
+      } catch {
+        // QA 文件可能不存在
+      }
+    }
+    await this.writeRun(agent, {
+      runId,
+      kind: 'chapter.deslop',
+      number,
+      createdAt: meta.updatedAt,
+      model: generated?.first?.model ?? null,
+      system,
+      messages,
+      output: JSON.stringify({ target, changed: changes.length, beforeAiFlavor, afterAiFlavor }),
+      usage: generated?.usage ?? null,
+      durationMs: generated?.first?.durationMs ?? 0,
+      inputHash: this.hashInputs({ chapter: detail.chapter.id, target, before: this.hashInputs(original), after: this.hashInputs(nextText) }),
+    })
+    await this.recordWritingEvent(agent, { number, words: afterChars, action: 'deslop' })
+    return {
+      number,
+      target,
+      changed: changes.length,
+      changes,
+      beforeAiFlavor,
+      afterAiFlavor,
+      wordCount: afterChars,
+      revisionPath,
+    }
+  }
+
+  async patchChapterText(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
+    const target = options.target === 'final' ? 'final' : 'draft'
+    const find = String(options.find ?? '')
+    const replace = String(options.replace ?? '')
+    if (!find) throw new Error('请提供要替换的原文片段 find')
+    if (find === replace) throw new Error('find 与 replace 相同，无需修改')
+    const { chapter } = await this.findOutlineChapter(agent, number)
+    if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const paths = this.chapterPaths(number)
+    const targetPath = target === 'final' ? paths.final : paths.draft
+    const original = await this.readText(agent, targetPath).catch(() => null)
+    if (original === null) {
+      throw new Error(`第 ${number} 章还没有${target === 'final' ? '定稿' : '草稿'}，先用 action=read 确认或 action=draft 生成`)
+    }
+    const occurrences = original.split(find).length - 1
+    if (occurrences === 0) throw new Error('没找到要替换的片段（可能已被修改，先 action=read 确认）')
+    if (occurrences > 1 && options.all !== true) {
+      throw new Error(`片段出现 ${occurrences} 次，用 all=true 或提供更长的上下文`)
+    }
+    const nextText = options.all === true
+      ? original.split(find).join(replace)
+      : (() => {
+          const index = original.indexOf(find)
+          return original.slice(0, index) + replace + original.slice(index + find.length)
+        })()
+    const replaced = options.all === true ? occurrences : 1
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const revisionPath = `${paths.revisions}/manual-${stamp}.md`
+    // 先备份替换前全文，再原子写回（writeTextFile 会自动重建该章 FTS）
+    await this.writeTextFile(agent, revisionPath, original)
+    await this.writeTextFile(agent, targetPath, nextText)
+    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const inputs = await this.currentInputs(agent)
+    const meta = {
+      ...((await this.readJson(agent, paths.meta).catch(() => null)) ?? {}),
+      chapterId: chapter.id,
+      number,
+      title: chapter.title,
+      status: 'manual',
+      wordCount: countChars(nextText),
+      updatedAt: now(),
+      lastRunId: runId,
+      inputs: { premise: inputs.premiseHash, style: inputs.styleHash },
+      outlineHash: this.hashInputs(chapter),
+    }
+    if (target === 'final') meta.finalStale = true
+    await this.writeJson(agent, paths.meta, meta)
+    // 正文变了，旧质检失效（与 saveChapterText 一致）
+    const cwd = await this.cwd(agent)
+    for (const file of [paths.qa, paths.styleQa]) {
+      try {
+        const target2 = await this.ctx.fs.resolve(file, { cwd })
+        const hostPath = this.ctx.fs.processPath?.(target2)
+        if (hostPath) await unlink(hostPath)
+      } catch {
+        // QA 文件可能不存在
+      }
+    }
+    await this.writeRun(agent, {
+      runId,
+      kind: 'chapter.patch',
+      createdAt: meta.updatedAt,
+      model: { provider: 'manual', model: 'manual' },
+      system: null,
+      messages: [],
+      output: JSON.stringify({
+        target,
+        find: find.slice(0, 120),
+        replace: replace.slice(0, 120),
+        all: options.all === true,
+        replaced,
+        note: String(options.note ?? '').slice(0, 200),
+      }),
+      usage: null,
+      durationMs: 0,
+      inputHash: this.hashInputs({ chapter: chapter.id, target, find, replace }),
+    })
+    await this.recordWritingEvent(agent, { number, words: meta.wordCount, action: 'patch' })
+    return {
+      number,
+      target,
+      replaced,
+      wordCount: meta.wordCount,
+      revisionPath,
+      staleFinal: Boolean(meta.finalStale),
+    }
+  }
+
   async readRevisionDetail(agent, number, name) {
     const paths = this.chapterPaths(number)
     if (!/^[A-Za-z0-9._-]+\.md$/.test(name)) throw new Error('非法的修订文件名')
@@ -5631,16 +8172,17 @@ ${sections.join('\n')}
       generatedAt: now(),
       runId: generated.runId,
     }
-    await this.writeJson(agent, this.chapterSummaryPath(number), summary)
-    const meta = (await this.readJson(agent, this.chapterPaths(number).meta).catch(() => null)) ?? {}
-    await this.writeJson(agent, this.chapterPaths(number).meta, {
-      ...meta,
-      summary: summary.summary,
-      summaryAt: summary.generatedAt,
-    })
+    if (options.deferWrite !== true) {
+      await this.writeJson(agent, this.chapterSummaryPath(number), summary)
+      const meta = (await this.readJson(agent, this.chapterPaths(number).meta).catch(() => null)) ?? {}
+      await this.writeJson(agent, this.chapterPaths(number).meta, {
+        ...meta,
+        summary: summary.summary,
+        summaryAt: summary.generatedAt,
+      })
+    }
     return summary
   }
-
   async summarizeMissing(agent, options = {}, signal) {
     await this.assertInitialized(agent)
     const outline = await this.readJson(agent, 'story/plot/outline.json')
@@ -5662,14 +8204,28 @@ ${sections.join('\n')}
         results.push({ number: chapter.number, ok: false, error: errorText(error) })
       }
     }
+    // 批量定稿结束统一截断 WAL（每章的状态写入仍各自在一个事务内）。
+    const store = await this.storeFor(agent).catch(() => null)
+    if (store && results.some((item) => item.ok)) store.checkpoint()
     return { results, count: results.filter((item) => item.ok).length }
   }
 
-  async buildCharacterIndex(agent) {
-    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+  async buildCharacterIndex(agent, snapshot = null) {
+    const data = snapshot ?? null
+    const outline = data ? data.outline : await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
     const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-    const bible = await this.readBible(agent).catch(() => ({ characters: [] }))
+    const bible = data ? (data.bible ?? { characters: [] }) : await this.readBible(agent).catch(() => ({ characters: [] }))
     const known = new Set((bible.characters ?? []).map((entry) => entry.name))
+    let summaries = data?.sums ?? null
+    if (!summaries) {
+      summaries = new Map()
+      try {
+        const store = await this.storeFor(agent)
+        for (const item of store.listChapterSummaries()) summaries.set(Number(item.number), item)
+      } catch {
+        // 未初始化时没有摘要
+      }
+    }
     const index = new Map()
     const add = (name, number, source) => {
       const key = String(name ?? '').trim()
@@ -5685,7 +8241,7 @@ ${sections.join('\n')}
       for (const character of bible.characters ?? []) {
         if (text.includes(String(character.name ?? ''))) add(character.name, chapter.number, 'outline')
       }
-      const summary = await this.readChapterSummary(agent, chapter.number)
+      const summary = summaries.get(Number(chapter.number))
       for (const name of summary?.characters ?? []) add(name, chapter.number, 'summary')
     }
     for (const character of bible.characters ?? []) add(character.name, 0, 'bible')
@@ -6037,11 +8593,31 @@ ${sections.join('\n')}
       approvedAt: now(),
       finalStale: false,
     }
-    await this.writeJson(agent, paths.meta, meta)
     this.reportStage('summary', '生成本章摘要')
-    const summary = await this.summarizeChapter(agent, { number, text: draft }).catch(() => null)
-    const stateEntry = await this.stateSnapshot(agent, { chapter, meta, paths, summary: summary?.summary })
-    await this.recordWritingEvent(agent, { number, words: meta.wordCount, action: 'approve' })
+    // 摘要生成（模型调用）在事务外，写库与状态更新进一个事务。
+    const summary = await this.summarizeChapter(agent, { number, text: draft, deferWrite: true }).catch(() => null)
+    if (summary) {
+      meta.summary = summary.summary
+      meta.summaryAt = summary.generatedAt
+    }
+    const store = await this.storeFor(agent)
+    let stateEntry = null
+    let stateRow = null
+    try {
+      const collected = await this.stateSnapshot(agent, { chapter, meta, paths, summary: summary?.summary, write: false })
+      stateEntry = collected.entry
+      stateRow = collected.row
+    } catch {
+      stateEntry = null
+    }
+    store.tx(() => {
+      if (this.failHook) this.failHook('approve')
+      store.writeChapterMeta(number, meta)
+      if (summary) store.writeChapterSummary(number, summary)
+      if (stateRow) store.writeChapterState(number, stateRow)
+      store.writeStateMeta(now())
+      store.appendStatsEvent({ number, words: meta.wordCount, action: 'approve' })
+    })
     return { number, finalPath: paths.final, wordCount: meta.wordCount, approvedAt: meta.approvedAt, stateEntry, summary: summary?.summary ?? null }
   }
 
@@ -6061,6 +8637,9 @@ ${sections.join('\n')}
         results.push({ number: chapter.number, ok: false, error: errorText(error) })
       }
     }
+    // 批量定稿结束统一截断 WAL（每章的状态写入仍各自在一个事务内）。
+    const store = await this.storeFor(agent).catch(() => null)
+    if (store && results.some((item) => item.ok)) store.checkpoint()
     return { results, count: results.filter((item) => item.ok).length }
   }
 
@@ -6085,6 +8664,9 @@ ${sections.join('\n')}
         results.push({ number: chapter.number, ok: false, error: errorText(error) })
       }
     }
+    // 批量定稿结束统一截断 WAL（每章的状态写入仍各自在一个事务内）。
+    const store = await this.storeFor(agent).catch(() => null)
+    if (store && results.some((item) => item.ok)) store.checkpoint()
     return { results, count: results.filter((item) => item.ok).length }
   }
 
@@ -6106,493 +8688,14 @@ ${sections.join('\n')}
         results.push({ number: chapter.number, ok: false, error: errorText(error) })
       }
     }
+    // 批量定稿结束统一截断 WAL（每章的状态写入仍各自在一个事务内）。
+    const store = await this.storeFor(agent).catch(() => null)
+    if (store && results.some((item) => item.ok)) store.checkpoint()
     return { results, count: results.filter((item) => item.ok).length }
-  }
-
-  async readDiscussion(root, topicId) {
-    const thread = await this.readJson(root, `.dsh-writing/discussions/${topicId}.json`).catch(() => null)
-    return thread ?? { topicId, topic: '', messages: [], updatedAt: null }
-  }
-
-  async buildDiscussionContext(root, options, thread) {
-    const topicId = String(options.topicId ?? 'general')
-    const topic = String(options.topic ?? '创作讨论')
-    const message = String(options.message ?? '').trim()
-    const item = options.item ?? null
-    const parts = [`讨论对象：${topic}`]
-    if (item) parts.push(`对象内容：${JSON.stringify(item).slice(0, 4000)}`)
-    const chapterNumber = Number(item?.number ?? String(topicId).match(/chapter-(\d+)/)?.[1])
-    const isChapterTopic = String(topicId).startsWith('chapter-') || item?.kind === 'chapter'
-    if (isChapterTopic && Number.isFinite(chapterNumber) && chapterNumber > 0) {
-      try {
-        const detail = await this.chapterDetail(root, chapterNumber)
-        parts.push(`本章章纲（必须遵守，不要另起设定）：${JSON.stringify(detail.chapter).slice(0, 3000)}`)
-        const story = await this.buildStoryContext(root, detail.chapter, chapterNumber)
-        parts.push(`相关设定与上下文（人物/地点/规则/最近章节/伏笔/时间线）：${JSON.stringify(story).slice(0, 6000)}`)
-        if (detail.pendingInstruction?.instruction) {
-          parts.push(`已载入的待用修订要求：${String(detail.pendingInstruction.instruction).slice(0, 1200)}`)
-        }
-        const currentText = detail.draft ?? detail.final ?? ''
-        if (currentText) parts.push(`本章当前正文（节选）：${String(currentText).slice(0, 5000)}`)
-      } catch {
-        // outline may be missing; item excerpt is still usable
-      }
-    }
-    const historyText = (thread.messages ?? [])
-      .slice(-6)
-      .map((entry) => `${entry.role === 'assistant' ? '助手' : '用户'}：${String(entry.text ?? '').slice(0, 800)}`)
-      .join('\n')
-    if (historyText) parts.push(`先前讨论：\n${historyText}`)
-    try {
-      const outline = await this.readJson(root, 'story/plot/outline.json').catch(() => null)
-      const bible = await this.readBible(root).catch(() => null)
-      const premise = await this.readJson(root, 'story/premise.json').catch(() => null)
-      const targetIndex = {
-        chapters: (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
-          .slice(0, 120)
-          .map((chapter) => ({ number: Number(chapter.number), title: chapter.title || '' })),
-        bible: BIBLE_CATEGORIES.flatMap((category) => (bible?.[category] ?? []).slice(0, 30).map((entry) => ({
-          category,
-          id: entry.id,
-          name: entry.name,
-        }))),
-        style: true,
-        premiseCandidates: (premise?.candidates ?? []).slice(0, 10).map((candidate) => ({ id: candidate.id, title: candidate.title })),
-      }
-      parts.push(`【可操作对象索引（关联修改时用于 target）】${JSON.stringify(targetIndex).slice(0, 6000)}`)
-    } catch {
-      // optional index
-    }
-    parts.push('', '用户说：', message)
-    return parts.filter(Boolean).join('\n')
-  }
-
-  async discussionSystemPrompt(agent, topicId = '', item = null) {
-    const kind = String(topicId).startsWith('chapter-')
-      ? 'chapter'
-      : String(topicId).startsWith('outline-')
-        ? 'outline'
-        : String(topicId).startsWith('bible-')
-          ? 'bible'
-          : String(topicId) === 'style'
-            ? 'style'
-            : String(topicId).startsWith('premise-')
-              ? 'premise'
-              : 'other'
-    const allowed = kind === 'other'
-      ? []
-      : [
-          'chapter-instruction（target: {"kind":"chapter","number":章节号}；instruction 必须是可直接执行的修订说明）',
-          'outline-update（target: {"kind":"outline","number":章节号} 或 {"kind":"outline","id":"章纲 id"}；fields: title/synopsis/wordBudget）',
-          'bible-update（target: {"kind":"bible","category":"characters|locations|rules|factions|items","id":"条目 id"}；fields: name/role/description）',
-          'style-update（target: {"kind":"style"}；fields: 文风字段）',
-          'premise-candidate-update（target: {"kind":"premise","id":"候选 id"}；fields: title/premise/protagonist/genre）',
-        ]
-    const base = await this.systemFor(agent, 'discussion', DISCUSSION_SYSTEM_PROMPT)
-    return [
-      base,
-      '当前对象已锁定；只有缺少关键信息时才 clarify。需要澄清时给 2–4 个 options，并允许用户自定义回答。',
-      '如果修改的是关联对象，action.target 必须写清楚；不写 target 时默认当前对象。不要修改未在 target 中声明的对象。',
-      allowed.length
-        ? `actions 只允许：${allowed.join('；')}。没有明确、可落盘的修改时 actions 必须为空数组，不要为了凑数生成动作。`
-        : 'actions 必须为空数组。',
-    ].join('\n')
-  }
-
-  normalizeDiscussionActions(raw, options = {}) {
-    if (!Array.isArray(raw)) return []
-    const allowedFields = {
-      outline: ['title', 'synopsis', 'wordBudget'],
-      bible: ['name', 'role', 'description'],
-      style: ['pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity', 'bannedWords', 'chapterTitleStyle', 'notes'],
-      premise: ['title', 'premise', 'protagonist', 'genre'],
-    }
-    const typeKinds = {
-      'chapter-instruction': 'chapter',
-      'outline-update': 'outline',
-      'bible-update': 'bible',
-      'style-update': 'style',
-      'premise-candidate-update': 'premise',
-    }
-    const normalizeTarget = (target, kind) => {
-      if (!target || typeof target !== 'object') return null
-      const targetKind = typeKinds[target.kind] ?? target.kind
-      if (!['chapter', 'outline', 'bible', 'style', 'premise'].includes(targetKind)) return null
-      const normalized = { kind: targetKind }
-      if (target.number !== undefined) {
-        const number = Number(target.number)
-        if (Number.isFinite(number) && number > 0) normalized.number = number
-      }
-      if (target.id !== undefined) normalized.id = String(target.id).slice(0, 120)
-      if (target.category !== undefined) normalized.category = String(target.category).slice(0, 40)
-      if (targetKind === kind && !normalized.number && !normalized.id && !normalized.category) return null
-      return normalized
-    }
-    const out = []
-    for (const action of raw) {
-      if (!action || typeof action !== 'object') continue
-      const type = String(action.type ?? '')
-      const kind = typeKinds[type]
-      if (!kind) continue
-      const reason = String(action.reason ?? '').slice(0, 500)
-      const target = normalizeTarget(action.target, kind)
-      if (type === 'chapter-instruction') {
-        const instruction = String(action.instruction ?? '').trim().slice(0, 3000)
-        if (instruction) out.push({ type, instruction, target, reason })
-      } else if (type === 'outline-update' || type === 'bible-update' || type === 'style-update' || type === 'premise-candidate-update') {
-        const fields = {}
-        for (const key of allowedFields[kind]) {
-          if (action.fields?.[key] === undefined) continue
-          const value = action.fields[key]
-          if (key === 'chapterWords' || key === 'dialogueRatio') {
-            const number = Number(value)
-            if (Number.isFinite(number)) fields[key] = number
-          } else if (Array.isArray(value)) {
-            fields[key] = value.map(String).slice(0, 30)
-          } else {
-            fields[key] = String(value).slice(0, 1600)
-          }
-        }
-        if (Object.keys(fields).length) out.push({ type, fields, target, reason })
-      }
-    }
-    return out.slice(0, 8)
-  }
-
-  async discuss(root, options = {}) {
-    const topicId = String(options.topicId ?? 'general')
-    const topic = String(options.topic ?? '创作讨论')
-    const message = String(options.message ?? '').trim()
-    if (!message) throw new Error('讨论内容不能为空')
-    const thread = await this.readDiscussion(root, topicId)
-    const context = await this.buildDiscussionContext(root, options, thread)
-    const system = await this.discussionSystemPrompt(root, topicId, options.item)
-    const messages = [{ role: 'user', content: [{ type: 'text', text: context }] }]
-    const generated = await this.callJsonModel(root, {
-      kind: 'discussion.reply',
-      task: 'discussion',
-      system,
-      messages,
-      maxTokens: 6000,
-      temperature: 0.8,
-    })
-    const parsed = generated.parsed && typeof generated.parsed === 'object' ? generated.parsed : {}
-    const reply = String(parsed.reply ?? generated.text ?? '').trim()
-    const actions = this.normalizeDiscussionActions(parsed.actions, options)
-    const optionsList = Array.isArray(parsed.options)
-      ? parsed.options.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
-      : []
-    const stage = ['reply', 'clarify', 'propose'].includes(parsed.stage)
-      ? parsed.stage
-      : (optionsList.length ? 'clarify' : actions.length ? 'propose' : 'reply')
-    const result = {
-      stage,
-      question: String(parsed.question ?? '').trim().slice(0, 800),
-      options: optionsList,
-      allowCustom: parsed.allowCustom !== false,
-      conclusion: String(parsed.conclusion ?? '').trim(),
-      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions.map(String) : [],
-      todos: Array.isArray(parsed.todos) ? parsed.todos.map(String) : [],
-      risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
-      actions,
-    }
-    const entryTime = now()
-    const next = {
-      topicId,
-      topic,
-      item: options.item ?? null,
-      updatedAt: entryTime,
-      messages: [
-        ...(thread.messages ?? []),
-        { role: 'user', text: message, time: entryTime },
-        { role: 'assistant', text: reply, result, time: entryTime },
-      ],
-    }
-    await this.writeJson(root, `.dsh-writing/discussions/${topicId}.json`, next)
-    return { reply, result, messages: next.messages, usage: generated.usage, context }
-  }
-
-  async discussStream(root, options = {}, onDelta) {
-    const topicId = String(options.topicId ?? 'general')
-    const topic = String(options.topic ?? '创作讨论')
-    const message = String(options.message ?? '').trim()
-    if (!message) throw new Error('讨论内容不能为空')
-    const thread = await this.readDiscussion(root, topicId)
-    const context = await this.buildDiscussionContext(root, options, thread)
-    const system = await this.discussionSystemPrompt(root, topicId, options.item)
-    const messages = [{ role: 'user', content: [{ type: 'text', text: context }] }]
-    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
-    const generated = await this.callModel(root, {
-      task: 'discussion',
-      system,
-      messages,
-      maxTokens: 6000,
-      temperature: 0.8,
-      signal: options.signal,
-      onDelta,
-    })
-    let parsed = null
-    try {
-      parsed = extractJson(generated.text)
-    } catch {
-      // streamed plain text is still usable as a reply
-    }
-    const reply = String(parsed?.reply ?? generated.text ?? '').trim()
-    const actions = this.normalizeDiscussionActions(parsed?.actions, options)
-    const optionsList = Array.isArray(parsed?.options)
-      ? parsed.options.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
-      : []
-    const stage = ['reply', 'clarify', 'propose'].includes(parsed?.stage)
-      ? parsed.stage
-      : (optionsList.length ? 'clarify' : actions.length ? 'propose' : 'reply')
-    const result = {
-      stage,
-      question: String(parsed?.question ?? '').trim().slice(0, 800),
-      options: optionsList,
-      allowCustom: parsed?.allowCustom !== false,
-      conclusion: String(parsed?.conclusion ?? '').trim(),
-      suggestions: Array.isArray(parsed?.suggestions) ? parsed.suggestions.map(String) : [],
-      todos: Array.isArray(parsed?.todos) ? parsed.todos.map(String) : [],
-      risks: Array.isArray(parsed?.risks) ? parsed.risks.map(String) : [],
-      actions,
-    }
-    const entryTime = now()
-    const next = {
-      topicId,
-      topic,
-      item: options.item ?? null,
-      updatedAt: entryTime,
-      messages: [
-        ...(thread.messages ?? []),
-        { role: 'user', text: message, time: entryTime },
-        { role: 'assistant', text: reply, result, time: entryTime },
-      ],
-    }
-    await this.writeJson(root, `.dsh-writing/discussions/${topicId}.json`, next)
-    await this.writeRun(root, {
-      runId,
-      kind: 'discussion.reply.stream',
-      createdAt: entryTime,
-      model: generated.model,
-      system: generated.system ?? system,
-      messages,
-      output: generated.text,
-      usage: generated.usage,
-      durationMs: generated.durationMs,
-      parseError: parsed ? null : 'discussion stream was not valid JSON; reply used raw text',
-    })
-    return { reply, result, messages: next.messages, usage: generated.usage, runId, context }
-  }
-
-  async applyDiscussion(root, options = {}) {
-    const action = String(options.action ?? '')
-    const topicId = String(options.topicId ?? '')
-    const topic = String(options.topic ?? '')
-    const reply = String(options.reply ?? '')
-    const result = options.result && typeof options.result === 'object' ? options.result : {}
-    if (action === 'instruction') {
-      const number = Number(options.number)
-      if (!Number.isFinite(number) || number < 1) throw new Error('讨论对象没有可应用的章节号')
-      const paths = this.chapterPaths(number)
-      const instruction = String(options.instruction ?? result.conclusion ?? reply).trim()
-      if (!instruction) throw new Error('讨论结果为空，无法应用')
-      const payload = {
-        instruction,
-        source: topicId || 'discussion',
-        topic,
-        result,
-        createdAt: now(),
-      }
-      await this.writeJson(root, `${paths.dir}/instruction.json`, payload)
-      return { applied: 'instruction', number, path: `${paths.dir}/instruction.json`, instruction }
-    }
-    if (action === 'note') {
-      const safe = topicId.replace(/[^A-Za-z0-9._-]/g, '-') || 'general'
-      const path = `.dsh-writing/notes/${safe}.json`
-      const existing = (await this.readJson(root, path).catch(() => null)) ?? { notes: [] }
-      const note = {
-        topicId,
-        topic,
-        reply,
-        conclusion: String(result.conclusion ?? ''),
-        suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
-        todos: Array.isArray(result.todos) ? result.todos : [],
-        risks: Array.isArray(result.risks) ? result.risks : [],
-        createdAt: now(),
-      }
-      const next = { notes: [...(existing.notes ?? []), note].slice(-20), updatedAt: now() }
-      await this.writeJson(root, path, next)
-      return { applied: 'note', path, note }
-    }
-    if (action === 'undo') {
-      return this.undoDiscussionApply(root, { applyId: options.applyId })
-    }
-    if (action === 'actions') {
-      const actions = Array.isArray(options.actions) ? options.actions : []
-      if (actions.length === 0) throw new Error('这次讨论没有可应用的修改')
-      const applied = []
-      const errors = []
-      const affected = new Set()
-      const targetOf = (item) => (item.target && typeof item.target === 'object' ? item.target : {})
-      for (const item of actions) {
-        const target = targetOf(item)
-        if (item.type === 'chapter-instruction') {
-          const number = Number(target.number ?? options.number ?? options.item?.number)
-          if (Number.isFinite(number)) affected.add(`${this.chapterPaths(number).dir}/instruction.json`)
-        } else if (item.type === 'outline-update') {
-          affected.add('story/plot/outline.json')
-        } else if (item.type === 'bible-update') {
-          affected.add('story/bible/index.json')
-        } else if (item.type === 'style-update') {
-          affected.add('story/style/contract.json')
-        } else if (item.type === 'premise-candidate-update') {
-          affected.add('story/premise.json')
-        }
-      }
-      const before = []
-      for (const path of affected) {
-        before.push({ path, content: await this.readText(root, path).catch(() => null) })
-      }
-      for (const item of actions.slice(0, 8)) {
-        try {
-          const target = targetOf(item)
-          if (item.type === 'chapter-instruction') {
-            const number = Number(target.number ?? options.number ?? options.item?.number)
-            const instruction = String(item.instruction ?? '').trim()
-            if (!Number.isFinite(number) || !instruction) throw new Error('章节修订要求为空')
-            const paths = this.chapterPaths(number)
-            await this.writeJson(root, `${paths.dir}/instruction.json`, {
-              instruction,
-              source: topicId || 'discussion',
-              topic,
-              result,
-              createdAt: now(),
-            })
-            applied.push({ type: item.type, number, target, path: `${paths.dir}/instruction.json` })
-          } else if (item.type === 'outline-update') {
-            const chapter = await this.updateOutlineChapter(root, {
-              chapterId: target.id ?? options.item?.id,
-              number: target.number ?? options.item?.number,
-              fields: item.fields ?? {},
-            })
-            applied.push({ type: item.type, chapterId: chapter.id, target })
-          } else if (item.type === 'bible-update') {
-            const entry = await this.upsertBibleEntry(root, {
-              category: target.category ?? options.item?.category,
-              id: target.id ?? options.item?.id,
-              fields: item.fields ?? {},
-            })
-            applied.push({ type: item.type, entryId: entry.id, target })
-          } else if (item.type === 'style-update') {
-            const style = await this.updateStyleFields(root, item.fields ?? {})
-            applied.push({ type: item.type, fieldsHash: style.fieldsHash, target })
-          } else if (item.type === 'premise-candidate-update') {
-            const candidateId = target.id ?? options.item?.id ?? String(topicId).replace(/^premise-/, '')
-            const premise = await this.updatePremiseCandidate(root, { candidateId, fields: item.fields ?? {} })
-            applied.push({ type: item.type, candidateId: premise.id, target })
-          } else {
-            throw new Error(`不支持的讨论动作：${item.type}`)
-          }
-        } catch (error) {
-          errors.push({ type: item.type, message: errorText(error) })
-        }
-      }
-      let applyId = null
-      if (applied.length > 0) {
-        applyId = `apply-${Date.now()}-${randomUUID().slice(0, 8)}`
-        await this.writeJson(root, `.dsh-writing/discussion-applies/${applyId}.json`, {
-          applyId,
-          topicId,
-          topic,
-          createdAt: now(),
-          actions,
-          applied,
-          errors,
-          files: before,
-        })
-      }
-      return { applied: 'actions', appliedCount: applied.length, appliedItems: applied, errors, applyId }
-    }
-    throw new Error(`未知讨论应用方式：${action}`)
-  }
-
-  async listDiscussionApplies(agent) {
-    const cwd = await this.cwd(agent)
-    let entries = []
-    try {
-      entries = await readdir(join(cwd, '.dsh-writing', 'discussion-applies'), { withFileTypes: true })
-    } catch {
-      return []
-    }
-    const list = []
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-      const record = await this.readJson(agent, `.dsh-writing/discussion-applies/${entry.name}`).catch(() => null)
-      if (!record) continue
-      list.push({
-        applyId: record.applyId ?? entry.name.replace(/\.json$/, ''),
-        topicId: record.topicId ?? '',
-        topic: record.topic ?? '',
-        createdAt: record.createdAt ?? null,
-        appliedCount: record.appliedItems?.length ?? record.applied?.length ?? 0,
-        errorsCount: record.errors?.length ?? 0,
-      })
-    }
-    return list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 20)
-  }
-
-  async pruneDiscussionApplies(agent, options = {}) {
-    const keep = Math.max(1, Number(options.keep ?? 50) || 50)
-    const cwd = await this.cwd(agent)
-    const root = join(cwd, '.dsh-writing', 'discussion-applies')
-    let entries = []
-    try {
-      entries = await readdir(root, { withFileTypes: true })
-    } catch {
-      return { removed: 0 }
-    }
-    const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json')).map((entry) => entry.name).sort().reverse()
-    let removed = 0
-    for (const name of files.slice(keep)) {
-      try {
-        await unlink(join(root, name))
-        removed += 1
-      } catch {
-        // ignore
-      }
-    }
-    return { removed, kept: Math.min(files.length, keep) }
-  }
-
-  async undoDiscussionApply(root, options = {}) {
-    const applyId = String(options.applyId ?? '')
-    if (!applyId || !/^apply-[0-9A-Za-z-]+$/.test(applyId)) throw new Error('无效的应用记录')
-    const record = await this.readJson(root, `.dsh-writing/discussion-applies/${applyId}.json`).catch(() => null)
-    if (!record) throw new Error('找不到这次应用的备份')
-    const restored = []
-    for (const file of record.files ?? []) {
-      if (file.content === null) {
-        try {
-          const target = await this.ctx.fs.resolve(file.path, { cwd: await this.cwd(root) })
-          const hostPath = this.ctx.fs.processPath?.(target) ?? target
-          await unlink(hostPath)
-        } catch {
-          // already absent
-        }
-      } else {
-        await this.writeTextFile(root, file.path, file.content)
-      }
-      restored.push(file.path)
-    }
-    return { undone: applyId, restored }
   }
 
   async stateSnapshot(agent, options) {
     const { chapter, meta, paths } = options
-    const state = (await this.readJson(agent, 'story/state/index.json').catch(() => null)) ?? {
-      chapters: [],
-      updatedAt: null,
-    }
     const entry = {
       id: chapter.id,
       number: Number(chapter.number),
@@ -6603,13 +8706,7 @@ ${sections.join('\n')}
       approvedAt: meta?.approvedAt ?? now(),
       finalPath: paths.final,
     }
-    state.chapters = [
-      ...(state.chapters ?? []).filter((item) => Number(item.number) !== Number(chapter.number)),
-      entry,
-    ].sort((a, b) => Number(a.number) - Number(b.number))
-    state.updatedAt = now()
-    await this.writeJson(agent, 'story/state/index.json', state)
-    await this.writeJson(agent, `story/state/${paths.pad}.json`, {
+    const row = {
       chapterId: chapter.id,
       number: Number(chapter.number),
       title: chapter.title ?? '',
@@ -6617,7 +8714,12 @@ ${sections.join('\n')}
       meta,
       summary: entry.summary,
       approvedAt: entry.approvedAt,
-    })
-    return entry
+    }
+    // write=false 时只组装数据，由调用方在同一事务里落库（approveChapter 使用）。
+    if (options.write !== false) {
+      await this.writeJson(agent, `story/state/${paths.pad}.json`, row)
+      await this.writeJson(agent, 'story/state/index.json', { chapters: [], updatedAt: now() })
+    }
+    return { entry, row }
   }
 }

@@ -43,7 +43,7 @@ git push origin vX.Y.Z
 | `client.js` | 刷新页面（或禁用/启用插件） |
 | `index.js` / `service.js` / `agent.js` | 重启 DSH |
 | 预设提示词段（`agent.js`） | 重启后新建会话生效，已有会话下一步生效 |
-| 项目数据（`story/`） | 立即生效（每次调用读文件） |
+| 项目数据（`story/`） | 立即生效（每次调用读数据库与正文） |
 
 ## 6. 回滚
 

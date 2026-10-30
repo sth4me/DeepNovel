@@ -17,7 +17,6 @@
 | 正文修订 | `revise` | **自动 off/low** |
 | 质检修复 | `fix` | **自动 off/low** |
 | 风格审稿 | `audit` | **自动 low** |
-| 讨论 | `discussion` | 继承 DSH |
 | 章节摘要 | `summary` | 继承 DSH |
 | 连续性检查 | `continuity` | 继承 DSH |
 
@@ -32,12 +31,12 @@
 - **章纲 / 结构任务**：用 `low`，兼顾结构逻辑与稳定性。思考太高时推理可能占满输出、导致正文为空；插件检测到空正文会自动切到 `off/low` 重试，再按原参数重试一次。
 - **正文**：用 `off/low`。文风靠文风契约、提示词注入、审稿与修复来约束，**降低思考不会修正文风**；高思考只会更慢、更贵，也更容易"只思考不落笔"。
 - **审稿**：`low` 足够；审稿只输出问题清单，不需要长推理。
-- **空正文诊断**：报错会区分「输出被截断」「只返回了思考内容」「空响应」三种情况，并写一条 `model.empty` 运行记录（含 usage 与实际请求），可在 `.dsh-writing/runs/` 查看。
+- **空正文诊断**：报错会区分「输出被截断」「只返回了思考内容」「空响应」三种情况，并写一条 `model.empty` 运行记录（含 usage 与实际请求），可在 `story/project.db` 的 `runs` 表查看。
 
 ## 配置位置
 
 - 写作台 → 项目 → 模型分配：每行选择 provider/model 与思考等级，可“继承默认”。
-- 项目 JSON：`story/project.json` 的 `models`，结构：
+- 项目配置：`story/project.db` 的 `project` 表中的 `models`，结构：
   ```json
   {
     "draft": { "provider": "deepseek-account", "model": "deepseek-flash", "reasoningEffort": "off" },
@@ -54,8 +53,8 @@
 
 ## 运行详情
 
-- 每次模型调用在 `.dsh-writing/runs/` 记录运行信息（kind、model、usage、system、输入消息、输出）。
-- 写作台「最近运行」可按类型（大纲/章节/文风/设定/构思/讨论/拆书）筛选；点「查看」显示该次实际使用的 system、输入与输出，并支持复制输出。
+- 每次模型调用在 `story/project.db` 的 `runs` 表记录运行信息（kind、model、usage、system、输入消息、输出）。
+- 写作台「最近运行」可按类型（大纲/章节/文风/设定/构思/拆书）筛选；点「查看」显示该次实际使用的 system、输入与输出，并支持复制输出。
 - 会话版写作台同样支持查看运行详情。
 - 排查注入是否生效、JSON 被截断、风格偏离时，优先看这里。
 

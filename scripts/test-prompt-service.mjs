@@ -111,9 +111,7 @@ const jsonResult = await service.callJsonModel(project, {
   maxTokens: 100,
 })
 assert.ok(jsonResult.parsed)
-const ledger = JSON.parse(
-  await readFile(join(project, '.dsh-writing', 'runs', `${jsonResult.runId}.json`), 'utf8'),
-)
+const ledger = await service.readRun(project, { runId: jsonResult.runId })
 assert.equal(ledger.system, 'PREMISE BASE\n\n全局注入')
 
 // 7) 关闭项目注入后只剩全局
@@ -125,6 +123,7 @@ await service.saveGlobalInjection({ enabled: false, text: '全局注入' })
 assert.equal(service.globalInjectionText(), '')
 assert.equal(await service.injectedSystemFor(project, 'BASE', 'draft'), 'BASE')
 
+service.disposeStores()
 await rm(home, { recursive: true, force: true })
 await rm(project, { recursive: true, force: true })
 console.log('prompt injection service tests passed')

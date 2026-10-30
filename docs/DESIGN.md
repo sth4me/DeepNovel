@@ -6,15 +6,14 @@
 
 - **编辑感**：项目名、步骤标题、章节标题用衬线体；正文用无衬线 UI 字体，控件退后。
 - **安静**：深色/浅色只用主题 token 的层级色；高饱和色只用于主操作和状态。
-- **主面板**：写作台是全局主面板（侧栏入口 + `main` key），不是会话侧栏。三栏：流程 rail / 工作区 / 流程与讨论 inspector。
+- **主面板**：写作台是全局主面板（侧栏入口 + `main` key），不是会话侧栏。三栏：流程 rail / 工作区 / 流程与 AI inspector。
 - **专注**：顶部可一键隐藏左右栏（Esc 退出），正文区域成为唯一焦点。
-- **按需讨论**：对话不占据创作主界面；只有点某个对象旁的「讨论」才创建线程。
 
 ## 布局
 
 - 左栏 222px：六步流程（项目 → 构思 → 文风 → 设定 → 大纲 → 章节），带状态、说明、完成勾。
 - 中间：`max-width 1120px` 的工作区；章纲/章节采用 master-detail（左列表 + 右阅读/编辑，各自滚动）。
-- 右栏 336px：流程状态 / 讨论；窄屏可收起或作为抽屉打开。
+- 右栏 336px：流程状态 / AI；窄屏可收起或作为抽屉打开。
 - 底部「下一步」栏：显示当前阻塞项并直达下一步。
 - 章节页：标题 + 质检/AI 徽标 → 修订要求 → 写作动作 → 质检摘要 → 修订历史 → 局部重写栏 → 正文。质检详情默认折叠。
 - 章节操作分组：写作类（按意见修订/重新生成/采纳定稿）与质检类（检测/多轮修复/单轮修复）分开。
@@ -28,6 +27,28 @@
 - 间距：4 / 8 / 12 / 16 / 20 / 24；卡片圆角 14px，输入框 8px，按钮 9px。
 - 组件：rail、step intro、panel、candidate card、template card、chapter list、QA summary、issue list、selection bar、diff、toast、error panel、empty state。
 - 交互：hover 轻背景；focus 品牌色柔光环；生成中显示秒数 + 取消；未保存显示提示；破坏性操作二次确认。
+
+## 数据层
+
+采用混合数据层：结构化数据进 SQLite，正文留在 Markdown 文件。
+
+- **结构化数据**：项目、构思、文风、设定、关系、能力、卷与章纲、章节状态/质检/摘要、统计、运行记录、System 模板覆盖、备注，统一存 `story/project.db`（内置 `node:sqlite`，WAL）。这些数据需要事务、跨表一致和检索，散成几十个 JSON 文件时每次操作都要多次读写、互相校验成本高。
+- **正文**：`draft.md`、`final.md`、`revisions/` 保持 Markdown。手稿要保持可读、可用编辑器直接改、可进 git diff，不能因为换了存储方式而变得不可读。
+- 边界：正文可版本化，结构化数据可事务化与索引化；两者通过章节号关联。旧项目首次打开自动迁移，旧 JSON 留作只读存档。
+- 实现细节（表结构、迁移、快照、检索、排错）见 [DATA-LAYER.md](DATA-LAYER.md)。
+
+## 技能库
+
+内置技法不再单独做「技法库」，而是作为**内置技能**与项目导入技能平级出现在同一技能目录。
+
+- **内置技法**：9 张项目无关的通用技法卡片，以 `craft-*` 随插件提供（provider `deepnovel-craft`，rank 600，source builtin）；不能删除，只能按项目开关（项目 `craftDisabled`）；只在写作项目里出现（有 `story/project.db` 或 `project.json`），非写作会话不出现。
+- **项目导入技能**：`<projectRoot>/.dsh/skills`（rank 100）、`<projectRoot>/.agents/skills`（rank 200）下的 `SKILL.md`，可删除；只对当前项目生效。
+- **全局 / 插件级导入技能**：`DSH_HOME/novel-writer/library/skills/`（rank 300）下的 `SKILL.md`，可删除；所有写作项目都能用。
+- **优先级**：同名冲突时 **项目 > 全局 > 内置**（rank 小者胜）；覆盖前备份——项目覆盖备份到 `.dsh-writing/backups/skills-<时间>/`，全局覆盖备份到 `DSH_HOME/novel-writer/library/backups/skills-<时间>/`。
+- **范围**：助手技能只来自内置 `craft-*` + 项目导入 + 全局导入；不扫描 DSH 公共 / 系统 / 用户级技能（`<dshHome>/skills`、`<agentsHome>/skills`、`$DSH_BUNDLED_SKILL_DIR`、custom 根）；非写作项目返回空。加载入口只保留 `tool-skill`（`skill-filesystem` 已移除，项目根由 provider 按 cwd 动态提供）。
+- **路由**：模型路由——AI 用 skill 工具按需加载全文，读后判断是否适合本章（题材 / 文风契约 / 节奏 / 指令），不适合不套用；技法不是本书设定、不是硬性规则。旧的「程序按任务 / 指令打分注入全文」已废弃（模型读全文判断比程序触发词更准）。
+- **内容**：出处为通用写作 / 编剧理论 + 网文实践整理，自写摘要非复制（检查清单思路参考 MuMuAINovel / DeepWrite）；每张卡统一五节【适用】【通用原则】【按场景调节】【常见反例（不要这样写）】【自检】，数字多为参考值。
+- **管理**：项目页「技能库」卡（scope 徽标 / 内置开关 / 导入（项目或全局）/ 删除 / 预览分节渲染 / 导入弹窗）；project-action `skills-list`（每项带 scope/path）/ `skill-toggle`（仅内置）/ `skill-import`（`{ path, scope? }`）/ `skill-delete`（`{ name, scope }`）/ `skill-read`（`{ name, scope? }`）。
 
 ## 参考
 

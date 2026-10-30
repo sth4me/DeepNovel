@@ -2,33 +2,33 @@
 
 ## 总原则
 
-1. **固定流程、产物可回**：每个阶段产出结构化文件，确认后才进入下游。
+1. **固定流程、产物可回**：每个阶段产出结构化数据，确认后才进入下游。
 2. **上游变化只标过期，不静默覆盖**：重写产生 revision，旧稿保留。
 3. **写作在插件内完成**：插件组装写作上下文并直接调用 DSH 模型；原生会话不是创作主界面。
-4. **数据分层**：`story/` 是作者数据，`.dsh-writing/` 是运行记录/讨论/备注；两者都不属于插件仓库。
+4. **数据分层**：`story/` 是作者数据（`project.db` 结构化数据 + 章节 Markdown 正文），`.dsh-writing/` 是运行记录/备注/日志；两者都不属于插件仓库。
 5. **可审计**：run 记录记录 prompt、模型、usage、上下文 meta、输出。
 
 ## 阶段
 
 | 阶段 | 产物 | 确认后 |
 |---|---|---|
-| 项目 | `story/project.json` + 骨架 | 可以开始构思 |
-| 构思 | `premise.json` 候选/已选 | 进入文风 |
-| 文风 | `style/contract.json` + 模板 | 进入设定 |
-| 设定 | `bible/index.json` | 进入大纲 |
-| 大纲 | `plot/outline.json` 章纲 | 进入章节 |
-| 章节 | `chapters/NNN/` 草稿/QA/修订/定稿 | 状态快照 |
+| 项目 | `story/project.db`（`project` 表） | 可以开始构思 |
+| 构思 | `premise` 表 候选/已选 | 进入文风 |
+| 文风 | `style_contract` 表 + `style_templates` | 进入设定 |
+| 设定 | `bible_entries` 表 | 进入大纲 |
+| 大纲 | `volumes` / `outline_chapters` 表 章纲 | 进入章节 |
+| 章节 | `chapters/NNN/` 正文 + `chapter_*` 表 | 状态快照 |
 
 当前项目页显示六步：项目、构思、文风、设定、大纲、章节。
 
 ## 构思
 
 - 生成 3 个候选（logline、题材、钩子、主角、冲突、结局、边界、篇幅）。
-- 选择/编辑/确认一个候选；确认后写入 `premise.json`。
+- 选择/编辑/确认一个候选；确认后写入 `premise` 表。
 
 ## 文风
 
-- 内置模板 + 自定义模板（保存当前契约为 `story/style/templates/user-*.json`）。
+- 内置模板 + 自定义模板（保存当前契约为 `style_templates` 表）。
 - 字段：视角、时态、单章字数、句长、段落长度、对话占比、比喻密度、禁用词、额外要求。
 - 确认后写入 `fieldsHash`，供下游 stale 判断。
 
@@ -69,18 +69,10 @@
 - 预算可在项目页配置；章节页可预览实际 token 与分段计数。
 - 详见 [CONTEXT.md](CONTEXT.md)。
 
-## 讨论
-
-- 针对具体对象（构思/文风/设定条目/章纲/章节）开线程。
-- 章节讨论自动带入本章章纲、相关设定、最近章节状态、未回收伏笔与当前正文节选；不再只看一段摘录。
-- 回复经 SSE 流式输出；结束后解析为 reply / conclusion / suggestions / todos / risks。
-- 可复制、保存为备注、章节讨论可写入修订要求。
-- 详见 [DISCUSSION.md](DISCUSSION.md)。
-
 ## 模型
 
 - 从当前 DSH 模型目录选择 provider/model 与思考等级。
-- 任务级配置：构思、设定、章纲、草稿、修订、修复、风格审稿、讨论。
+- 任务级配置：构思、设定、章纲、草稿、修订、修复、风格审稿。
 - 正文类默认关闭/低思考；审稿默认低思考；其余继承 DSH 默认。
 - 详见 [MODELS.md](MODELS.md)。
 
@@ -98,7 +90,7 @@
 
 ## 运行记录
 
-`.dsh-writing/runs/<runId>.json` 记录：
+`story/project.db` 的 `runs` 表记录：
 
 - kind、模型、system/messages、输出原文、usage、耗时；
 - 草稿/修订的上下文 meta；

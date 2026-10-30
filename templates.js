@@ -1,8 +1,18 @@
+/*
+ * 内置文风模板。
+ *
+ * 每个模板 = 结构化字段（可微调）+ 三档可执行规则（必须贯彻 / 绝对禁止 / 按场景调节）
+ * + 2–3 段示例（只作语感锚点，不照抄情节）。
+ * 字段会经 formatStyleFields() 渲染成可读文本注入生成提示词，不要写空泛形容词，
+ * 每条规则都要能被判定是否违反。
+ */
 export const STYLE_TEMPLATES = [
   {
     id: 'fast-web',
     name: '快节奏网文',
-    description: '短句、直给、画面先行，少铺垫。',
+    group: '网文',
+    tags: ['爽文', '都市', '玄幻', '追读'],
+    description: '短句直给、事件密集、对白推信息；用手机阅读的节奏写，每段都要推进。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -11,15 +21,48 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'short',
       dialogueRatio: 0.45,
       metaphorDensity: 'low',
-      chapterTitleStyle: '短标题',
-      notes: '句子短，场景切换快；避免长段心理描写。',
+      chapterTitleStyle: '短标题（2–6 字，动词或结果）',
+      voice: '冷静直白，叙述者不评价、不解释人物动机。',
+      diction: '动词与具体名词优先，形容词节制；口语化但不粗俗，不用书面长定语。',
+      imagery: '动作、器物、场景功能件；比喻最多一句，不铺排。',
+      dialogueStyle: '短句对白，一次不超过三句；少用“说道”，用动作或直接换行代替。',
+      pacing: '每 300–500 字推进一个事件；场景切换直接跳，不写过渡段。',
+      sensoryFocus: '视觉与动作；听觉次之；嗅觉味觉仅在必要时用。',
+      must: [
+        '开场 200 字内出现具体冲突、异常或目标',
+        '每段至少推进一条信息，删掉不推进的情节',
+        '对白承担信息与冲突，描写只做最低限度定位',
+        '章末停在具体动作、决定或反转上',
+      ],
+      never: [
+        '用“他感到/他知道/他意识到”直陈情绪',
+        '连续两段以上纯心理描写',
+        '在对话里解释设定或复述前情',
+        '章末总结本章意义或升华',
+      ],
+      adjust: [
+        '打斗段落进一步压短句、拆短段',
+        '信息量大的过场用一句话概括后直接跳',
+        '感情戏允许放慢一档，但每段仍要有动作',
+      ],
+      bannedWords: ['仿佛', '犹如', '不禁', '缓缓', '一丝', '一抹', '眼中闪过', '嘴角勾起'],
+      bannedPatterns: ['带着…的语气', 'XX说道', '空气中弥漫着', '不由自主地'],
+      genreFit: ['都市', '玄幻', '悬疑', '爽文', '追读向'],
+      avoidGenre: ['文学向', '散文体'],
+      notes: '目标读者用手机读，段落尽量不超过三行；超过两句的解释性文字必须压缩或改写。',
     },
-    samples: ['电话响到第三声他就接了，对面只说了一句：人死了。'],
+        samples: [
+      '电话响到第三声他才接。对面只说了一句：人死了。他抓起外套往外走，鞋跟在地砖上敲出一串急响，到楼下才发现自己还穿着拖鞋。',
+      '门是虚掩的。他侧身进去，先看桌，再看窗。桌上那杯水还温着，椅背上搭着一件外套，人却不见了。他没喊，伸手把外套掀开，底下压着一张车票。',
+      '“谁先动的手？”他问。对面的人笑了笑，把烟按进烟灰缸：你自己猜。他不再问，拉开椅子坐下，把桌上的牌一张张翻过来。',
+    ],
   },
   {
     id: 'literary',
     name: '文学向',
-    description: '重视语言质感、环境与心理描写，节奏可以慢但不能空转。',
+    group: '通用',
+    tags: ['文学', '现实', '言情', '氛围'],
+    description: '语言质感优先，感官与物象承托情绪；节奏可以慢，但每段必须有具体变化。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -28,15 +71,48 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'medium',
       dialogueRatio: 0.25,
       metaphorDensity: 'high',
-      chapterTitleStyle: '意象式标题',
-      notes: '每个场景要有可感知的感官细节；控制形容词堆叠，比喻服务于人物处境。',
+      chapterTitleStyle: '意象式短标题（名词或场景）',
+      voice: '克制内敛，叙述者有观察力但不评判。',
+      diction: '具体名词与精准动词优先；形容词节制；可用书面语，但不堆砌成语。',
+      imagery: '日常器物、身体感受、自然细节；一个意象延伸开写，不连用三个以上比喻。',
+      dialogueStyle: '对白少而重，潜台词多；用停顿、动作与沉默代替直白回答。',
+      pacing: '允许慢，但每段要有可感知的变化（动作、光线、对话、心理位移）。',
+      sensoryFocus: '触觉与嗅觉优先，视觉用于定位环境。',
+      must: [
+        '每个场景至少一处可感知的感官细节（温度、气味、声音、触感）',
+        '情绪通过动作与身体反应呈现，不直接命名',
+        '比喻服务人物处境，不为漂亮而比喻',
+        '场景结束停在具体画面或动作上',
+      ],
+      never: [
+        '形容词与成语堆叠',
+        '一段里连用三个以上比喻',
+        '“他感到…”式心理直陈',
+        '用总结句升华段意',
+      ],
+      adjust: [
+        '抒情段落可放慢，但要有具体物象承托',
+        '对话场景可缩短，留白代替解释',
+        '转场用物象或声音衔接，不用“第二天”硬切',
+      ],
+      bannedWords: ['仿佛', '宛如', '不禁', '心潮澎湃', '五味杂陈'],
+      bannedPatterns: ['像是…一般', '心中涌起', '说不出的…'],
+      genreFit: ['文学', '现实主义', '言情', '悬疑'],
+      avoidGenre: ['爽文', '快节奏网文'],
+      notes: '语言质感优先，但不能空转：每段必须有一个具体的人、物或动作。',
     },
-    samples: ['屋里有一股旧木头被晒热的气味，她坐在窗边，指腹一遍遍摩挲茶杯的缺口。'],
+        samples: [
+      '屋里有一股旧木头被晒热的气味。她坐在窗边，指腹一遍遍摩挲茶杯的缺口，缺口磨得发亮，像被谁反复想起过。窗外的光挪了半寸，她的影子也跟着挪了半寸。',
+      '雨停得很轻，只在瓦沿留下一线水。他伸手去接，凉意从掌心一直走到手腕，才慢慢散开。院里的泥地吸饱了水，踩下去，脚印边缘慢慢渗出一圈深色。',
+      '“你走的时候，把门带上。”她说。声音不高，尾音落在半空，像一句没说完的话。他没应声，站在门口等了一会儿，最后只把门轻轻掩上。',
+    ],
   },
   {
     id: 'suspense',
     name: '悬疑冷硬',
-    description: '信息控制优先，冷硬白描，少解释性旁白。',
+    group: '悬疑/网文',
+    tags: ['悬疑', '推理', '刑侦', '冷硬'],
+    description: '信息控制优先，冷硬白描；线索可回溯，谜底不提前解释。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -45,15 +121,48 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'short',
       dialogueRatio: 0.3,
       metaphorDensity: 'low',
-      chapterTitleStyle: '短标题',
-      notes: '信息通过动作和对白释放；避免提前解释。',
+      chapterTitleStyle: '短标题（物证或事件）',
+      voice: '冷硬克制，叙述者只报事实，不做解释与感慨。',
+      diction: '白描；专业或行业词适度使用；少形容词，少副词。',
+      imagery: '物证、空间、光线；比喻少且冷。',
+      dialogueStyle: '信息藏在对话缝隙里，人物互相试探，话不说完。',
+      pacing: '每章至少一个新疑点或新信息；章末留具体钩子。',
+      sensoryFocus: '视觉与听觉（脚步、门响、金属）；气味用于异常提示。',
+      must: [
+        '信息通过动作、对白、物证释放，不用旁白解释',
+        '章末留一个未解答的具体问题或动作',
+        '人物说谎时给出可观察的行为线索',
+        '关键细节在前文出现过一次，读者可回溯',
+      ],
+      never: [
+        '提前解释谜底或人物动机',
+        '用“他明白了”跳过推理过程',
+        '大段环境描写冲淡节奏',
+        '把巧合当作线索',
+      ],
+      adjust: [
+        '审讯/对峙用短句交替推进',
+        '追捕段落压到短段短句',
+        '揭晓段落允许稍长，但每句都要给新信息',
+      ],
+      bannedWords: ['仿佛', '似乎', '好像', '一丝', '不易察觉'],
+      bannedPatterns: ['他意识到', '直觉告诉他', '空气中弥漫着'],
+      genreFit: ['悬疑', '推理', '刑侦', '冷硬'],
+      avoidGenre: ['轻松日常', '甜宠'],
+      notes: '读者要比人物早半步或晚半步，不能同时什么都不知道；每条线索都要能被指认。',
     },
-    samples: ['卷宗第三页少了一行字，他知道缺的不是字，是人。'],
+        samples: [
+      '卷宗第三页少了一行字。纸边整齐，不像撕的，倒像从来没印过。他把三页并排对着灯看，光透过去，缺的那行留下极淡的凹痕。他记下位置，又把灯关了。',
+      '走廊尽头的灯忽明忽暗。他数着自己的脚步，数到第七步，身后的门响了一声。他没有回头，把手插进口袋，摸到那把钥匙还在。',
+      '“那天晚上你在哪儿？”对方问。他想了三秒才回答，这三秒被记进了笔录。记录的人抬头看了他一眼，又低头写字。',
+    ],
   },
   {
     id: 'light',
     name: '轻松日常',
-    description: '对白驱动、轻松吐槽，情绪明快。',
+    group: '现代',
+    tags: ['日常', '轻小说', '校园', '都市'],
+    description: '对白驱动、轻快吐槽；笑点来自人物性格与处境错位，不是硬塞段子。',
     fields: {
       pov: 'first',
       tense: 'past',
@@ -62,15 +171,47 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'short',
       dialogueRatio: 0.55,
       metaphorDensity: 'low',
-      chapterTitleStyle: '轻快口语化',
-      notes: '对白承担主要信息与笑点；避免沉重描写和长段设定说明。',
+      chapterTitleStyle: '轻快口语化（一句吐槽或短语）',
+      voice: '轻快、带自我吐槽，叙述者与读者站同一战线。',
+      diction: '口语、生活词；网络语适度，避免过时梗；语气词少量。',
+      imagery: '生活细节、食物、家居；比喻轻巧、就地取材。',
+      dialogueStyle: '对白驱动、节奏快、互相打岔；每句不超过两句。',
+      pacing: '场景短，靠对话与反应推进；一个小事件即可成章。',
+      sensoryFocus: '味觉、触觉、声音。',
+      must: [
+        '每章至少一个笑点或反差',
+        '对白承担主要信息量',
+        '人物吐槽有各自口径，不能人人同一语气',
+        '日常事件要有具体动作链',
+      ],
+      never: [
+        '沉重抒情或大段心理描写',
+        '长篇设定说明',
+        '为搞笑让人物降智',
+        '结尾强行升华',
+      ],
+      adjust: [
+        '群像场景多用短对白交替',
+        '情绪转场可先写一段安静描写再起笑点',
+      ],
+      bannedWords: ['不禁', '忍不住', '噗嗤'],
+      bannedPatterns: ['他无奈地笑了笑', '众人哄堂大笑'],
+      genreFit: ['日常', '轻小说', '校园', '都市'],
+      avoidGenre: ['正剧', '虐文', '恐怖'],
+      notes: '轻松不等于没逻辑：笑点要能追溯到人物性格或处境。',
     },
-    samples: ['她把最后一颗丸子夹进他碗里，笑着说：多吃点，吃完好干活。'],
+        samples: [
+      '她把最后一颗丸子夹进他碗里：多吃点，吃完好干活。他看了看碗，又看了看她：这活是搬砖还是搬你？她筷子一停，把丸子又夹了回去。',
+      '闹钟响到第五遍，他终于伸手按掉，然后翻个身，把“今天一定早起”这句话又说了一遍。说完自己也笑了，笑得枕头都塌下去一块。',
+      '“我决定从今天开始健身。”“你昨天也这么说。”“昨天是预热。”“那前天呢？”“前天是市场调研。”',
+    ],
   },
   {
     id: 'ancient',
     name: '古风/仙侠',
-    description: '文白相间、意象与礼制细节服务人物，可读性优先。',
+    group: '古风',
+    tags: ['仙侠', '武侠', '古言', '玄幻'],
+    description: '文白相间、从容不炫技；设定靠上下文自然交代，可读性优先。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -79,15 +220,48 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'medium',
       dialogueRatio: 0.35,
       metaphorDensity: 'medium',
-      chapterTitleStyle: '对仗/古意',
-      notes: '避免生僻词堆砌；设定名词首次出现时要让读者从上下文理解。',
+      chapterTitleStyle: '对仗或古意短语（3–7 字）',
+      voice: '文白相间、从容；叙述者不炫技、不跳出来解释。',
+      diction: '半文半白，名词具体；少生僻字与自造词；四字成语节制。',
+      imagery: '山水、器物、天象；意象服务人物处境，不做风景陈列。',
+      dialogueStyle: '对白有分寸与礼数，称呼一致；避免现代口语。',
+      pacing: '场景与心境交替，允许过渡，但每段都要有信息。',
+      sensoryFocus: '视觉与触觉（风、雨、衣料、温度）。',
+      must: [
+        '设定名词首次出现时让读者从上下文理解',
+        '称呼、礼数、身份等级前后一致',
+        '打斗或施法写具体动作与代价',
+        '章末落在人物处境或决定上',
+      ],
+      never: [
+        '生僻词与四字成语堆砌',
+        '现代口语（“搞定”“没问题”）',
+        '“剑气纵横”“天地变色”式空泛描写',
+        '用诗句代替叙事',
+      ],
+      adjust: [
+        '对话可略文、叙述可略白，二者不能反过来',
+        '打斗段落缩短句长',
+        '抒情段落可用景语，但必须有人物视角',
+      ],
+      bannedWords: ['宛如', '仿若', '不禁', '心头一震'],
+      bannedPatterns: ['剑气纵横', '天地变色', '不由得'],
+      genreFit: ['仙侠', '武侠', '古言', '玄幻'],
+      avoidGenre: ['现代都市', '科幻'],
+      notes: '可读性优先：宁可白话一点，也不要让读者查字典。',
     },
-    samples: ['山门外的石阶被雨洗得发青，他拾级而上，袖口沾了泥，脚印一个比一个浅。'],
+        samples: [
+      '山门外的石阶被雨洗得发青。他拾级而上，袖口沾了泥，脚印一个比一个浅，到第三十七级时停住——那里有一道新刻的剑痕。',
+      '茶已经凉了。她仍端着，指尖扣着盏沿，听廊下风铃响过三遍，才把茶放下。窗纸透进来的光落在他空着的座位上，一点一点移过去。',
+      '“师兄此去，几时回来？”他答：等山上的雪化。说完把剑往肩上一扛，头也不回地下山去了。',
+    ],
   },
   {
     id: 'guqing',
     name: '古风言情',
-    description: '古风背景、重对白与感官描写，情感与欲望并重，节奏张弛有度。',
+    group: '古风',
+    tags: ['古言', '言情', '宫斗', '情感'],
+    description: '细腻贴身、情绪压在水面下；靠身体反应与留白写情，不靠形容词。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -96,15 +270,48 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'medium',
       dialogueRatio: 0.4,
       metaphorDensity: 'medium',
-      chapterTitleStyle: '古意短标题（名词/动作短语）',
-      notes: '以触觉与视觉为先，嗅觉味觉次之；情感戏写身体反应与细节，不写解说的“心动”；用温度、气味、衣料摩擦等感官细节承托情绪。',
+      chapterTitleStyle: '古意短标题（名词或动作短语）',
+      voice: '细腻贴身，情绪压在水面下，叙述者不替人物说破。',
+      diction: '触觉与温度词多；称谓与身份严格一致。',
+      imagery: '衣料、体温、气味、光线；以身体距离的变化承托关系。',
+      dialogueStyle: '话不说透，靠停顿与动作补足；称呼变化暗示关系变化。',
+      pacing: '情感节点密集、事件推进慢；每章一次关系的细微位移。',
+      sensoryFocus: '触觉优先，嗅觉次之，视觉用于定位。',
+      must: [
+        '情绪写身体反应（手抖、呼吸、体温），不写“心动”',
+        '每章至少一次关系的细微变化',
+        '亲密戏靠细节与留白，不靠形容词',
+        '称呼、身份、礼数前后一致',
+      ],
+      never: [
+        '直陈“心跳加速”“小鹿乱撞”',
+        '用旁白解释人物心思',
+        '现代词汇（“氛围感”“拿捏”）',
+        '情感推进跳级',
+      ],
+      adjust: [
+        '暧昧段落放慢，动作分解到指尖与呼吸',
+        '冲突段落缩短句长',
+        '亲密场景按尺度调节描写深度',
+      ],
+      bannedWords: ['心动', '小鹿乱撞', '心跳加速', '不禁'],
+      bannedPatterns: ['他的眼神深邃', '她脸红了', '气氛暧昧'],
+      genreFit: ['古言', '言情', '宫斗'],
+      avoidGenre: ['硬科幻', '冷硬悬疑'],
+      notes: '情感靠“想做又没做”的张力，不靠形容词堆。',
     },
-    samples: ['她替他系披风时，指尖擦过喉结，手一抖，活结打成了死结。'],
+        samples: [
+      '她替他系披风时，指尖擦过喉结，手一抖，活结打成了死结。他低头看她，没说话，只抬手把结解开，又重新递回她手里。',
+      '炭盆里的火将熄未熄。她把他的外袍叠好，放在离自己最近的位置，又挪开半寸。门外有脚步声经过，她立刻把手收了回来。',
+      '“你冷么？”他问。她摇头，把手往袖里又缩了缩。他把手炉往她那边推了推，她没接，只把手炉边的灰拨平了。',
+    ],
   },
   {
     id: 'wuxia-hard',
     name: '冷硬江湖',
-    description: '江湖武斗与权力倾轧：短打硬桥、招式与伤情具体、少抒情。',
+    group: '古风',
+    tags: ['武侠', '江湖', '权谋'],
+    description: '江湖武斗与利益倾轧：短打硬桥、伤情具体、少抒情，残酷落在具体损失上。',
     fields: {
       pov: 'third-limited',
       tense: 'past',
@@ -113,19 +320,213 @@ export const STYLE_TEMPLATES = [
       paragraphLength: 'short',
       dialogueRatio: 0.35,
       metaphorDensity: 'low',
-      chapterTitleStyle: '动作短标题',
-      notes: '打斗写招式、距离、兵器重量与身体反应（呼吸、汗、伤），不写“剑气纵横”式空泛；武斗结果服从境界与铺垫。',
+      chapterTitleStyle: '动作短标题（4–8 字）',
+      voice: '冷、干脆，叙述者不抒情、不替人物开脱。',
+      diction: '兵器、招式、伤情、钱粮的具体词；不用雅化说法。',
+      imagery: '血、铁、雨、夜；比喻少而硬。',
+      dialogueStyle: '短、硬、带江湖切口；少解释，多试探与条件。',
+      pacing: '打斗写过程与代价；非打斗段落推进利益与立场变化。',
+      sensoryFocus: '触觉（痛、冷、湿）与听觉（金属、脚步）。',
+      must: [
+        '打斗写距离、兵器重量、身体反应与伤情',
+        '胜负服从境界与铺垫，不靠爆发',
+        '每章推进一次利益或立场变化',
+        '江湖规矩与人情要具体到能执行',
+      ],
+      never: [
+        '“剑气纵横”式空泛描写',
+        '无铺垫的越级取胜',
+        '打斗中长篇心理独白',
+        '抒情收尾',
+      ],
+      adjust: [
+        '一对多拆成几个短回合',
+        '对峙段落用沉默与动作代替对白',
+        '伤后写具体影响（握不住刀、走路跛）',
+      ],
+      bannedWords: ['剑气纵横', '天地变色', '不由分说', '电光石火'],
+      bannedPatterns: ['一刀劈下', '势不可挡', '快如闪电'],
+      genreFit: ['武侠', '江湖', '权谋'],
+      avoidGenre: ['轻松日常', '甜宠'],
+      notes: '江湖的残酷要落在具体损失上：钱、伤、人命、名声。',
     },
-    samples: ['刀从肩头削下去，血先没出来，过了半息才顺着刀背淌到手腕上。'],
+        samples: [
+      '刀从肩头削下去，血先没出来，过了半息才顺着刀背淌到手腕上。他握刀的手松了一下，又握紧，退半步，把左肩让到墙那边。',
+      '雨里三个人。他数着对方的呼吸，最左边那个呼吸短，伤在肋下。他从靴筒里摸出一枚铜钱，弹在地上，三个人同时低头。',
+      '“这条街，谁的？”对方问。他把断刀往地上一插：现在是我的。对方看了看刀，又看了看他的手，没再说话。',
+    ],
+  },
+  {
+    id: 'scifi',
+    name: '科幻硬核',
+    group: '科幻',
+    tags: ['科幻', '赛博', '末世'],
+    description: '冷静精确、概念落地；质感来自技术限制与代价，不靠术语堆砌。',
+    fields: {
+      pov: 'third-limited',
+      tense: 'past',
+      chapterWords: 3200,
+      sentenceLength: 'mixed',
+      paragraphLength: 'medium',
+      dialogueRatio: 0.3,
+      metaphorDensity: 'low',
+      chapterTitleStyle: '概念或事件短标题（4–8 字）',
+      voice: '冷静精确，叙述者像观察者，不惊叹技术。',
+      diction: '技术名词准确；术语首次出现时用功能或代价解释，不用形容词搪塞。',
+      imagery: '机械、光、数据、城市结构；意象服务于限制感。',
+      dialogueStyle: '信息密度高，人物按专业口径说话；少情绪化台词。',
+      pacing: '概念与事件交替；每章一个技术或社会细节落地。',
+      sensoryFocus: '视觉（光、界面）与听觉（机械、警报）。',
+      must: [
+        '技术设定自洽，给出代价与限制',
+        '每章至少一个“高科技低生活”的具体细节',
+        '概念通过人物使用呈现，不写说明书',
+        '社会结构影响人物选择',
+      ],
+      never: [
+        '用“量子”“纳米”当万能解释',
+        '大段设定说明',
+        '披科幻皮的玄幻（力量无科技逻辑）',
+        '技术解决一切冲突',
+      ],
+      adjust: [
+        '技术说明拆到人物操作里',
+        '灾难或战斗段落压短句',
+        '思辨段落允许长句，但要有具体场景',
+      ],
+      bannedWords: ['不可思议', '难以想象', '震撼'],
+      bannedPatterns: ['科技的伟大', '人类的未来', '仿佛整个宇宙'],
+      genreFit: ['科幻', '赛博', '末世'],
+      avoidGenre: ['古风', '仙侠'],
+      notes: '科幻的质感来自限制：技术能做什么、代价是什么、谁承担。',
+    },
+        samples: [
+      '楼顶的广告屏在雨里闪，光把水洼照成一片一片的紫。他摘下义眼擦了擦，装回去，世界的噪点少了些。街对面的清洁机还在响，扫不完的水。',
+      '舱门的压力读数跳到红色。她按住手动阀，掌心能感到金属的震动，一下，两下，像心跳。广播里在重复同一句话，她已经听不清了。',
+      '“这是第几代？”他问。技术员看了看手里的编号：第五代。前四代都没活过三个月。他把编号记下来，又划掉，改成第五代。',
+    ],
+  },
+  {
+    id: 'urban',
+    name: '都市现实',
+    group: '现代',
+    tags: ['都市', '现实', '职场', '情感'],
+    description: '平实带疲惫的幽默；冲突来自现实压力（钱、工作、关系），选择都有代价。',
+    fields: {
+      pov: 'third-limited',
+      tense: 'past',
+      chapterWords: 2800,
+      sentenceLength: 'mixed',
+      paragraphLength: 'medium',
+      dialogueRatio: 0.45,
+      metaphorDensity: 'low',
+      chapterTitleStyle: '生活化短语（4–10 字）',
+      voice: '平实，带一点疲惫的幽默；不评判人物选择。',
+      diction: '当代都市词汇（通勤、房租、加班），职业细节具体。',
+      imagery: '城市空间（地铁、写字楼、出租屋）、食物、屏幕。',
+      dialogueStyle: '日常口语，话里有话；职场对话有层级感。',
+      pacing: '以生活事件推进，冲突来自现实压力，不靠巧合。',
+      sensoryFocus: '视觉（光、屏幕）与听觉（城市噪音）。',
+      must: [
+        '冲突来自现实压力（钱、工作、关系），不靠巧合',
+        '职业与生活细节准确',
+        '人物的选择要有代价',
+        '对话能听出身份差异',
+      ],
+      never: [
+        '悬浮的豪门/霸总设定（除非题材明确需要）',
+        '用巧合解决困境',
+        '说教式旁白',
+        '把现实写成爽文',
+      ],
+      adjust: [
+        '职场场景多用短对白与潜台词',
+        '家庭场景放慢，写生活细节',
+        '低谷段落允许沉默与留白',
+      ],
+      bannedWords: ['不禁', '仿佛', '五味杂陈'],
+      bannedPatterns: ['他深吸一口气', '生活就是这样', '成年人的世界'],
+      genreFit: ['都市', '现实', '职场', '情感'],
+      avoidGenre: ['仙侠', '玄幻'],
+      notes: '真实感来自具体：工资多少、几点下班、房租占收入几成。',
+    },
+        samples: [
+      '地铁到站时，他被人流推着出去。手机震了一下，是房东：这个月房租涨两百。他站在站台上，把这条消息看了三遍，然后回了一个“好”。',
+      '加班到十一点，写字楼只剩他们这一层亮着。她把外卖盒推给他：你先吃，我改完这版。他打开盒子，发现是两份。',
+      '“这活我接。”他说。对面的主管抬头看他：你确定？他点头，手在桌下把简历捏皱了。散会后他把简历抚平，又塞回包里。',
+    ],
   },
 ]
+
+const STYLE_POV_LABELS = { 'third-limited': '第三人称限知', first: '第一人称', 'third-omniscient': '第三人称全知' }
+const STYLE_TENSE_LABELS = { past: '过去时', present: '现在时' }
+const STYLE_SENTENCE_LABELS = { short: '短句为主', mixed: '长短混合', long: '长句为主' }
+const STYLE_PARAGRAPH_LABELS = { short: '短段为主', medium: '中等段落', long: '长段为主' }
+const STYLE_DENSITY_LABELS = { low: '低', medium: '中', high: '高' }
+
+const styleText = (value) => (typeof value === 'string' ? value.trim() : '')
+const styleList = (value) => (Array.isArray(value) ? value.map((item) => String(item ?? '').trim()).filter(Boolean) : [])
+
+/**
+ * 把文风契约字段渲染成可读文本，注入生成/审校提示词。
+ * 结构化 JSON 对模型不友好（转义、无层次），这里按「基础 → 语言 → 对白节奏 → 三档规则 → 禁忌 → 题材」分行。
+ */
+export function formatStyleFields(fields, options = {}) {
+  if (!fields || typeof fields !== 'object') return '（未设置文风契约）'
+  const lines = []
+  const pov = STYLE_POV_LABELS[fields.pov] ?? styleText(fields.pov)
+  const tense = STYLE_TENSE_LABELS[fields.tense] ?? styleText(fields.tense)
+  if (pov || tense) lines.push(`【视角与时态】${[pov, tense].filter(Boolean).join('，')}`)
+  const basic = []
+  if (Number(fields.chapterWords) > 0) basic.push(`单章约 ${Number(fields.chapterWords)} 字`)
+  if (STYLE_SENTENCE_LABELS[fields.sentenceLength]) basic.push(STYLE_SENTENCE_LABELS[fields.sentenceLength])
+  else if (styleText(fields.sentenceLength)) basic.push(styleText(fields.sentenceLength))
+  if (STYLE_PARAGRAPH_LABELS[fields.paragraphLength]) basic.push(STYLE_PARAGRAPH_LABELS[fields.paragraphLength])
+  if (Number.isFinite(Number(fields.dialogueRatio))) basic.push(`对白约占 ${Math.round(Number(fields.dialogueRatio) * 100)}%`)
+  if (STYLE_DENSITY_LABELS[fields.metaphorDensity]) basic.push(`比喻密度${STYLE_DENSITY_LABELS[fields.metaphorDensity]}`)
+  if (basic.length) lines.push(`【篇幅与节奏参数】${basic.join('；')}`)
+  const voice = styleText(fields.voice)
+  const diction = styleText(fields.diction)
+  if (voice) lines.push(`【叙述声音】${voice}`)
+  if (diction) lines.push(`【用词偏好】${diction}`)
+  const imagery = styleText(fields.imagery)
+  if (imagery) lines.push(`【意象与比喻】${imagery}`)
+  const sensory = styleText(fields.sensoryFocus)
+  if (sensory) lines.push(`【感官侧重】${sensory}`)
+  const dialogue = styleText(fields.dialogueStyle)
+  if (dialogue) lines.push(`【对白写法】${dialogue}`)
+  const pacing = styleText(fields.pacing)
+  if (pacing) lines.push(`【节奏与信息密度】${pacing}`)
+  const must = styleList(fields.must)
+  const never = styleList(fields.never)
+  const adjust = styleList(fields.adjust)
+  if (must.length) lines.push('【必须贯彻】', ...must.map((item) => `- ${item}`))
+  if (never.length) lines.push('【绝对禁止】', ...never.map((item) => `- ${item}`))
+  if (adjust.length) lines.push('【按场景调节】', ...adjust.map((item) => `- ${item}`))
+  const bannedWords = styleList(fields.bannedWords)
+  if (bannedWords.length) lines.push(`【禁用词】${bannedWords.join('、')}`)
+  const bannedPatterns = styleList(fields.bannedPatterns)
+  if (bannedPatterns.length) lines.push('【禁用句式】', ...bannedPatterns.map((item) => `- ${item}`))
+  const title = styleText(fields.chapterTitleStyle)
+  if (title) lines.push(`【章节标题】${title}`)
+  const genreFit = styleList(fields.genreFit)
+  if (genreFit.length) lines.push(`【适用题材】${genreFit.join('、')}`)
+  const avoidGenre = styleList(fields.avoidGenre)
+  if (avoidGenre.length) lines.push(`【不适用题材】${avoidGenre.join('、')}`)
+  const notes = styleText(fields.notes)
+  if (notes && options.skipNotes !== true) lines.push(`【额外要求】${notes}`)
+  return lines.length ? lines.join('\n') : '（未设置文风契约）'
+}
 
 export function listStyleTemplates() {
   return STYLE_TEMPLATES.map((template) => ({
     id: template.id,
     name: template.name,
+    group: template.group ?? '通用',
+    tags: Array.isArray(template.tags) ? template.tags : [],
     description: template.description,
     fields: template.fields,
+    samples: Array.isArray(template.samples) ? template.samples : [],
   }))
 }
 
@@ -221,7 +622,7 @@ export function buildOutlineUserPrompt(input) {
     `全书预计章节数：${input.totalChapters || '未定'}`,
     `单章目标字数：${input.wordBudget}`,
     `已确认构思：${JSON.stringify(input.premise)}`,
-    `文风契约：${JSON.stringify(input.styleFields)}`,
+    `文风契约：\n${formatStyleFields(input.styleFields, { skipNotes: true })}`,
   )
   // 通用机制：把文风 notes 原文单独展示，避免被长 JSON 淹没。
   // 具体题材要求由用户写在 notes / 提示词注入 / 本次额外要求里，插件不内置。
@@ -302,7 +703,7 @@ export function buildBibleUserPrompt(input) {
     `项目：${input.title}（语言：${input.language}）`,
     '任务：为这部长篇小说建立可执行的角色与世界设定。',
     `已确认构思：${JSON.stringify(input.premise)}`,
-    `文风契约：${JSON.stringify(input.styleFields ?? {})}`,
+    `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   ]
   if (input.outlineChapters?.length) {
     lines.push('已有章纲摘要：')
@@ -332,7 +733,7 @@ export function buildBibleCharactersUserPrompt(input) {
     `项目：${input.title}（语言：${input.language}）`,
     '任务：为这部长篇小说生成角色设定。',
     `已确认构思：${JSON.stringify(input.premise)}`,
-    `文风契约：${JSON.stringify(input.styleFields ?? {})}`,
+    `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   ]
   if (input.outlineChapters?.length) {
     lines.push('已有章纲摘要：')
@@ -362,7 +763,7 @@ export function buildBibleWorldUserPrompt(input) {
     `项目：${input.title}（语言：${input.language}）`,
     '任务：为这部长篇小说生成地点、规则、势力和物品设定。',
     `已确认构思：${JSON.stringify(input.premise)}`,
-    `文风契约：${JSON.stringify(input.styleFields ?? {})}`,
+    `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   ]
   if (input.outlineChapters?.length) {
     lines.push('已有章纲摘要：')
@@ -404,10 +805,29 @@ export const CHAPTER_SYSTEM_PROMPT = [  '你是中文长篇小说写作助手，
   '- 严格贴合章纲的剧情梗概；',
   '- 从具体动作、对话或场景进入，不复述章纲和前情；',
   '- 结尾停在一个人物、动作或决定的具体状态上，让下一章可以直接承接；不要用总结式收束。',
-  '- 遵守文风契约中的视角、时态、句长、段落长度、对话占比、禁用词与额外要求；',
+  '- 遵守文风契约中的视角、时态、句长、段落、对白、感官侧重、禁用词、三档规则（必须贯彻/绝对禁止/按场景调节）与额外要求；',
   '- 与前文结尾自然衔接，不复述前情；续写时从上一章结尾的场景或动作往后写，禁止重复已经发生的事件、对话和环境描写；',
   '- 只输出正文，不要章节标题、说明、Markdown 代码围栏或分点提纲；',
   '- 不要出现“本章”“下一章”“读者”等元叙述。',
+].join('\n')
+
+/**
+ * 把技法卡片格式化为提示词段（最多 2 张，正文原样带入）。
+ * 返回空串表示没有卡片，调用方据此决定是否追加。
+ */
+export function formatCraftCards(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return ''
+  const lines = ['【写作技法参考（按需，不必全部套用）】']
+  for (const card of cards.slice(0, 2)) {
+    if (!card || typeof card !== 'object') continue
+    lines.push('', `### ${card.title ?? card.id ?? '技法'}`, String(card.body ?? ''))
+  }
+  return lines.join('\n')
+}
+
+export const CRAFT_AGENT_HINT = [
+  '写正文、修订或修复前，如果涉及具体场景类型（打斗、对白、情绪、伏笔、转场、开篇、节奏），可先调 novel_craft action=recommend（带 task/instruction）取 1–2 张推荐卡片，或 action=read id=... 读取完整技法。',
+  '技法卡片是通用写作方法，不是本书设定，不必全部套用；与章纲、文风契约冲突时以章纲和文风契约为准。',
 ].join('\n')
 
 export function buildChapterUserPrompt(input) {
@@ -419,7 +839,7 @@ export function buildChapterUserPrompt(input) {
     JSON.stringify(input.chapter, null, 2),
     '',
     '【文风契约】',
-    JSON.stringify(input.styleFields, null, 2),
+    formatStyleFields(input.styleFields),
   ]
   if (Array.isArray(input.samples) && input.samples.length > 0) {
     lines.push('', '【文风示例（模仿其语感与节奏，不要照抄情节）】', input.samples.slice(0, 3).join('\n\n'))
@@ -453,7 +873,7 @@ export function buildChapterUserPrompt(input) {
       lines.push('', '【时间线】', JSON.stringify(context.timeline, null, 2))
     }
     if (context.notes?.length) {
-      lines.push('', '【作者备注（来自讨论结论，优先遵守）】', JSON.stringify(context.notes, null, 2))
+      lines.push('', '【作者备注（历史记录，优先遵守）】', JSON.stringify(context.notes, null, 2))
     }
   } else {
     if (input.facts?.bible) {
@@ -469,6 +889,7 @@ export function buildChapterUserPrompt(input) {
   if (input.instruction) {
     lines.push('', '【本章额外要求】', input.instruction)
   }
+
   if (input.previousTail || input.storyContext?.continuity?.previousTail) {
     lines.push('', '【续写规则】从上一章结尾的场景或动作往后写；禁止重复上一章已经发生的事件、对话和环境描写，也不要写“接上回”之类的过渡套话。')
   }
@@ -490,23 +911,70 @@ export const DECONSTRUCT_SYSTEM_PROMPT = [
   '只根据给定文本提炼，不要编造文本中没有的设定；人物以文本为准。',
 ].join('\n')
 
-export const STYLE_AUDIT_SYSTEM_PROMPT = [
-  '你是中文小说的风格审稿人，专门识别“AI 味”。',
+export const DECONSTRUCT_STRUCTURE_SYSTEM_PROMPT = [
+  '你是中文小说的结构拆解编辑，负责把文本切成有意义的段落/章节单元。',
   '只输出 JSON，不要 Markdown 围栏。',
-  '格式：{"score": 0-100, "summary": "一句话总评", "issues": [{"category": "套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题", "severity": "low|medium|high", "quote": "原文片段", "advice": "具体怎么改"}]}。',
-  '判断标准：是否像模板化生成、是否解释过多、是否用抽象情绪代替具体动作、是否句式重复、对话是否不自然、是否用总结代替场景。',
-  '只报确实影响阅读的问题；同一类问题合并成一条，不要逐段罗列；同一段落最多报一条；不要为了凑数报低价值问题。',
-  'severity 标准：high=明显套话/解释过度/节奏崩坏，必须改；medium=建议改；low=可选润色。',
+  '格式：{"summary":"故事梗概（200字内）","units":[{"index":1,"span":"该单元在文本中的起始标记（首句或关键短语）","summary":"60–120字，只写该单元里发生的事","function":"开场|铺垫|冲突|转折|高潮|收束|钩子"}]}。',
+  '单元按文本顺序编号，一个单元对应一次完整的场景或事件，不要按字数平均切分；function 从中选最贴近的一个。',
+  'summary 只写文本中实际发生的事，不推测后文，不编造文本没有的人物或设定，不评价文笔。',
+].join('\n')
+
+export const DECONSTRUCT_CHARACTERS_SYSTEM_PROMPT = [
+  '你是中文小说的人物与设定拆解编辑。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"characters":[{"name":"","role":"","description":"","traits":[],"goal":""}],"settings":{"locations":[],"rules":[],"factions":[],"items":[]},"relations":[{"from":"","to":"","type":"","note":""}]}。',
+  '人物名、地名、组织名一律以文本为准，文本没有提到的不要补；traits 用文本里可验证的行为或描述归纳 2–6 个。',
+  '只输出文本中出现的设定；relations 只写文本能证明的关系，note 说明依据。不评价文笔。',
+].join('\n')
+
+export const DECONSTRUCT_TECHNIQUE_SYSTEM_PROMPT = [
+  '你是中文小说的技法拆解编辑，负责提炼可复用的写法与钩子，不做文风评价。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"hooks":["可复用桥段/钩子"],"techniques":[{"name":"技法名","how":"可执行做法","example":"文本中的简短例子（≤60字，不整段复制）"}],"pacing":"节奏观察（100字内）"}。',
+  'techniques 给 3–6 条，每条 how 写成别的作者能照着做的步骤，不要空泛形容；example 摘文本里一句或一个动作，不要整段复制。',
+  '只依据给定文本，不编造文本没有的内容，不评价文笔好坏。',
+].join('\n')
+
+export const STYLE_AUDIT_SYSTEM_PROMPT = [
+  '你是中文小说的风格审稿人，专门识别“AI 味”。只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"score": 0-100, "summary": "一句话总评", "aiFlavor": {"level": "轻|中|重", "score": 0-100, "markers": [{"type": "禁用词|句式|结构|节奏", "quote": "原文片段", "word": "命中词"}]}, "issues": [{"category": "AI味|套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题|文风契约", "severity": "low|medium|high", "quote": "原文片段", "advice": "具体怎么改"}]}。',
+  'score 与 aiFlavor.score 都是 0-100，越高越像人写；aiFlavor.level：80 以上「轻」、60–79「中」、60 以下「重」。',
+  '按下面的 AI 指纹清单逐项检查，命中就写进 markers（并作为 AI味 issue 报出）：',
+  '1) 一级禁用词：仿佛、好像、犹如、宛若、一丝、一抹、些许、几分、隐约、深吸一口气、缓缓、不禁、微微、轻轻、淡淡、眼中闪过、嘴角勾起、眉头微皱、心中一动、心头一震、心下了然、不容置疑、不易察觉、显而易见、坚定、深邃、凛冽、突然、瞬间、不由自主、情不自禁、不由得、嘴角微扬、脸色一变、目光如炬。',
+  '2) AI 句式：“，带着……”万能状语；“像XX一样”“仿佛能……一般”陈词比喻；“他的声音很轻，却像……”；“XX说道”机械标签；“他/她感到……”“他/她意识到……”直接告知；连续 3 句以上排比；“有的……有的……有的……”；“不是……而是……”过密。',
+  '3) 结构指纹：章末总结/升华/伏笔预告收束；每段 4–6 句且长度均匀；几乎每句对话都带“说道”；抽象情绪直述；解释过度；面面俱到无留白。',
+  '4) 真人基准对照：段落 1–3 句为主；对话 60% 以上无标签（用动作替代“说”）；情绪用动作/身体反应展示；生活化比喻；大量省略留白；章尾用动作或对话收束。',
+  '5) 若给了文风契约，先按契约检查：违反【绝对禁止】或【必须贯彻】的必须报（category 用「文风契约」并引用原文片段）；命中禁用词/禁用句式的一律报 high。',
+  '只报确实影响阅读的问题；同一类问题合并成一条，不要逐段罗列；同一段落最多报一条；没有就返回空数组。',
+  'severity 标准：high=明显 AI 味/套话/解释过度/节奏崩坏，必须改；medium=建议改；low=可选润色。',
   '如果整体达到可读标准，issues 返回空数组；score 按整体质量给分，不要因为存在 low 级问题就压低。',
 ].join('\n')
 
 export const CHAPTER_REVIEW_SYSTEM_PROMPT = [
-  '你是中文长篇小说的统一审校编辑，同时检查文风问题和连续性冲突。',
+  '你是中文长篇小说的统一审校编辑，同时检查文风问题（含 AI 味）和连续性冲突。',
   '只输出 JSON，不要 Markdown 围栏。',
-  '格式：{"score":0-100,"summary":"一句话总评","styleIssues":[{"category":"套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题","severity":"low|medium|high","quote":"原文片段","advice":"具体怎么改"}],"continuityIssues":[{"level":"warn|error","message":"具体冲突","chapter":前文章节号,"advice":"怎么改"}]}。',
-  '文风判断：是否模板化、解释过多、用抽象情绪代替具体动作、句式重复、对话不自然、用总结代替场景；只报确实影响阅读的问题，同类问题合并，同一段最多一条，没有就返回空数组。',
+  '格式：{"score":0-100,"summary":"一句话总评","aiFlavor":{"level":"轻|中|重","score":0-100,"markers":[{"type":"禁用词|句式|结构|节奏","quote":"原文片段","word":"命中词"}]},"styleIssues":[{"category":"AI味|套话|解释过度|情绪告知|句式模板|对话不自然|总结式叙述|空洞比喻|节奏问题","severity":"low|medium|high","quote":"原文片段","advice":"具体怎么改"}],"continuityIssues":[{"level":"warn|error","message":"具体冲突","chapter":前文章节号,"advice":"怎么改"}]}。',
+  'AI 味检测：一级禁用词（仿佛/好像/犹如/宛若/一丝/一抹/些许/几分/隐约/深吸一口气/缓缓/不禁/微微/轻轻/淡淡/眼中闪过/嘴角勾起/眉头微皱/心中一动/心头一震/心下了然/不容置疑/不易察觉/显而易见/坚定/深邃/凛冽/突然/瞬间/不由自主/情不自禁）；AI 句式（“，带着……”“像XX一样”“XX说道”“他/她感到……”“他/她意识到……”、连续 3 句以上排比）；结构指纹（章末总结/升华/伏笔预告收束、段落长度均匀、抽象情绪直述、解释过度）。',
+  '真人基准对照：段落 1–3 句为主；对话 60% 以上无标签；情绪用动作展示；生活化比喻；省略留白；章尾用动作/对话收束。',
+  '文风问题只报确实影响阅读的；同类合并，同一段最多一条；没有就返回空数组。',
   '连续性判断：只报告能从前文摘要、章纲和设定中证明的矛盾——时间线、人物位置/状态、因果链、伏笔、设定、能力层级；没有就返回空数组。',
   '不要因为题材或关系尺度本身判问题；不要评价题材偏好。',
+].join('\n')
+
+export const DESLOP_SYSTEM_PROMPT = [
+  '你是中文网文的“去 AI 味”改写编辑。只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"text": "改写后全文", "changes": [{"from": "原文片段", "to": "改写后片段", "reason": "禁用词|句式|结构|节奏|情绪告知|对话标签|书面腔|章末升华"}]}。',
+  '原则：改最少、效果最大；只改“怎么说”，不改“说什么”；保留作者意图。剧情、人物、信息、伏笔、段落顺序一概不动。',
+  '规则：',
+  '- 禁用词（仿佛/好像/犹如/宛若/一丝/一抹/些许/几分/隐约/深吸一口气/缓缓/不禁/微微/轻轻/淡淡/眼中闪过/嘴角勾起/眉头微皱/心中一动/心头一震/心下了然/不容置疑/不易察觉/显而易见/坚定/深邃/凛冽/突然/瞬间/不由自主/情不自禁）替换成具体动作或白描，不得换成另一个形容词；无意义动作（如“深吸一口气”）直接删。',
+  '- 句式去套路：“，带着……”拆成独立短句；“像XX一样”“仿佛能……一般”改生活化比喻或直接白描；“XX说道”用动作替代或删标签；“他/她感到……”“他/她意识到……”改成身体反应与行为。',
+  '- 抽象情绪外化：“他很紧张”→“他的手在抖”；“她很伤心”→“她转过身去，肩膀颤了一下”。',
+  '- 排比保留最强一条，其余删；长句拆短；允许不完整句和口语。',
+  '- 对话去腔调：加口语词、允许答非所问、用动作穿插、删解释性台词。',
+  '- 删章末总结/升华/伏笔预告，改用动作、对话或场景收束。',
+  '- 书面腔改口语（“不容置疑”→“就是”；“无可奈何”→“没办法”）。',
+  '- 保留原有情节、人物、信息、伏笔；不改设定、不新增剧情；改动尽量小。',
+  'changes 只列实际改动（最多 30 条），from/to 各取原文/改文中最短可定位片段。',
 ].join('\n')
 
 export const SUMMARY_SYSTEM_PROMPT = [
@@ -539,21 +1007,6 @@ export const OUTLINE_REPAIR_SYSTEM_PROMPT = [
   '只输出列出的受影响章；只做消除冲突所需的最小改动；保留原有情节、人物与已埋伏笔；时间线与因果链必须前后衔接；不得无铺垫提升角色境界；不要评价文笔。',
 ].join('\n')
 
-export const DISCUSSION_SYSTEM_PROMPT = [
-  '你是中文写作讨论助手。',
-  '用户会针对一个具体的创作对象提出疑问或修改想法。',
-  '优先使用提供的上下文；不要编造与上下文冲突的设定。',
-  '如果上下文不足，先按最合理的假设给出可执行方案，并明确标注哪一处是假设；不要用反问或提问代替方案。',
-  '你可以分析、比较、给出具体可执行的修改建议（可以给示例句子），但不要声称已经修改文件。',
-  '回答简洁、具体，避免空泛套话。',
-  '只输出 JSON 对象，不要 Markdown 围栏。',
-  '格式：{"stage":"reply|clarify|propose","question":"","options":[],"allowCustom":true,"reply":"给用户看的完整回答","conclusion":"一句话结论","suggestions":["具体改法"],"todos":["可执行动作"],"risks":["风险或注意"],"actions":[{"type":"允许的动作","target":{},"fields":{},"instruction":"","reason":"为什么"}]}。',
-  'stage=clarify 时只输出 question、2–4 个 options 和 allowCustom，不要输出 actions；stage=propose 时输出完整 actions；stage=reply 时只讨论，不给 actions。',
-  'reply 是主体回答；其余字段从回答中提炼，没有就给空字符串或空数组。',
-  '如果给出 chapter-instruction，instruction 必须是可直接执行的修订说明：改哪一段、改成什么、保留什么；不要只写结论或方向。',
-  'reply 控制在 600 字以内；suggestions 与 todos 各不超过 5 条，不要重复 reply 的内容。',
-].join('\n')
-
 export const VOLUME_PLAN_SYSTEM_PROMPT = [
   '你是中文长篇小说的分卷编辑，负责为本卷确定舞台与卷级目标。',
   '只输出 JSON 对象，不要 Markdown 围栏，不要解释。',
@@ -568,7 +1021,7 @@ export function buildVolumePlanUserPrompt(input) {
     `项目：${input.title}（语言：${input.language}）`,
     `目标卷：${input.volume.title || input.volume.id}`,
     `已确认构思：${JSON.stringify(input.premise)}`,
-    `文风契约：${JSON.stringify(input.styleFields ?? {})}`,
+    `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   ]
   if (input.previousVolume) {
     lines.push('上一卷：')
@@ -593,6 +1046,11 @@ export function buildVolumePlanUserPrompt(input) {
   return lines.join('\n')
 }
 
+/*
+ * 提示词目录。每条都带 revision（内置提示词版本号）：默认提示词内容每次改版时递增
+ * 该条的 revision，用户覆盖记录 baseRevision/baseHash，用来判断「默认已更新」。
+ * 统一默认 1；后续只改某一条时，在其条目里显式写 revision 即可覆盖该默认值。
+ */
 export const PROMPT_CATALOG = [
   {
     key: 'premise',
@@ -686,18 +1144,52 @@ export const PROMPT_CATALOG = [
     default: DECONSTRUCT_SYSTEM_PROMPT,
   },
   {
+    key: 'deconstructStructure',
+    label: '拆书·结构',
+    category: '拆书',
+    revision: 1,
+    description: '把文本切成有意义的单元，标注功能与单元摘要。',
+    default: DECONSTRUCT_STRUCTURE_SYSTEM_PROMPT,
+  },
+  {
+    key: 'deconstructCharacters',
+    label: '拆书·人物设定',
+    category: '拆书',
+    revision: 1,
+    description: '只依据文本拆出人物、设定与人物关系。',
+    default: DECONSTRUCT_CHARACTERS_SYSTEM_PROMPT,
+  },
+  {
+    key: 'deconstructTechnique',
+    label: '拆书·技法',
+    category: '拆书',
+    revision: 1,
+    description: '提炼可复用钩子、写作技法与节奏观察。',
+    default: DECONSTRUCT_TECHNIQUE_SYSTEM_PROMPT,
+  },
+  {
     key: 'styleAudit',
     label: '文风检测',
     category: '审校',
-    description: '识别模板化、解释过度、情绪告知等 AI 味问题。',
+    revision: 2,
+    description: '识别 AI 指纹（禁用词/AI 句式/结构/节奏）并给出 aiFlavor 等级。',
     default: STYLE_AUDIT_SYSTEM_PROMPT,
   },
   {
     key: 'review',
     label: '统一审校',
     category: '审校',
-    description: '同时检查文风问题和连续性冲突，只报影响阅读的问题。',
+    revision: 2,
+    description: '同时检查文风（含 AI 味）和连续性冲突，只报影响阅读的问题。',
     default: CHAPTER_REVIEW_SYSTEM_PROMPT,
+  },
+  {
+    key: 'deslop',
+    label: '去 AI 味改写',
+    category: '审校',
+    revision: 1,
+    description: '只改“怎么说”不改“说什么”，删套话、去解释、回人味，输出改写全文与改动清单。',
+    default: DESLOP_SYSTEM_PROMPT,
   },
   {
     key: 'summary',
@@ -727,11 +1219,4 @@ export const PROMPT_CATALOG = [
     description: '按审查问题最小改动 chapters 的 synopsis。',
     default: OUTLINE_REPAIR_SYSTEM_PROMPT,
   },
-  {
-    key: 'discussion',
-    label: '讨论助手',
-    category: '讨论',
-    description: '针对具体创作对象讨论、给可执行建议，不直接改文件。',
-    default: DISCUSSION_SYSTEM_PROMPT,
-  },
-]
+].map((entry) => ({ revision: 1, ...entry }))

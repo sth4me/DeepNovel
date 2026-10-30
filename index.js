@@ -2,9 +2,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NovelWriterService, runWithProgress } from './service.js'
+import { NovelWriterService, disposeSignatureWatches, runWithProgress } from './service.js'
 import { LOCK_RULES, locksConflict, runResource } from './lock-rules.js'
-import { setNovelWriter } from './runtime.js'
+import { setNovelLocks, setNovelWriter } from './runtime.js'
+import { createCraftSkillProvider } from './skills.js'
 
 export { runResource } from './lock-rules.js'
 
@@ -22,16 +23,33 @@ export const inject = [
   'llm',
   'agentDefaultModel',
   'webServer',
+  'skills',
 ]
 
 function errorText(error) {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error)
 }
 
+/**
+ * 部分动作使用独立的 resource：
+ * - reindex 是只读索引维护，不与正文生成等写动作冲突；
+ * - import-file-project 会整体覆盖 story/，用独立 resource 串行化，并与所有进行中的写动作互斥（acquireRun 里额外检查）。
+ */
+function resolveActionResource(action, params) {
+  if (action === 'reindex') return 'read:index'
+  if (action === 'import-file-project') return 'project:import'
+  return runResource(action, params)
+}
+
 export function acquireRun(activeRuns, owner, action, params) {
   sweepStaleRuns(activeRuns)
-  const resource = runResource(action, params)
+  const resource = resolveActionResource(action, params)
   if (!resource) return { resource: null, controller: new AbortController(), acquired: false }
+  // 跨 owner 冲突：UI（ui:<root>）与助手（agent:<session>）共用同一项目资源，需要互相看见对方的活动锁。
+  for (const [otherOwner, locks] of activeRuns) {
+    if (otherOwner === owner || !locks || locks.size === 0) continue
+    if (locksConflict(locks, resource)) return { resource, busy: true }
+  }
   let locks = activeRuns.get(owner)
   if (locksConflict(locks, resource)) return { resource, busy: true }
   if (!locks) {
@@ -54,10 +72,264 @@ export function releaseRun(activeRuns, owner, handle) {
   if (locks.size === 0) activeRuns.delete(owner)
 }
 
+/** 当前活动锁快照（sweep 后）：project-state / project-runs 用于展示助手与 UI 的活动。 */
+export function listActiveLocks(activeRuns) {
+  sweepStaleRuns(activeRuns)
+  const locks = []
+  for (const [owner, entries] of activeRuns) {
+    if (!entries) continue
+    for (const [resource, controller] of entries) {
+      locks.push({ owner, resource, startedAt: controller?.startedAt ?? null })
+    }
+  }
+  return locks
+}
+
 /**
  * 模型调用可能卡死；锁不设上限会让整个项目永久 busy。
  * 超时只 abort 并移除对应锁，动作自身的 finally 仍会正常收尾。
  */
+const conversationCompactions = new Map()
+
+/**
+ * 对子代理执行手动压缩（等价 /compact；command-compact 走同一个 compactNow）。
+ * 返回 { compacted:false|true, items?, tokens?, message } 或 { ok:false, error:{message, code?} }。
+ */
+/**
+ * 找出「压缩目标子代理」：
+ * - 只读 conversation meta，**不新建子代理**（新建会跑首轮 → 立即压缩必 busy）；
+ * - childId 存在但 agent 不在（回合结束后的 continuable 子会话）→ resume 唤醒后再压缩；
+ * - resume 失败或没有 childId → 返回可操作的中文错误。
+ */
+export async function resolveCompactionChild({ ctx, root, readConversationMeta, modelOptions, presets }) {
+  const meta = await readConversationMeta(root)
+  const childId = typeof meta?.childId === 'string' ? meta.childId : null
+  if (!childId) {
+    return { ok: false, error: { message: '还没有对话历史，先在 AI 页发送一条消息' } }
+  }
+  let childAgent = ctx.agents?.get?.(childId) ?? null
+  if (!childAgent) {
+    // resume 必须带 setup（与 DSH session-controller 的 composeAgent 一致）：
+    // 否则恢复出的 agent 没有挂载预设，commands / compaction 等预设服务都取不到。
+    const presetApi = presets ?? ctx.agentPresets
+    let setup
+    try {
+      if (presetApi && typeof presetApi.resolve === 'function' && typeof presetApi.mount === 'function') {
+        const resolved = await presetApi.resolve('novel-writer')
+        if (resolved?.id) {
+          setup = async (agentCtx) => {
+            await presetApi.mount(agentCtx, resolved.id)
+          }
+        }
+      }
+    } catch {
+      setup = undefined
+    }
+    try {
+      const handle = await ctx.agents.resume({
+        resumeSessionId: childId,
+        ...(modelOptions ? { agentOptions: modelOptions } : {}),
+        ...(setup ? { setup } : {}),
+      })
+      childAgent = handle?.agent ?? null
+    } catch {
+      childAgent = null
+    }
+    if (!childAgent) {
+      return { ok: false, error: { message: '无法唤醒对话会话，请先在 AI 页发送一条消息后重试' } }
+    }
+  }
+  return { childId, childAgent }
+}
+
+/** 解析 command-compact 的 success/error 文案（英文），转成结构化结果。 */
+export function interpretCompactExecution(execution) {
+  if (!execution) return { ok: false, error: { message: '当前预设未启用压缩' } }
+  // 兼容两种返回：{ commandId, result:{kind,text} } 或直接 { kind, text }。
+  const result = execution.result && typeof execution.result === 'object'
+    ? execution.result
+    : (typeof execution.kind === 'string' ? execution : {})
+  const text = String(result.text ?? '')
+  if (result.kind === 'success') {
+    if (/no compactable history/i.test(text)) return { compacted: false, message: '没有可压缩的历史' }
+    const itemsMatch = text.match(/compacted\s+([\d,]+)\s+(?:history\s+items?|items?)/i)
+    const tokensMatch = text.match(/\(~\s*([\d,]+)\s*tokens?\)/i)
+    if (itemsMatch) {
+      const items = Number(itemsMatch[1].replace(/,/g, '')) || 0
+      const tokens = tokensMatch ? Number(tokensMatch[1].replace(/,/g, '')) || 0 : 0
+      return { compacted: true, items, tokens, message: '已压缩 ' + items + ' 条历史（约 ' + tokens + ' tokens）' }
+    }
+    return { compacted: true, message: text || '已压缩历史' }
+  }
+  const map = [
+    [/(busy|not idle|active compaction|unavailable because|another (?:compaction|command)|already (?:running|in progress))/i, '会话正在生成或已有压缩任务，请稍后再试'],
+    [/cancel/i, '压缩已取消'],
+    [/chang/i, '对话历史在压缩过程中变化，请重试'],
+    [/summar/i, '摘要没有产生有效压缩，历史未改动（对话太短或内容过于集中）'],
+    [/commit/i, '压缩未干净完成，请检查对话后重试'],
+    [/(persist|save)/i, '压缩完成但会话保存失败'],
+  ]
+  const hit = map.find(([pattern]) => pattern.test(text))
+  return { ok: false, error: { message: hit ? hit[1] : (text || '压缩失败') } }
+}
+
+function compactErrorResult(error) {
+  const code = error?.code
+  const messages = {
+    busy: '会话正在生成或已有压缩任务，请稍后再试',
+    cancelled: '压缩已取消',
+    changed: '对话历史在压缩过程中变化，请重试',
+    summary: '摘要没有产生有效压缩，历史未改动（对话太短或内容过于集中）',
+    commit: '压缩未干净完成，请检查对话后重试',
+    persistence: '压缩完成但会话保存失败',
+  }
+  return { ok: false, error: { message: messages[code] ?? (error?.message ?? String(error)), code: code ?? null } }
+}
+
+/**
+ * 对子代理执行手动压缩（等价 /compact）。
+ * 主路径走宿主 commands 服务：预设里 compaction 组做了 isolate，宿主 ctx 取不到该服务，
+ * 但 command-compact 在隔离作用域内、由它代为执行（与官方 /compact 行为一致）。
+ * 返回 { compacted:false|true, items?, tokens?, message } 或 { ok:false, error:{message, code?} }。
+ */
+export async function compactConversationChild({ childId, childAgent, service, root, commands, agentPresets }) {
+  if (!childAgent) {
+    return { ok: false, error: { message: '对话会话尚未就绪，请先在 AI 页发送一条消息' } }
+  }
+  if (conversationCompactions.has(childId)) {
+    return { ok: false, error: { message: '压缩进行中，请稍后再试' } }
+  }
+  const writeCompactRun = async (items, tokens, compacted) => {
+    try {
+      await service?.writeRun?.(root, {
+        runId: 'run-' + Date.now() + '-' + randomUUID().slice(0, 8),
+        kind: 'conversation.compact',
+        createdAt: new Date().toISOString(),
+        model: null,
+        system: null,
+        messages: [],
+        output: JSON.stringify({ items, tokens, compacted }),
+        usage: null,
+        durationMs: 0,
+        inputHash: null,
+      })
+    } catch {
+      // 诊断 run 写失败不影响压缩结果
+    }
+  }
+  // 1) 官方 API：读取子代理预设 isolate 组内的 compaction 服务（commands 视图按 agent 作用域解析，可能拿不到）。
+  let presetCompaction = null
+  if (agentPresets && typeof agentPresets.serviceFor === 'function') {
+    try {
+      presetCompaction = agentPresets.serviceFor(childAgent, 'compaction')
+    } catch {
+      presetCompaction = null
+    }
+  }
+  if (presetCompaction && typeof presetCompaction.compactNow === 'function') {
+    conversationCompactions.set(childId, true)
+    try {
+      const result = await presetCompaction.compactNow(childAgent, new AbortController().signal)
+      if (!result) {
+        await writeCompactRun(0, 0, false)
+        return { compacted: false, message: '没有可压缩的历史' }
+      }
+      const items = Array.isArray(result.shadowedSeqs) ? result.shadowedSeqs.length : 0
+      const tokens = Number(result.shadowedTokenCount) || 0
+      await writeCompactRun(items, tokens, true)
+      return { compacted: true, items, tokens, message: '已压缩 ' + items + ' 条历史（约 ' + tokens + ' tokens）' }
+    } catch (error) {
+      await writeCompactRun(0, 0, false)
+      return compactErrorResult(error)
+    } finally {
+      conversationCompactions.delete(childId)
+    }
+  }
+  // 2) fallback：宿主 commands 服务 → 在子代理作用域执行官方 /compact 命令。
+  if (commands && typeof commands.execute === 'function') {
+    conversationCompactions.set(childId, true)
+    try {
+      let execution = null
+      try {
+        execution = await commands.execute(childAgent, '/compact', [], new AbortController().signal)
+      } catch (error) {
+        await writeCompactRun(0, 0, false)
+        return compactErrorResult(error)
+      }
+      const interpreted = interpretCompactExecution(execution)
+      await writeCompactRun(interpreted.items ?? 0, interpreted.tokens ?? 0, Boolean(interpreted.compacted))
+      return interpreted
+    } finally {
+      conversationCompactions.delete(childId)
+    }
+  }
+  // fallback：直接取子代理 ctx 的 compaction 服务（非 isolate 的宿主/测试环境）。
+  let compaction = null
+  try {
+    compaction = typeof childAgent.ctx?.get === 'function' ? childAgent.ctx.get('compaction') : null
+  } catch {
+    compaction = null
+  }
+  if (!compaction || typeof compaction.compactNow !== 'function') {
+    return { ok: false, error: { message: '当前预设未启用压缩' } }
+  }
+  conversationCompactions.set(childId, true)
+  try {
+    const result = await compaction.compactNow(childAgent, new AbortController().signal)
+    if (!result) {
+      await writeCompactRun(0, 0, false)
+      return { compacted: false, message: '没有可压缩的历史' }
+    }
+    const items = Array.isArray(result.shadowedSeqs) ? result.shadowedSeqs.length : 0
+    const tokens = Number(result.shadowedTokenCount) || 0
+    await writeCompactRun(items, tokens, true)
+    return { compacted: true, items, tokens, message: '已压缩 ' + items + ' 条历史（约 ' + tokens + ' tokens）' }
+  } catch (error) {
+    await writeCompactRun(0, 0, false)
+    return compactErrorResult(error)
+  } finally {
+    conversationCompactions.delete(childId)
+  }
+}
+
+/**
+ * 完整压缩流程：解析/唤醒子代理 → 历史太短时直接给可读提示（不调用压缩，避免 summary 校验报错）
+ * → 执行压缩。sessionQuery 不可用时跳过长度检查，直接尝试压缩。
+ */
+export async function runConversationCompact({
+  ctx,
+  service,
+  root,
+  readConversationMeta,
+  modelOptions,
+  presets,
+  sessionQuery,
+  minMessages = 6,
+}) {
+  const resolved = await resolveCompactionChild({ ctx, root, readConversationMeta, modelOptions, presets })
+  if (resolved.ok === false) return resolved
+  try {
+    const snapshot = await sessionQuery.readSession(resolved.childId)
+    const messages = (snapshot?.events ?? []).filter((event) => event?.type === 'user/message' || event?.type === 'assistant/message')
+    if (messages.length < minMessages) {
+      return { compacted: false, message: '对话还太短（' + messages.length + ' 条消息），暂不需要压缩' }
+    }
+  } catch {
+    // sessionQuery 不可用：跳过检查，直接尝试压缩
+  }
+  return compactConversationChild({
+    childId: resolved.childId,
+    childAgent: resolved.childAgent,
+    service,
+    root,
+    commands: ctx.commands,
+    agentPresets: ctx.agentPresets,
+  })
+}
+export function resetConversationCompactionGuards() {
+  conversationCompactions.clear()
+}
+
 export function sweepStaleRuns(activeRuns, maxAgeMs = 30 * 60 * 1000, nowMs = Date.now()) {
   let removed = 0
   for (const [owner, locks] of activeRuns) {
@@ -146,6 +418,12 @@ export function apply(ctx) {
   setNovelWriter(service)
 
   const activeRuns = new Map()
+  // 把 host 锁注册给 runtime：助手工具执行写动作时先 acquire，UI 与助手共用同一份锁。
+  setNovelLocks({
+    acquire: (owner, action, params) => acquireRun(activeRuns, owner, action, params),
+    release: (owner, handle) => releaseRun(activeRuns, owner, handle),
+    listActive: () => listActiveLocks(activeRuns),
+  })
   const runProgress = new Map()
   /*
    * 写作台内部对话：每个小说项目一个 origin=subagent 的隐藏父会话（不进侧栏），
@@ -323,10 +601,28 @@ export function apply(ctx) {
       model: currentModelOptions() ?? null,
     }
   }
+
+  /*
+   * AI 页「压缩上下文」入口：对隐藏父会话下的子代理调用 command-compact 同款手动压缩。
+   * 压缩要求子代理 idle（由 compactNow 自身校验），不占项目资源锁；同一 childId 防重复点击。
+   */
+  const compactConversation = async (projectRoot) => {
+    const root = validProjectRoot(projectRoot)
+    if (!root) return { ok: false, error: { message: 'invalid projectRoot' } }
+    return runConversationCompact({
+      ctx,
+      service,
+      root,
+      readConversationMeta,
+      modelOptions: currentModelOptions(),
+      presets: ctx.agentPresets,
+      sessionQuery: ctx.sessionQuery,
+    })
+  }
   const pauseRequests = new Set()
 
   const dispatchWithProgress = async (agent, action, params, signal) => {
-    const resource = runResource(action, params)
+    const resource = resolveActionResource(action, params)
     const owner = typeof agent === 'string' ? agent : agent?.id
     const key = resource && owner ? `${owner}\u0000${resource}` : null
     const onStage = (event) => {
@@ -372,10 +668,8 @@ export function apply(ctx) {
       result.defaultModel = { error: errorText(error) }
     }
 
-    const markerTarget = await ctx.fs.resolve('story/project.json', { cwd })
-    result.marker = (await ctx.fs.stat(markerTarget))
-      ? { path: 'story/project.json', exists: true }
-      : { path: 'story/project.json', exists: false }
+    const initialized = await service.isInitialized(agent)
+    result.marker = { path: 'story/project.db', mode: 'sqlite', exists: initialized }
 
     result.presets = (await ctx.agentPresets.list()).map((preset) => ({
       id: preset.id,
@@ -493,6 +787,8 @@ export function apply(ctx) {
         return service.saveSystemPrompt(agent, { key: options.key, content: options.content })
       case 'prompt-catalog-reset':
         return service.resetSystemPrompt(agent, { key: options.key })
+      case 'system-prompt-reset':
+        return service.resetSystemPrompt(agent, { key: options.key })
       case 'prompt-catalog-export':
         return service.exportSystemPrompts(agent)
       case 'prompt-catalog-import':
@@ -552,6 +848,7 @@ export function apply(ctx) {
             'prompt-catalog',
             'prompt-catalog-save',
             'prompt-catalog-reset',
+            'system-prompt-reset',
             'prompt-catalog-export',
             'prompt-catalog-import',
             'create-preset-agent',
@@ -613,7 +910,14 @@ export function apply(ctx) {
   /* --------------------------- 写作台 UI 的 Host 数据通道 --------------------------- */
 
   const stateFor = async (target) => {
-    const status = await service.projectStatus(target)
+    // 一次性批量读取（DB 聚合 + 一次目录扫描），后续所有视图复用，避免逐章 IO。
+    let snapshot = null
+    try {
+      snapshot = await service.readProjectSnapshotData(target)
+    } catch {
+      snapshot = null
+    }
+    const status = await service.projectStatus(target, snapshot)
     let preset = null
     let sessionId = null
     let projectRoot = null
@@ -636,49 +940,27 @@ export function apply(ctx) {
       styleTemplates: (await service.styleTemplateList(target)).templates,
       promptCatalog: await service.promptCatalog(target).catch(() => null),
       promptInjection: await service.promptInjectionStatus(target).catch(() => null),
+      characterLibrary: await service.listLibraryCharacters().catch(() => ({ characters: [] })),
+      craftCards: (await service.listCraftCards(target).catch(() => ({ cards: [] }))).cards,
+      craftAuto: await service.readCraftAuto(target).catch(() => true),
       outlineAudit: await service.readJson(target, 'story/plot/outline-audit.json').catch(() => null),
       premiseChat: await service.readPremiseChat(target).catch(() => null),
       relations: await service.readRelations(target).catch(() => null),
       inspirations: await service.readInspirations(target).catch(() => null),
       deconstructions: await service.readDeconstructions(target).catch(() => null),
       systemOverrides: await service.readSystemOverrides(target).catch(() => ({})),
-      health: await service.buildHealthReport(target).catch((error) => ({ issues: [], error: String(error?.message ?? error) })),
+      health: await service.buildHealthReport(target, snapshot).catch((error) => ({ issues: [], error: String(error?.message ?? error) })),
+      dataLayer: await service.dataStatus(target).catch(() => null),
+      activeLocks: status.initialized ? listActiveLocks(activeRuns) : [],
     }
     if (!status.initialized) return data
-    const recentRuns = []
-    try {
-      const runsDir = await ctx.fs.resolve('.dsh-writing/runs', { cwd: status.cwd })
-      const entries = await ctx.fs.listDir(runsDir)
-      const files = entries
-        .filter((entry) => entry.type === 'file' && entry.name.endsWith('.json'))
-        .sort((a, b) => b.name.localeCompare(a.name))
-        .slice(0, 6)
-      for (const entry of files) {
-        try {
-          const run = JSON.parse(await ctx.fs.readText(entry.target))
-          recentRuns.push({
-            runId: run.runId,
-            kind: run.kind,
-            number: run.number ?? null,
-            createdAt: run.createdAt,
-            usage: run.usage ?? null,
-            parseError: run.parseError ?? null,
-          })
-        } catch {
-          // ignore unreadable run ledger entries
-        }
-      }
-    } catch {
-      // run ledger is optional
-    }
-    const [premise, style, outline] = await Promise.all([
-      service.readJson(target, 'story/premise.json').catch(() => null),
-      service.readJson(target, 'story/style/contract.json').catch(() => null),
-      service.readJson(target, 'story/plot/outline.json').catch(() => null),
-    ])
-    const bible = await service.readBible(target).catch(() => null)
-    const chapters = await service.chaptersSummary(target).catch(() => [])
-    const overview = await service.storyOverview(target).catch(() => null)
+    const recentRuns = await service.recentRuns(target, 6).catch(() => [])
+    const premise = snapshot ? snapshot.premise : await service.readJson(target, 'story/premise.json').catch(() => null)
+    const style = snapshot ? snapshot.style : await service.readJson(target, 'story/style/contract.json').catch(() => null)
+    const outline = snapshot ? snapshot.outline : await service.readJson(target, 'story/plot/outline.json').catch(() => null)
+    const bible = snapshot ? snapshot.bible : await service.readBible(target).catch(() => null)
+    const chapters = await service.chaptersSummary(target, snapshot).catch(() => [])
+    const overview = await service.storyOverview(target, snapshot).catch(() => null)
     const stats = {
       words: chapters.reduce((sum, chapter) => sum + (Number(chapter.wordCount) || 0), 0),
       target: service.automationConfig(data.project).targetWords,
@@ -690,12 +972,11 @@ export function apply(ctx) {
       premise,
       style,
       bible,
-      power: await service.readPower(target).catch(() => null),
+      power: snapshot ? snapshot.power : await service.readPower(target).catch(() => null),
       outline,
       chapters,
       overview,
       snapshots: await service.listProjectSnapshots(target).catch(() => []),
-      discussionApplies: await service.listDiscussionApplies(target).catch(() => []),
       stats,
       writing: await service.writingStats(target).catch(() => null),
       modelDefaults: ctx.agentDefaultModel.currentSelection(),
@@ -772,6 +1053,51 @@ export function apply(ctx) {
         return service.exportSystemPrompts(agent)
       case 'prompt-catalog-import':
         return service.importSystemPrompts(agent, { data: params.data })
+      case 'system-prompt-reset':
+        return service.resetSystemPrompt(agent, { key: params.key })
+      case 'library-characters':
+        return service.listLibraryCharacters()
+      case 'library-character-save':
+        return service.saveLibraryCharacter(agent, { name: params.name })
+      case 'library-character-import':
+        return service.importLibraryCharacter(agent, { id: params.id })
+      case 'library-character-delete':
+        return service.deleteLibraryCharacter({ id: params.id })
+      case 'craft-cards':
+        return service.listCraftCards(agent)
+      case 'craft-card-read':
+        return service.readCraftCard(agent, { id: params.id })
+      case 'craft-card-save':
+        return service.saveCraftCard(agent, {
+          id: params.id,
+          title: params.title,
+          summary: params.summary,
+          tags: params.tags,
+          tasks: params.tasks,
+          body: params.body,
+        })
+      case 'craft-card-delete':
+        return service.deleteCraftCard(agent, params.id)
+      case 'craft-card-toggle':
+        return service.setCraftCardEnabled(agent, { id: params.id, enabled: params.enabled !== false })
+      case 'craft-auto-toggle':
+        return service.setCraftAuto(agent, { enabled: params.enabled === true })
+      case 'skills-list':
+        return service.listSkills(agent)
+      case 'skill-toggle':
+        return service.toggleSkill(agent, { name: params.name, enabled: params.enabled !== false })
+      case 'skill-delete':
+        return service.deleteSkill(agent, { name: params.name, scope: params.scope })
+      case 'skill-read':
+        return service.readSkill(agent, params.name, params.scope)
+      case 'skill-import':
+        return service.importSkill(agent, { path: params.path, scope: params.scope })
+      case 'reindex':
+        return service.reindexProject(agent)
+      case 'data-status':
+        return service.dataStatus(agent)
+      case 'export-file-project':
+        return service.exportFileProject(agent)
       case 'inspiration-save':
         return service.saveInspiration(agent, { topic: params.topic, ideas: params.ideas })
       case 'run-detail':
@@ -844,16 +1170,6 @@ export function apply(ctx) {
           number: params.number,
           fields: params.fields,
         })
-      case 'assistant-chat':
-        return service.assistantChat(agent, {
-          message: params.message,
-          taskId: params.taskId,
-          background: params.background === true,
-        })
-      case 'assistant-live':
-        return service.readJson(agent, 'story/assistant/live.json').catch(() => null)
-      case 'assistant-thread':
-        return service.readAssistantThread(agent)
       case 'create-preset-agent': {
         const steps = {}
         let live = null
@@ -892,10 +1208,13 @@ export function apply(ctx) {
         }
         return steps
       }
-      case 'assistant-apply':
-        return service.assistantApply(agent, { actions: params.actions })
-      case 'assistant-undo':
-        return service.assistantUndo(agent)
+      case 'chapter-delete':
+        return service.deleteChapter(agent, {
+          number: params.number,
+          dryRun: params.dryRun === true,
+          removeOutline: params.removeOutline === true,
+          renumber: params.renumber !== false,
+        })
       case 'chapters-delete-tail':
         return service.deleteTailChapters(agent, { count: params.count, dryRun: params.dryRun })
       case 'volume-create':
@@ -939,10 +1258,6 @@ export function apply(ctx) {
         return service.createProjectSnapshot(agent)
       case 'restore-snapshot':
         return service.restoreProjectSnapshot(agent, { name: params.name })
-      case 'discussion-undo':
-        return service.undoDiscussionApply(agent, { applyId: params.applyId })
-      case 'discussion-applies-clear':
-        return service.pruneDiscussionApplies(agent, { keep: params.keep })
       case 'chapter-draft':
         return service.draftChapter(
           agent,
@@ -953,6 +1268,13 @@ export function apply(ctx) {
         return service.qaChapter(agent, { number: params.number })
       case 'chapter-style-audit':
         return service.styleAudit(agent, { number: params.number }, signal)
+      case 'chapter-deslop':
+        return service.deslopChapter(agent, {
+          number: params.number,
+          target: params.target,
+          instruction: params.instruction,
+          dryRun: params.dryRun,
+        }, signal)
       case 'chapter-review':
         return service.chapterReview(agent, { number: params.number }, signal)
       case 'chapter-audit':
@@ -961,6 +1283,10 @@ export function apply(ctx) {
         return service.exportManuscript(agent, { format: params.format })
       case 'search-project':
         return service.searchProject(agent, { query: params.query })
+      case 'import-file-project':
+        return service.importFileProject(agent, { path: params.path })
+      case 'conversation-compact':
+        return compactConversation(String(agent))
       case 'chapter-fix':
         return service.fixByQa(
           agent,
@@ -1113,6 +1439,23 @@ export function apply(ctx) {
       },
     })
 
+    const disposeProjectSignature = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/project-signature',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'GET') return jsonResponse(res, 405, { ok: false, error: { message: 'GET only' } })
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          const root = validProjectRoot(url.searchParams.get('projectRoot'))
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          jsonResponse(res, 200, { ok: true, data: lossless(await service.projectSignature(root)) })
+        } catch (error) {
+          jsonResponse(res, 500, { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
+        }
+      },
+    })
+
     const disposeProjectRuns = ctx.webServer.register({
       kind: 'exact',
       path: '/novel-writer/project-runs',
@@ -1127,7 +1470,8 @@ export function apply(ctx) {
           const runs = [...runProgress.entries()]
             .filter(([key]) => key.startsWith(prefix))
             .map(([, value]) => value)
-          jsonResponse(res, 200, { ok: true, data: runs })
+          // 同时返回当前活动锁（owner/resource/startedAt），UI 可展示「助手正在写第 N 章」等。
+          jsonResponse(res, 200, { ok: true, data: { runs, locks: listActiveLocks(activeRuns) } })
         } catch (error) {
           jsonResponse(res, 500, { ok: false, error: { message: errorText(error) } })
         }
@@ -1243,88 +1587,6 @@ export function apply(ctx) {
       },
     })
 
-    const disposeDiscussion = ctx.webServer.register({
-      kind: 'exact',
-      path: '/novel-writer/discussion',
-      handler: async (req, res) => {
-        try {
-          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
-          if (req.method === 'GET') {
-            const url = new URL(req.url ?? '/', 'http://localhost')
-            const root = validProjectRoot(url.searchParams.get('projectRoot'))
-            const topicId = url.searchParams.get('topicId')
-            if (!root || !topicId) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot or topicId' } })
-            jsonResponse(res, 200, { ok: true, data: lossless(await service.readDiscussion(root, topicId)) })
-            return
-          }
-          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'GET or POST only' } })
-          const body = await readRequestBody(req)
-          const root = validProjectRoot(body.projectRoot)
-          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
-          const data = lossless(await service.discuss(root, {
-            topicId: body.topicId,
-            topic: body.topic,
-            item: body.item,
-            message: body.message,
-          }))
-          jsonResponse(res, 200, { ok: true, data })
-        } catch (error) {
-          jsonResponse(res, 500, { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
-        }
-      },
-    })
-
-    const disposeDiscussionStream = ctx.webServer.register({
-      kind: 'exact',
-      path: '/novel-writer/discussion-stream',
-      handler: async (req, res) => {
-        const send = (event, data) => {
-          if (res.writableEnded) return
-          try {
-            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-          } catch {
-            // client disconnected mid-stream
-          }
-        }
-        try {
-          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
-          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
-          const body = await readRequestBody(req)
-          const root = validProjectRoot(body.projectRoot)
-          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
-          res.statusCode = 200
-          res.setHeader('content-type', 'text/event-stream; charset=utf-8')
-          res.setHeader('cache-control', 'no-store')
-          res.setHeader('connection', 'keep-alive')
-          res.flushHeaders?.()
-          const controller = new AbortController()
-          res.on('close', () => controller.abort())
-          const data = lossless(await service.discussStream(root, {
-            topicId: body.topicId,
-            topic: body.topic,
-            item: body.item,
-            message: body.message,
-            signal: controller.signal,
-          }, (text) => send('delta', { text })))
-          send('done', { ok: true, data })
-        } catch (error) {
-          if (!res.headersSent) {
-            return jsonResponse(res, 500, {
-              ok: false,
-              error: { message: errorText(error), code: error?.code ?? null },
-            })
-          }
-          send('error', { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
-        } finally {
-          try {
-            res.end()
-          } catch {
-            // response may already be closed
-          }
-        }
-      },
-    })
-
     const disposePremiseStream = ctx.webServer.register({
       kind: 'exact',
       path: '/novel-writer/premise-stream',
@@ -1383,35 +1645,6 @@ export function apply(ctx) {
           } catch {
             // response may already be closed
           }
-        }
-      },
-    })
-
-    const disposeDiscussionApply = ctx.webServer.register({
-      kind: 'exact',
-      path: '/novel-writer/discussion-apply',
-      handler: async (req, res) => {
-        try {
-          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
-          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
-          const body = await readRequestBody(req)
-          const root = validProjectRoot(body.projectRoot)
-          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
-          const data = lossless(await service.applyDiscussion(root, {
-            action: body.action,
-            topicId: body.topicId,
-            topic: body.topic,
-            reply: body.reply,
-            result: body.result,
-            item: body.item,
-            actions: body.actions,
-            applyId: body.applyId,
-            number: body.number,
-            instruction: body.instruction,
-          }))
-          jsonResponse(res, 200, { ok: true, data })
-        } catch (error) {
-          jsonResponse(res, 500, { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
         }
       },
     })
@@ -1650,20 +1883,21 @@ export function apply(ctx) {
     })
 
     return () => {
+      disposeSignatureWatches()
+      // 关闭全部 SQLite 连接（LRU 缓存），避免插件卸载后 DB 句柄泄漏。
+      service.disposeStores()
       disposeConversationReset()
       disposeConversationSummary()
       disposeConversation()
-      disposeDiscussionStream()
       disposePremiseStream()
-      disposeDiscussionApply()
       disposeContextPreview()
       disposeModelInfo()
       disposeModels()
-      disposeDiscussion()
       disposeProjectRevision()
       disposeProjectCancel()
       disposeProjectPause()
       disposeProjectRuns()
+      disposeProjectSignature()
       disposeProjectAction()
       disposeProjectChapter()
       disposeProjectState()
@@ -1673,6 +1907,13 @@ export function apply(ctx) {
       disposeChapter()
       disposeState()
     }
+  }
+
+  // 内置技法技能 provider：注册在宿主层（rank 600），导入技能（rank 100–500）同名覆盖内置。
+  const skillsService = ctx.get?.('skills')
+  if (skillsService && typeof skillsService.registerProvider === 'function') {
+    const disposeCraftSkillProvider = skillsService.registerProvider(() => createCraftSkillProvider(service))
+    if (typeof ctx.effect === 'function') ctx.effect(() => disposeCraftSkillProvider)
   }
 
   ctx.effect(registerWebRoutes)

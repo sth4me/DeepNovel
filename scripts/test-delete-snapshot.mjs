@@ -38,16 +38,23 @@ await mkdir(join(project, 'story', 'plot'), { recursive: true })
 await mkdir(join(project, 'story', 'state'), { recursive: true })
 await writeFile(join(project, 'story', 'project.json'), JSON.stringify({ schemaVersion: 1, title: 't' }), 'utf8')
 await writeFile(join(project, 'story', 'state', 'index.json'), JSON.stringify({ chapters: [] }), 'utf8')
-await writeFile(
-  join(project, 'story', 'plot', 'outline.json'),
-  JSON.stringify({ volumes: [{ id: 'v1', title: '卷', chapters: [{ number: 1, title: '一' }, { number: 2, title: '二' }] }] }),
-  'utf8',
-)
+await service.writeJson(project, 'story/plot/outline.json', {
+  status: 'candidate',
+  logline: null,
+  volumes: [{
+    id: 'v1',
+    title: '卷',
+    chapters: [
+      { id: 'c1', number: 1, title: '一' },
+      { id: 'c2', number: 2, title: '二' },
+    ],
+  }],
+})
 const result = await service.deleteTailChapters(project, { count: 1 })
 assert.equal(result.from, 2)
 assert.ok(result.snapshot?.path, 'snapshot path missing')
-const snapshotStory = join(project, result.snapshot.path, 'story', 'plot', 'outline.json')
-assert.ok(await stat(snapshotStory), 'snapshot not created')
-const outline = JSON.parse(await readFile(join(project, 'story', 'plot', 'outline.json'), 'utf8'))
+const snapshotMeta = join(project, result.snapshot.path, 'snapshot.json')
+assert.ok(await stat(snapshotMeta), 'snapshot not created')
+const outline = await service.readJson(project, 'story/plot/outline.json')
 assert.equal(outline.volumes[0].chapters.length, 1)
 console.log('delete snapshot tests passed')
