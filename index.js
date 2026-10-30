@@ -1285,6 +1285,8 @@ export function apply(ctx) {
         return service.qaChapter(agent, { number: params.number })
       case 'chapter-style-audit':
         return service.styleAudit(agent, { number: params.number }, signal)
+      case 'revision-learn':
+        return service.revisionLearn(agent, { number: params.number, count: params.count }, signal)
       case 'chapter-deslop':
         return service.deslopChapter(agent, {
           number: params.number,

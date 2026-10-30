@@ -112,6 +112,8 @@
 - 素材库：schema v3 新增 `materials` 表（v2→v3 事务内升级、旧数据保留）；类型 片段/资料/桥段/引用/其他，`tags` ≤10、`title` 缺省取首行 ≤120；`materials-list` / `material-save` / `material-delete` 走 `materials` 资源锁；`novel_query kind=materials`（keyword 匹配标题/内容/标签、limit 默认 20、content 截断 400）；导出纯文件项目含 `story/materials.json`，快照含 `project.db` 自然包含。
 - 提示词与技能：规则集中在 `writing-rules.js`（35 禁用词 / AI 句式 / 真人基准 / 5 组质检 / deslop 规则），templates / service / craft / builtin-skills 全部引用、无重复字面量；流程提示词（PROMPT_CATALOG）与技能（`craft-*` / `ref-*` / 导入）数据模型独立、不合并；项目页「提示词与技能」卡双 tab（流程提示词 / 技能库）替代原两张卡，素材库卡独立；技能正文与流程提示词共享同一规则来源。
 
+- 修订学习：`revision-learn`（project-action / `novel_chapter action=revision-learn`）只分析同时有 draft+final 且内容不同的章节（指定章号或按 diff 取最近 N 章，`count` 默认 3 上限 6），返回 `{ summary, preferences, stats, chapters }`；偏好需稳定（同类 ≥2 次）、rule 可执行、≤8 条；只读不写文件/DB、可取消；UI「从修订学习」弹窗勾选后经 `project-update` 追加到 `writingNotes`，不自动改写正文；没有可学习修订时报错「需要同时存在草稿与定稿且内容不同」；提示词 `revisionLearn`（group craft）可覆盖。
+
 ## 错误处理
 
 - 空输出且 `max-tokens` 自动加倍预算重试。

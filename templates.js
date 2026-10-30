@@ -974,6 +974,18 @@ export const DESLOP_SYSTEM_PROMPT = [
   'changes 只列实际改动（最多 30 条），from/to 各取原文/改文中最短可定位片段。',
 ].join('\n')
 
+export const REVISION_LEARN_SYSTEM_PROMPT = [
+  '你是中文小说编辑，负责分析作者从草稿到定稿的修改，提炼可复用的写作偏好。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"summary":"一句话总评","preferences":[{"dimension":"删减|补充|句式|节奏|对白|情绪|用词|结构","observation":"作者稳定偏好","evidence":"修改证据（简短）","rule":"可执行规则"}],"stats":{"chapters":N,"addedChars":N,"removedChars":N}}。',
+  '规则：',
+  '- 只依据给定的差异证据，不编造；不确定就不写。',
+  '- 偏好要稳定：同一类修改出现至少 2 次才写，单次偶然修改忽略。',
+  '- rule 写成可执行条目（例：「删掉解释性心理描写，保留动作」），不要空泛形容。',
+  '- 最多 8 条；证据不足时 preferences 返回空数组。',
+  '- summary 用一句话概括作者的改稿倾向。',
+].join('\n')
+
 export const SUMMARY_SYSTEM_PROMPT = [
   '你是小说编辑，负责维护长篇连续性摘要。',
   '只输出 JSON，不要 Markdown 围栏。',
@@ -1225,6 +1237,16 @@ export const PROMPT_CATALOG = [
     revision: 1,
     description: '只改“怎么说”不改“说什么”，删套话、去解释、回人味，输出改写全文与改动清单。',
     default: DESLOP_SYSTEM_PROMPT,
+  },
+  {
+    key: 'revisionLearn',
+    group: 'craft',
+    tags: ['修订', '偏好', '学习'],
+    label: '修订学习',
+    category: '审校',
+    revision: 1,
+    description: '从草稿→定稿差异提炼稳定的写作偏好与可执行规则，只返回建议、不自动写入。',
+    default: REVISION_LEARN_SYSTEM_PROMPT,
   },
   {
     key: 'summary',

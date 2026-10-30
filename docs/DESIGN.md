@@ -68,6 +68,16 @@
 - **共享规则**：禁用词（35 个）、AI 句式、真人基准、章节质检清单（5 组）集中在 `writing-rules.js`；提示词模板、流程动作（aiFlavor 估算 / deslop）与技能卡（craft / ref）都从这里引用，避免多处手写字面量漂移。
 - **管理入口**：项目页「提示词与技能」卡，双 tab——「流程提示词」与「技能库」；素材库卡独立。
 
+## 修订学习
+
+从「草稿 → 定稿」的差异里提炼作者自己的稳定写作偏好，整合进项目「写作要求（共享）」卡，不新增系统或数据表。
+
+- **范围**：只分析同时存在 `draft.md` 与 `final.md` 且内容不同的章节；指定章号时只分析该章，否则按 diff 大小取最近 N 章（`count` 默认 3、上限 6）。
+- **只读**：`revision-learn` 只返回 `{ summary, preferences, stats, chapters }`，不写文件 / DB；走 `runWithProgress`，可取消。
+- **提示词**：`revisionLearn` 在 `PROMPT_CATALOG`（group craft）中，可覆盖；要求偏好稳定（同类修改 ≥2 次）、rule 可执行、最多 8 条、证据不足返回空。
+- **写入**：结果在弹窗里勾选后，才用 `project-update` 追加到 `writingNotes`；不自动改写正文。
+- **助手**：`novel_chapter action=revision-learn` 只返回建议，不写入。
+
 ## 参考
 
 `docs/RESEARCH.md` 汇总 novelWriter、Manuskript 等开源工具的结构视图、专注模式、导出、写作统计等做法。项目已吸收专注模式、导出、统计/目标、质检摘要与自动化配置。

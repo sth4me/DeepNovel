@@ -78,6 +78,7 @@ import {
   PREMISE_SYSTEM_PROMPT,
   PROMPT_CATALOG,
   REVERSE_OUTLINE_SYSTEM_PROMPT,
+  REVISION_LEARN_SYSTEM_PROMPT,
   STYLE_AUDIT_SYSTEM_PROMPT,
   SUMMARY_SYSTEM_PROMPT,
   VOLUME_PLAN_SYSTEM_PROMPT,
@@ -247,6 +248,30 @@ const DIRS = [
 
 function now() {
   return new Date().toISOString()
+}
+
+/** 草稿→定稿的简单 diff：长度差 + 段落级删除/新增片段（各最多 3 条、每条 ≤120 字）。 */
+function diffChapterTexts(draft, final) {
+  const draftText = String(draft ?? '')
+  const finalText = String(final ?? '')
+  const draftChars = countChars(draftText)
+  const finalChars = countChars(finalText)
+  const addedChars = Math.max(0, finalChars - draftChars)
+  const removedChars = Math.max(0, draftChars - finalChars)
+  const paragraphs = (text) => text.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean)
+  const draftParagraphs = paragraphs(draftText)
+  const finalParagraphs = paragraphs(finalText)
+  const finalSet = new Set(finalParagraphs)
+  const draftSet = new Set(draftParagraphs)
+  const removed = draftParagraphs.filter((part) => !finalSet.has(part)).slice(0, 3).map((part) => part.slice(0, 120))
+  const added = finalParagraphs.filter((part) => !draftSet.has(part)).slice(0, 3).map((part) => part.slice(0, 120))
+  return {
+    addedChars,
+    removedChars,
+    removed,
+    added,
+    diffChars: addedChars + removedChars + (removed.length + added.length) * 20,
+  }
 }
 
 /** 从提示词文本提取 `{{name}}` 或 `${name}` 占位符（去重、最多 20 个）。 */
@@ -6835,6 +6860,92 @@ export class NovelWriterService {
       issues,
       metrics: { chars, sentences: sentences.length, paragraphs: paragraphLengths.length, phrases: phraseCounts, tellingCount },
       checkedAt: now(),
+    }
+  }
+
+  /**
+   * 修订学习：分析草稿→定稿差异，提炼稳定写作偏好（只读，不写文件/DB/写作要求）。
+   * 返回 { summary, preferences, stats, chapters }。
+   */
+  async revisionLearn(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const requestedNumber = Number(options.number)
+    const hasNumber = Number.isFinite(requestedNumber) && requestedNumber > 0
+    const count = Math.max(1, Math.min(6, Number(options.count) || 3))
+    const maxChars = Math.max(200, Math.min(4000, Number(options.maxChars) || 1200))
+    const store = await this.storeFor(agent)
+    const outline = store.readOutline()
+    const allChapters = (outline?.volumes ?? [])
+      .flatMap((volume) => volume.chapters ?? [])
+      .filter((chapter) => Number(chapter.number) > 0)
+    this.reportStage('collecting', '收集修订差异')
+    const candidates = []
+    for (const chapter of allChapters) {
+      const number = Number(chapter.number)
+      if (hasNumber && number !== requestedNumber) continue
+      const paths = this.chapterPaths(number)
+      const draft = await this.readText(agent, paths.draft).catch(() => null)
+      const final = await this.readText(agent, paths.final).catch(() => null)
+      if (!draft || !final || draft === final) continue
+      candidates.push({ number, draft, final, ...diffChapterTexts(draft, final) })
+      if (hasNumber) break
+    }
+    if (candidates.length === 0) {
+      throw new Error('没有可学习的修订：需要同时存在草稿与定稿且内容不同')
+    }
+    candidates.sort((left, right) => right.diffChars - left.diffChars)
+    const selected = candidates.slice(0, hasNumber ? 1 : count)
+    const system = await this.systemFor(agent, 'revisionLearn', REVISION_LEARN_SYSTEM_PROMPT)
+    const userLines = [
+      '分析作者从草稿到定稿的修改，提炼稳定的写作偏好。只依据下面的差异证据，不要编造。',
+      `本次分析 ${selected.length} 章：${selected.map((item) => `第${item.number}章`).join('、')}`,
+    ]
+    for (const item of selected) {
+      userLines.push(
+        '',
+        `【第${item.number}章】`,
+        `删除片段（最多 3 条）：${item.removed.length > 0 ? item.removed.join(' / ') : '无'}`,
+        `新增片段（最多 3 条）：${item.added.length > 0 ? item.added.join(' / ') : '无'}`,
+        `草稿片段（截断）：${item.draft.slice(0, maxChars)}`,
+        `定稿片段（截断）：${item.final.slice(0, maxChars)}`,
+      )
+    }
+    userLines.push(
+      '',
+      '只输出 JSON：{"summary":"一句话总评","preferences":[{"dimension":"删减|补充|句式|节奏|对白|情绪|用词|结构","observation":"稳定偏好","evidence":"修改证据","rule":"可执行规则"}],"stats":{}}。',
+      '偏好需稳定（同类修改至少 2 次）、rule 可执行、最多 8 条；证据不足返回空 preferences。',
+    )
+    this.reportStage('analyzing', '提炼写作偏好')
+    const generated = await this.callJsonModel(agent, {
+      kind: 'chapter.revision-learn',
+      task: 'audit',
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: userLines.join('\n') }] }],
+      signal,
+      maxTokens: 6000,
+      temperature: 0.3,
+      inputHash: this.hashInputs({ numbers: selected.map((item) => item.number), maxChars }),
+    })
+    const parsed = generated?.parsed && typeof generated.parsed === 'object' ? generated.parsed : null
+    if (!parsed) throw new Error('模型没有返回可解析的修订学习结果，请重试')
+    const preferences = Array.isArray(parsed.preferences)
+      ? parsed.preferences.slice(0, 8).map((item) => ({
+          dimension: String(item?.dimension ?? '').slice(0, 20),
+          observation: String(item?.observation ?? '').slice(0, 300),
+          evidence: String(item?.evidence ?? '').slice(0, 300),
+          rule: String(item?.rule ?? '').slice(0, 300),
+        })).filter((item) => item.observation && item.rule)
+      : []
+    const stats = {
+      chapters: selected.length,
+      addedChars: selected.reduce((sum, item) => sum + item.addedChars, 0),
+      removedChars: selected.reduce((sum, item) => sum + item.removedChars, 0),
+    }
+    return {
+      summary: String(parsed.summary ?? ''),
+      preferences,
+      stats,
+      chapters: selected.map((item) => ({ number: item.number, addedChars: item.addedChars, removedChars: item.removedChars })),
     }
   }
 

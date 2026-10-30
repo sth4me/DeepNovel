@@ -6111,7 +6111,7 @@ window.__ModuleLoader__.load({
             )
           : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '没有发现明显问题。'),
         noSummary.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn',
@@ -6121,7 +6121,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         drafted.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn',
@@ -6138,7 +6138,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         badRelations.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn danger',
@@ -6159,7 +6159,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         staleFinals.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn',
@@ -6176,7 +6176,7 @@ window.__ModuleLoader__.load({
             )
           : null,
         orphansIssue
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn danger',
@@ -6196,7 +6196,7 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, `检查于 ${String(state.health.generatedAt).slice(11, 16)}`)
           : null,
         unconfirmed.length
-          ? h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+          ? h('div', { className: 'nw-actions', style: { marginTop: '6px', flexWrap: 'wrap', rowGap: '6px' } },
               h('button', {
                 type: 'button',
                 className: 'nw-btn',
@@ -6306,71 +6306,6 @@ window.__ModuleLoader__.load({
             section.text ? h('div', { style: { whiteSpace: 'pre-wrap' } }, section.text) : null,
           )
         }),
-      )
-    }
-
-    function CraftLibraryCard({ state, run, busy, setToast }) {
-      const cards = Array.isArray(state.craftCards) ? state.craftCards : []
-      const autoEnabled = state.craftAuto !== false
-      const [preview, setPreview] = useState(null)
-      const readCard = async (card) => {
-        if (!card?.id) return
-        if (preview?.id === card.id) {
-          setPreview(null)
-          return
-        }
-        setPreview({ id: card.id, loading: true, body: '', error: null })
-        const data = await run('craft-card-read', { id: card.id }, { silent: true })
-        if (!data) {
-          setPreview((prev) => (prev && prev.id === card.id ? { ...prev, loading: false, error: '读取失败' } : prev))
-          setToast?.('读取技法卡片失败')
-          return
-        }
-        setPreview({ id: card.id, loading: false, body: String(data.body ?? ''), error: null })
-      }
-      return h('div', { className: 'nw-card' },
-        h('div', { className: 'nw-row' },
-          h('h3', { className: 'nw-h3' }, '写作技法库'),
-          h('span', { className: 'nw-muted' }, `${cards.length} 张`),
-          h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('craft-cards', {}, { toast: '技法卡片已刷新' }) }, '刷新'),
-        ),
-        h('p', { className: 'nw-muted' }, '写正文/修订时会按任务和指令自动挑 1–2 张卡片作为技法参考，不必全部套用。'),
-        h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '4px', flexWrap: 'wrap' } },
-          h('input', { type: 'checkbox', checked: autoEnabled, disabled: busy, onChange: () => run('craft-auto-toggle', { enabled: !autoEnabled }, { toast: !autoEnabled ? '已开启自动注入技法' : '已关闭自动注入技法' }) }),
-          h('span', { className: 'nw-label', style: { margin: 0 } }, '自动注入技法'),
-          h('span', { className: 'nw-muted' }, autoEnabled ? '开启后写正文/修订会自动带 1–2 张技法卡片' : '已关闭自动注入，可用写作助手按需读取'),
-        ),
-        cards.length === 0
-          ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有技法卡片')
-          : h('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' } },
-              cards.map((card) => {
-                const tags = Array.isArray(card?.tags) ? card.tags.map((tag) => String(tag ?? '')).filter(Boolean).slice(0, 4) : []
-                const expanded = preview?.id === card?.id
-                const cardBody = typeof card?.body === 'string' ? card.body : ''
-                const previewBody = expanded && typeof preview?.body === 'string' ? preview.body : ''
-                const fitText = craftFitSummary(cardBody || previewBody)
-                return h('div', { key: card?.id ?? card?.title, className: 'nw-field', style: { margin: 0, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '10px' } },
-                  h('div', { className: 'nw-row' },
-                    h('div', { style: { minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-                      h('span', { style: { fontSize: '12px', fontWeight: 600 } }, card?.title ?? card?.id ?? '未命名'),
-                      tags.map((tag) => h('span', { key: tag, className: 'nw-badge' }, tag)),
-                    ),
-                    h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || !card?.id, onClick: () => readCard(card) }, expanded ? '收起' : '预览'),
-                  ),
-                  card?.summary ? h('div', { className: 'nw-muted', style: { whiteSpace: 'pre-wrap' } }, card.summary) : null,
-                  fitText ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, `适用：${fitText}`) : null,
-                  expanded
-                    ? h('div', { style: { marginTop: '6px' } },
-                        preview?.loading
-                          ? h('div', { className: 'nw-muted' }, '读取中…')
-                          : String(preview?.body ?? '').trim()
-                            ? renderCraftBody(preview.body)
-                            : h('div', { className: 'nw-muted' }, preview?.error ?? '这张卡片没有正文内容'),
-                      )
-                    : null,
-                )
-              }),
-            ),
       )
     }
 
@@ -6792,6 +6727,75 @@ window.__ModuleLoader__.load({
       const [title, setTitle] = useState(state.project?.title ?? '')
       const [writingNotes, setWritingNotes] = useState(state.project?.writingNotes ?? '')
       const [writingTasks, setWritingTasks] = useState(state.project?.writingNotesTasks ?? [])
+      const [learnOpen, setLearnOpen] = useState(false)
+      const [learnScope, setLearnScope] = useState('3')
+      const [learnNumber, setLearnNumber] = useState('')
+      const [learnBusy, setLearnBusy] = useState(false)
+      const [learnError, setLearnError] = useState('')
+      const [learnResult, setLearnResult] = useState(null)
+      const [learnSelected, setLearnSelected] = useState({})
+      const openLearn = () => {
+        setLearnOpen(true)
+        setLearnScope('3')
+        setLearnNumber('')
+        setLearnError('')
+        setLearnResult(null)
+        setLearnSelected({})
+      }
+      const closeLearn = () => {
+        if (learnBusy) return
+        setLearnOpen(false)
+        setLearnError('')
+      }
+      const runRevisionLearn = async () => {
+        if (learnBusy) return
+        setLearnBusy(true)
+        setLearnError('')
+        try {
+          const params = { count: Number(learnScope) || 3 }
+          const trimmed = String(learnNumber ?? '').trim()
+          const number = Number(trimmed)
+          if (trimmed && Number.isFinite(number) && number > 0) params.number = number
+          const data = await run('revision-learn', params, { silent: true, throwOnError: true })
+          if (!data) throw new Error('分析失败')
+          const preferences = Array.isArray(data.preferences) ? data.preferences : []
+          const selected = {}
+          preferences.forEach((item, index) => {
+            selected[index] = true
+          })
+          setLearnResult({ ...data, preferences })
+          setLearnSelected(selected)
+        } catch (error) {
+          setLearnError(String(error?.message ?? error))
+        } finally {
+          setLearnBusy(false)
+        }
+      }
+      const applyRevisionLearn = async () => {
+        if (learnBusy) return
+        const preferences = Array.isArray(learnResult?.preferences) ? learnResult.preferences : []
+        const picked = preferences.filter((item, index) => learnSelected[index])
+        if (picked.length === 0) {
+          setLearnError('请至少勾选一条偏好')
+          return
+        }
+        setLearnBusy(true)
+        setLearnError('')
+        try {
+          const addition = picked.map((item) => `- [${item?.dimension ?? '偏好'}] ${item?.rule ?? ''}`.trim()).join('\n')
+          const base = String(writingNotes ?? '').replace(/\s+$/, '')
+          const nextNotes = base ? `${base}\n${addition}` : addition
+          await run('project-update', { fields: { writingNotes: nextNotes, writingNotesTasks: writingTasks } }, { silent: true, throwOnError: true })
+          setWritingNotes(nextNotes)
+          setToast?.(`已追加 ${picked.length} 条写作偏好`)
+          setLearnOpen(false)
+          setLearnResult(null)
+        } catch (error) {
+          setLearnError(String(error?.message ?? error))
+        } finally {
+          setLearnBusy(false)
+        }
+      }
       const [automation, setAutomation] = useState(state.project?.automation ?? {})
       const [models, setModels] = useState(state.project?.models ?? {})
       const [contextConfig, setContextConfig] = useState(state.project?.context ?? {})
@@ -7010,6 +7014,7 @@ window.__ModuleLoader__.load({
         ['草稿', `${stage.chapters ?? 0} 章`, 'chapters'],
       ]
       return h('div', null,
+        h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '项目'),
         h(StepIntro, { eyebrow: '01 / 项目', title: '项目与流程', desc: '所有创作步骤都围绕这个项目展开。你可以随时回到这里查看进度或修改标题。', hints: ['确认项目标题', '按顺序完成构思 → 文风 → 大纲 → 章节'] }),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '项目设置'),
@@ -7062,8 +7067,223 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('project-update', { fields: { automation } }, { toast: '自动化设置已保存' }) }, '保存自动化设置'),
           ),
         ),
+        h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '概览'),
         h('div', { className: 'nw-card' },
-          h('h3', { className: 'nw-h3' }, '写作要求（共享）'),
+          h('h3', { className: 'nw-h3' }, '写作统计'),
+          (() => {
+            const events = state.writing?.events ?? []
+            const byDate = new Map()
+            for (const event of events) {
+              const date = event?.date
+              if (!date) continue
+              byDate.set(date, (byDate.get(date) ?? 0) + (Number(event.words) || 0))
+            }
+            const days = []
+            for (let offset = 13; offset >= 0; offset -= 1) {
+              const date = new Date()
+              date.setDate(date.getDate() - offset)
+              const key = date.toLocaleDateString('sv-SE')
+              days.push({ key, label: `${date.getMonth() + 1}/${date.getDate()}`, words: byDate.get(key) ?? 0 })
+            }
+            const maxWords = Math.max(1, ...days.map((day) => day.words))
+            const chapters = state.chapters ?? []
+            const approved = chapters.filter((item) => item.hasFinal).length
+            const ratio = chapters.length > 0 ? approved / chapters.length : 0
+            const ring = 2 * Math.PI * 15.5
+            return h('div', null,
+              h('div', { className: 'nw-stat-grid' },
+                h('div', { className: 'nw-stat-tile' },
+                  h('div', { className: 'nw-stat-label' }, '今日字数'),
+                  h('div', { className: 'nw-stat-value' }, String(state.writing?.todayWords ?? 0)),
+                ),
+                h('div', { className: 'nw-stat-tile' },
+                  h('div', { className: 'nw-stat-label' }, '连续天数'),
+                  h('div', { className: 'nw-stat-value' }, `${state.writing?.streakDays ?? 0} 天`),
+                ),
+                h('div', { className: 'nw-stat-tile' },
+                  h('div', { className: 'nw-stat-label' }, '定稿 / 总章'),
+                  h('div', { className: 'nw-stat-value' }, `${approved} / ${chapters.length}`),
+                ),
+              ),
+              h('div', { className: 'nw-stat-row' },
+                h('svg', { className: 'nw-ring', viewBox: '0 0 36 36', role: 'img', 'aria-label': `定稿完成度 ${Math.round(ratio * 100)}%` },
+                  h('circle', { cx: 18, cy: 18, r: 15.5, fill: 'none', stroke: 'var(--dsw-alias-border-l1)', strokeWidth: 4 }),
+                  h('circle', { cx: 18, cy: 18, r: 15.5, fill: 'none', stroke: 'var(--dsw-alias-brand-primary)', strokeWidth: 4, strokeLinecap: 'round', strokeDasharray: `${ratio * ring} ${ring}`, transform: 'rotate(-90 18 18)' }),
+                  h('text', { x: 18, y: 21, textAnchor: 'middle', fontSize: 9, fill: 'currentColor' }, `${Math.round(ratio * 100)}%`),
+                ),
+                h('div', { className: 'nw-chart' },
+                  h('div', { className: 'nw-chart-bars' },
+                    days.map((day) =>
+                      h('div', { key: day.key, className: 'nw-chart-col', title: `${day.label}：${day.words} 字` },
+                        h('div', { className: 'nw-chart-fill', style: { height: `${day.words > 0 ? Math.max(4, Math.round((day.words / maxWords) * 100)) : 2}%` } }),
+                        h('span', { className: 'nw-chart-label' }, day.label),
+                      ),
+                    ),
+                  ),
+                  h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '近 14 天每日字数（含生成与手改）'),
+                ),
+              ),
+            )
+          })(),
+        ),
+        h(StructureStats, { state }),
+        h(HealthCheck, { state, goTo, run, busy }),
+        h('div', { className: 'nw-card' },
+          h('h3', { className: 'nw-h3' }, '进度与导出'),
+          h('div', { className: 'nw-muted' },
+            `${state.stats?.words ?? 0} 字${state.stats?.target ? ` / 目标 ${state.stats.target}` : ''} · ${state.stats?.approved ?? 0} 章定稿 · 今日 ${state.writing?.todayWords ?? 0} 字 · 连续 ${state.writing?.streakDays ?? 0} 天`,
+          ),
+          h('div', { className: 'nw-actions', style: { flexWrap: 'wrap', rowGap: '6px' } },
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              onClick: async () => {
+                const result = await run('export-manuscript', { format: 'md' }, { silent: true })
+                if (result?.path) setExportPath(result.path)
+              },
+            }, '导出 Markdown'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              onClick: async () => {
+                const result = await run('export-manuscript', { format: 'html' }, { silent: true })
+                if (result?.path) setExportPath(result.path)
+              },
+            }, '导出 HTML（可打印 PDF）'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              onClick: async () => {
+                const result = await run('export-manuscript', { format: 'epub' }, { silent: true })
+                if (result?.path) setExportPath(result.path)
+              },
+            }, '导出 EPUB'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              onClick: async () => {
+                const result = await run('export-manuscript', { format: 'docx' }, { silent: true })
+                if (result?.path) setExportPath(result.path)
+              },
+            }, '导出 DOCX'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('summarize-missing', {}, { toast: '缺失摘要已补全' }) }, '补全缺失摘要'),
+            exportPath ? h('span', { className: 'nw-muted', style: { wordBreak: 'break-all' } }, `已导出：${exportPath}`) : null,
+          ),
+        ),
+        h('div', { className: 'nw-card' },
+          h('h3', { className: 'nw-h3' }, '导入已有书稿'),
+          h('p', { className: 'nw-muted' }, '选择一个包含 .md / .txt 章节文件的目录，批量导入为已定稿章节。当前项目已有章节时不会执行。'),
+          h('div', { className: 'nw-actions', style: { flexWrap: 'wrap', rowGap: '6px' } },
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              onClick: async () => {
+                const service = resolveUiWorkspace()
+                let dir = null
+                if (service?.pickDirectory) {
+                  try {
+                    dir = await service.pickDirectory()
+                  } catch {
+                    dir = null
+                  }
+                }
+                if (!dir && typeof window.prompt === 'function') {
+                  dir = window.prompt('目录选择器不可用，请输入包含 .md/.txt 的绝对路径：', '')
+                }
+                if (!dir) return
+                if (!(await requestConfirm({ title: '导入手稿', message: `从「${dir}」导入所有 .md/.txt？`, confirmLabel: '导入' }))) return
+                run('import-manuscript', { sourcePath: dir }, { toast: '导入完成' })
+              },
+            }, '选择目录并导入'),
+          ),
+        ),
+        h('div', { className: 'nw-card' },
+          h('h3', { className: 'nw-h3' }, '当前阶段'),
+          rows.map(([label, value, id]) =>
+            h('div', { key: id, className: 'nw-row', style: { padding: '5px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                h('span', { className: `nw-dot ${statusClass(stepStatus(state, id))}` }),
+                h('span', null, label),
+              ),
+              h('span', { className: 'nw-muted' }, displayStatus(value) || '—'),
+            ),
+          ),
+        ),
+        state.overview
+          ? h('div', { className: 'nw-card' },
+              h('h3', { className: 'nw-h3' }, '故事状态'),
+              h('div', { className: 'nw-muted' },
+                `时间线 ${state.overview.timeline?.length ?? 0} 章 · 未回收伏笔 ${state.overview.openForeshadowing?.length ?? 0} 条 · 已定稿 ${state.overview.stateChapters?.length ?? 0} 章`,
+              ),
+              h('div', { className: 'nw-field' },
+                h('div', { className: 'nw-label' }, '时间线'),
+                (state.overview.timeline ?? []).slice(-8).map((item) =>
+                  h('div', { key: item.number, className: 'nw-kv' },
+                    h('b', null, String(item.number)),
+                    h('span', null, `${item.time || '—'} · ${item.place || '—'} · ${item.title || '未命名'}`),
+                  ),
+                ),
+              ),
+              h('div', { className: 'nw-field' },
+                h('div', { className: 'nw-label' }, '未回收伏笔'),
+                (state.overview.openForeshadowing ?? []).length
+                  ? state.overview.openForeshadowing.slice(0, 10).map((item) =>
+                      h('div', { key: item.id, className: 'nw-muted' }, `第 ${item.plantedAt} 章 · ${item.text}`),
+                    )
+                  : h('div', { className: 'nw-muted' }, '没有未回收伏笔。'),
+              ),
+            )
+          : null,
+        state.characterIndex?.length
+          ? h('div', { className: 'nw-card' },
+              h('div', { className: 'nw-row' },
+                h('h3', { className: 'nw-h3' }, '角色索引'),
+                h('span', { className: 'nw-muted' }, `${state.characterIndex.length} 个角色`),
+              ),
+              h('div', { className: 'nw-chip-list' },
+                state.characterIndex.slice(0, 16).map((item) =>
+                  h('div', { key: item.name, className: 'nw-chip', title: `出场：${item.chapters.join('、') || '未出场'}` },
+                    h('span', null, item.name),
+                    item.lastChapter ? h('span', { className: 'nw-muted' }, `第 ${item.lastChapter} 章`) : null,
+                    item.inBible ? null : h('span', { className: 'nw-badge bad' }, '未入设定'),
+                  ),
+                ),
+              ),
+            )
+          : null,
+        h('div', { className: 'nw-card' },
+          h('div', { className: 'nw-row' },
+            h('h3', { className: 'nw-h3' }, '项目快照'),
+            h('span', { className: 'nw-muted' }, `${state.snapshots?.length ?? 0} 个`),
+          ),
+          h('p', { className: 'nw-muted' }, '快照把 story/ 与 .dsh-writing/ 复制到项目内 .deepnovel-snapshots/；恢复前会自动备份当前数据。'),
+          h('div', { className: 'nw-actions' },
+            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('snapshot-create', {}, { toast: '快照已创建' }) }, '创建快照'),
+          ),
+          (state.snapshots ?? []).length
+            ? h('div', { style: { marginTop: '8px' } },
+                state.snapshots.slice(0, 6).map((snapshot) =>
+                  h('div', { key: snapshot.name, className: 'nw-kv' },
+                    h('span', { className: 'nw-muted' }, snapshot.name),
+                    h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => restoreSnapshot(snapshot.name) }, '恢复'),
+                  ),
+                ),
+              )
+            : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有快照。'),
+        ),
+        h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '写作配置'),
+        h('div', { className: 'nw-card' },
+          h('div', { className: 'nw-row' },
+            h('h3', { className: 'nw-h3' }, '写作要求（共享）'),
+            h('div', { className: 'nw-actions', style: { margin: 0 } },
+              h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || learnBusy, onClick: openLearn }, '从修订学习'),
+            ),
+          ),
           h('p', { className: 'nw-muted' }, '写在这里的要求可以在设定/大纲/章节的生成要求里用「插入项目要求」引用。'),
           h('div', { className: 'nw-field' },
             h('textarea', {
@@ -7098,9 +7318,83 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'nw-muted', style: { marginTop: '4px' } },
             '已生效于：设定生成、大纲生成、章节草稿、章节修订（保存后下一次生成生效）'),
+          learnOpen
+            ? h('div', { className: 'nw-modal-backdrop', onClick: closeLearn },
+                h('div', { className: 'nw-modal', style: { maxWidth: '720px' }, onClick: (event) => event.stopPropagation() },
+                  h('h3', { className: 'nw-h3', style: { margin: 0 } }, '从修订学习'),
+                  h('p', { className: 'nw-muted' }, '分析草稿→定稿的修改，提炼稳定的写作偏好；只写入你勾选的条目，不会自动改写正文。'),
+                  learnResult
+                    ? h('div', null,
+                        h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, learnResult.summary ?? ''),
+                        h('div', { className: 'nw-muted', style: { marginTop: '2px' } },
+                          `分析了 ${Number(learnResult.stats?.chapters ?? 0)} 章，新增 ${Number(learnResult.stats?.addedChars ?? 0)} 字，删除 ${Number(learnResult.stats?.removedChars ?? 0)} 字`),
+                        (learnResult.preferences ?? []).length === 0
+                          ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '这次修改没有提炼出稳定偏好')
+                          : h('div', { style: { marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+                              (learnResult.preferences ?? []).map((item, index) =>
+                                h('label', { key: index, style: { display: 'block', padding: '6px 8px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', cursor: 'pointer' } },
+                                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                                    h('input', {
+                                      type: 'checkbox',
+                                      checked: Boolean(learnSelected[index]),
+                                      disabled: learnBusy,
+                                      onChange: (event) => setLearnSelected((prev) => ({ ...prev, [index]: event.target.checked })),
+                                    }),
+                                    h('span', { className: 'nw-badge' }, item?.dimension ?? '偏好'),
+                                    h('strong', { style: { fontSize: '12px' } }, item?.observation ?? ''),
+                                  ),
+                                  item?.evidence ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, item.evidence) : null,
+                                  item?.rule ? h('div', { style: { marginTop: '2px', fontSize: '12px' } }, `规则：${item.rule}`) : null,
+                                ),
+                              ),
+                            ),
+                        (learnResult.chapters ?? []).length
+                          ? h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, `涉及章节：${learnResult.chapters.map((item) => `第${item?.number}章`).join('、')}`)
+                          : null,
+                      )
+                    : h('div', { style: { marginTop: '6px' } },
+                        h('div', { className: 'nw-label' }, '范围'),
+                        h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '4px' } },
+                          [['3', '最近 3 章'], ['5', '最近 5 章'], ['6', '最近 6 章']].map(([value, label]) =>
+                            h('label', { key: value, style: { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' } },
+                              h('input', {
+                                type: 'radio',
+                                name: 'revision-learn-scope',
+                                checked: learnScope === value,
+                                disabled: learnBusy,
+                                onChange: () => setLearnScope(value),
+                              }),
+                              h('span', { className: 'nw-muted' }, label),
+                            ),
+                          ),
+                        ),
+                        h('div', { className: 'nw-field', style: { marginTop: '6px' } },
+                          h('label', { className: 'nw-label' }, '指定章号（可选，留空按范围）'),
+                          h('input', {
+                            className: 'nw-input',
+                            type: 'number',
+                            min: '1',
+                            value: learnNumber,
+                            disabled: learnBusy,
+                            placeholder: '例如 12',
+                            onChange: (event) => setLearnNumber(event.target.value),
+                          }),
+                        ),
+                      ),
+                  learnError ? h('div', { className: 'nw-error', style: { marginTop: '6px' } }, learnError) : null,
+                  h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                    h('button', { type: 'button', className: 'nw-btn', disabled: learnBusy, onClick: closeLearn }, '取消'),
+                    learnResult
+                      ? h('button', { type: 'button', className: 'nw-btn primary', disabled: learnBusy || !Object.values(learnSelected).some(Boolean), onClick: applyRevisionLearn }, learnBusy ? '追加中…' : '追加到写作要求')
+                      : h('button', { type: 'button', className: 'nw-btn primary', disabled: learnBusy, onClick: runRevisionLearn }, learnBusy ? '分析中…' : '开始分析'),
+                  ),
+                ),
+              )
+            : null,
         ),
         h(PromptAndSkillsCard, { state, run, busy, setToast }),
         h(MaterialsLibraryCard, { state, run, busy, setToast }),
+        h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '运行与数据'),
         state.dataLayer
           ? h('div', { className: 'nw-card' },
               h('div', { className: 'nw-row' },
@@ -7407,214 +7701,6 @@ window.__ModuleLoader__.load({
                 )
               : h('div', { className: 'nw-muted', style: { marginTop: '8px' } }, `没有找到「${searchResults.query ?? searchQuery}」`)
             : null,
-        ),
-        h('div', { className: 'nw-card' },
-          h('h3', { className: 'nw-h3' }, '写作统计'),
-          (() => {
-            const events = state.writing?.events ?? []
-            const byDate = new Map()
-            for (const event of events) {
-              const date = event?.date
-              if (!date) continue
-              byDate.set(date, (byDate.get(date) ?? 0) + (Number(event.words) || 0))
-            }
-            const days = []
-            for (let offset = 13; offset >= 0; offset -= 1) {
-              const date = new Date()
-              date.setDate(date.getDate() - offset)
-              const key = date.toLocaleDateString('sv-SE')
-              days.push({ key, label: `${date.getMonth() + 1}/${date.getDate()}`, words: byDate.get(key) ?? 0 })
-            }
-            const maxWords = Math.max(1, ...days.map((day) => day.words))
-            const chapters = state.chapters ?? []
-            const approved = chapters.filter((item) => item.hasFinal).length
-            const ratio = chapters.length > 0 ? approved / chapters.length : 0
-            const ring = 2 * Math.PI * 15.5
-            return h('div', null,
-              h('div', { className: 'nw-stat-grid' },
-                h('div', { className: 'nw-stat-tile' },
-                  h('div', { className: 'nw-stat-label' }, '今日字数'),
-                  h('div', { className: 'nw-stat-value' }, String(state.writing?.todayWords ?? 0)),
-                ),
-                h('div', { className: 'nw-stat-tile' },
-                  h('div', { className: 'nw-stat-label' }, '连续天数'),
-                  h('div', { className: 'nw-stat-value' }, `${state.writing?.streakDays ?? 0} 天`),
-                ),
-                h('div', { className: 'nw-stat-tile' },
-                  h('div', { className: 'nw-stat-label' }, '定稿 / 总章'),
-                  h('div', { className: 'nw-stat-value' }, `${approved} / ${chapters.length}`),
-                ),
-              ),
-              h('div', { className: 'nw-stat-row' },
-                h('svg', { className: 'nw-ring', viewBox: '0 0 36 36', role: 'img', 'aria-label': `定稿完成度 ${Math.round(ratio * 100)}%` },
-                  h('circle', { cx: 18, cy: 18, r: 15.5, fill: 'none', stroke: 'var(--dsw-alias-border-l1)', strokeWidth: 4 }),
-                  h('circle', { cx: 18, cy: 18, r: 15.5, fill: 'none', stroke: 'var(--dsw-alias-brand-primary)', strokeWidth: 4, strokeLinecap: 'round', strokeDasharray: `${ratio * ring} ${ring}`, transform: 'rotate(-90 18 18)' }),
-                  h('text', { x: 18, y: 21, textAnchor: 'middle', fontSize: 9, fill: 'currentColor' }, `${Math.round(ratio * 100)}%`),
-                ),
-                h('div', { className: 'nw-chart' },
-                  h('div', { className: 'nw-chart-bars' },
-                    days.map((day) =>
-                      h('div', { key: day.key, className: 'nw-chart-col', title: `${day.label}：${day.words} 字` },
-                        h('div', { className: 'nw-chart-fill', style: { height: `${day.words > 0 ? Math.max(4, Math.round((day.words / maxWords) * 100)) : 2}%` } }),
-                        h('span', { className: 'nw-chart-label' }, day.label),
-                      ),
-                    ),
-                  ),
-                  h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '近 14 天每日字数（含生成与手改）'),
-                ),
-              ),
-            )
-          })(),
-        ),
-        h(StructureStats, { state }),
-        h(HealthCheck, { state, goTo, run, busy }),
-        h('div', { className: 'nw-card' },
-          h('h3', { className: 'nw-h3' }, '进度与导出'),
-          h('div', { className: 'nw-muted' },
-            `${state.stats?.words ?? 0} 字${state.stats?.target ? ` / 目标 ${state.stats.target}` : ''} · ${state.stats?.approved ?? 0} 章定稿 · 今日 ${state.writing?.todayWords ?? 0} 字 · 连续 ${state.writing?.streakDays ?? 0} 天`,
-          ),
-          h('div', { className: 'nw-actions' },
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              onClick: async () => {
-                const result = await run('export-manuscript', { format: 'md' }, { silent: true })
-                if (result?.path) setExportPath(result.path)
-              },
-            }, '导出 Markdown'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              onClick: async () => {
-                const result = await run('export-manuscript', { format: 'html' }, { silent: true })
-                if (result?.path) setExportPath(result.path)
-              },
-            }, '导出 HTML（可打印 PDF）'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              onClick: async () => {
-                const result = await run('export-manuscript', { format: 'epub' }, { silent: true })
-                if (result?.path) setExportPath(result.path)
-              },
-            }, '导出 EPUB'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              onClick: async () => {
-                const result = await run('export-manuscript', { format: 'docx' }, { silent: true })
-                if (result?.path) setExportPath(result.path)
-              },
-            }, '导出 DOCX'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('summarize-missing', {}, { toast: '缺失摘要已补全' }) }, '补全缺失摘要'),
-            exportPath ? h('span', { className: 'nw-muted', style: { wordBreak: 'break-all' } }, `已导出：${exportPath}`) : null,
-          ),
-        ),
-        h('div', { className: 'nw-card' },
-          h('h3', { className: 'nw-h3' }, '导入已有书稿'),
-          h('p', { className: 'nw-muted' }, '选择一个包含 .md / .txt 章节文件的目录，批量导入为已定稿章节。当前项目已有章节时不会执行。'),
-          h('div', { className: 'nw-actions' },
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              onClick: async () => {
-                const service = resolveUiWorkspace()
-                let dir = null
-                if (service?.pickDirectory) {
-                  try {
-                    dir = await service.pickDirectory()
-                  } catch {
-                    dir = null
-                  }
-                }
-                if (!dir && typeof window.prompt === 'function') {
-                  dir = window.prompt('目录选择器不可用，请输入包含 .md/.txt 的绝对路径：', '')
-                }
-                if (!dir) return
-                if (!(await requestConfirm({ title: '导入手稿', message: `从「${dir}」导入所有 .md/.txt？`, confirmLabel: '导入' }))) return
-                run('import-manuscript', { sourcePath: dir }, { toast: '导入完成' })
-              },
-            }, '选择目录并导入'),
-          ),
-        ),
-        h('div', { className: 'nw-card' },
-          h('h3', { className: 'nw-h3' }, '当前阶段'),
-          rows.map(([label, value, id]) =>
-            h('div', { key: id, className: 'nw-row', style: { padding: '5px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-                h('span', { className: `nw-dot ${statusClass(stepStatus(state, id))}` }),
-                h('span', null, label),
-              ),
-              h('span', { className: 'nw-muted' }, displayStatus(value) || '—'),
-            ),
-          ),
-        ),
-        state.overview
-          ? h('div', { className: 'nw-card' },
-              h('h3', { className: 'nw-h3' }, '故事状态'),
-              h('div', { className: 'nw-muted' },
-                `时间线 ${state.overview.timeline?.length ?? 0} 章 · 未回收伏笔 ${state.overview.openForeshadowing?.length ?? 0} 条 · 已定稿 ${state.overview.stateChapters?.length ?? 0} 章`,
-              ),
-              h('div', { className: 'nw-field' },
-                h('div', { className: 'nw-label' }, '时间线'),
-                (state.overview.timeline ?? []).slice(-8).map((item) =>
-                  h('div', { key: item.number, className: 'nw-kv' },
-                    h('b', null, String(item.number)),
-                    h('span', null, `${item.time || '—'} · ${item.place || '—'} · ${item.title || '未命名'}`),
-                  ),
-                ),
-              ),
-              h('div', { className: 'nw-field' },
-                h('div', { className: 'nw-label' }, '未回收伏笔'),
-                (state.overview.openForeshadowing ?? []).length
-                  ? state.overview.openForeshadowing.slice(0, 10).map((item) =>
-                      h('div', { key: item.id, className: 'nw-muted' }, `第 ${item.plantedAt} 章 · ${item.text}`),
-                    )
-                  : h('div', { className: 'nw-muted' }, '没有未回收伏笔。'),
-              ),
-            )
-          : null,
-        state.characterIndex?.length
-          ? h('div', { className: 'nw-card' },
-              h('div', { className: 'nw-row' },
-                h('h3', { className: 'nw-h3' }, '角色索引'),
-                h('span', { className: 'nw-muted' }, `${state.characterIndex.length} 个角色`),
-              ),
-              h('div', { className: 'nw-chip-list' },
-                state.characterIndex.slice(0, 16).map((item) =>
-                  h('div', { key: item.name, className: 'nw-chip', title: `出场：${item.chapters.join('、') || '未出场'}` },
-                    h('span', null, item.name),
-                    item.lastChapter ? h('span', { className: 'nw-muted' }, `第 ${item.lastChapter} 章`) : null,
-                    item.inBible ? null : h('span', { className: 'nw-badge bad' }, '未入设定'),
-                  ),
-                ),
-              ),
-            )
-          : null,
-        h('div', { className: 'nw-card' },
-          h('div', { className: 'nw-row' },
-            h('h3', { className: 'nw-h3' }, '项目快照'),
-            h('span', { className: 'nw-muted' }, `${state.snapshots?.length ?? 0} 个`),
-          ),
-          h('p', { className: 'nw-muted' }, '快照把 story/ 与 .dsh-writing/ 复制到项目内 .deepnovel-snapshots/；恢复前会自动备份当前数据。'),
-          h('div', { className: 'nw-actions' },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('snapshot-create', {}, { toast: '快照已创建' }) }, '创建快照'),
-          ),
-          (state.snapshots ?? []).length
-            ? h('div', { style: { marginTop: '8px' } },
-                state.snapshots.slice(0, 6).map((snapshot) =>
-                  h('div', { key: snapshot.name, className: 'nw-kv' },
-                    h('span', { className: 'nw-muted' }, snapshot.name),
-                    h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => restoreSnapshot(snapshot.name) }, '恢复'),
-                  ),
-                ),
-              )
-            : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有快照。'),
         ),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '数据维护'),

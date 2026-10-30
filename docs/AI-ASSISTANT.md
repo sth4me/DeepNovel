@@ -12,7 +12,7 @@
 | `novel_style` | 文风：模板列表、套用模板、保存自定义模板、确认契约、读取状态 |
 | `novel_outline` | 章纲：生成、重生成、确认、读取状态、把某章移到指定卷 |
 | `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系 |
-| `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
+| `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `revision-learn`（分析草稿→定稿差异、提炼写作偏好，只返回建议、不自动写入）/ `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
 | `novel_craft` | 兼容入口：写作技法卡片列表、按任务读取、推荐（新方案用 skill 工具按需加载 `craft-*`） |
 | `novel_query` | 只读查询项目数据：14 个 `kind`（见下方「查询面」） |
 
