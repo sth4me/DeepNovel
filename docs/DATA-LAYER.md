@@ -48,6 +48,7 @@ story/
 | `runs` | 每次模型调用的运行记录（kind、模型、system、输入、输出、usage） |
 | `prompt_overrides` | 按任务的 System 模板覆盖 |
 | `notes` | 作者备注（章节、文本、来源） |
+| `materials` | 素材库：`id / title / kind / content / tags_json / source / created_at / updated_at`（类型 片段/资料/桥段/引用/其他） |
 
 约定：结构简单稳定的实体用列；结构复杂或字段易变的（能力体系、章节 meta/state/summary、run）整体存 JSON 列；少数实体的状态/更新时间放在 `*_meta` 小表。全文检索表单独列出：
 
@@ -56,7 +57,7 @@ story/
 - `fts_bible`：设定名称与描述
 - `fts_summaries`：摘要、人物、事件
 
-schema 版本记录在 `PRAGMA user_version`（当前为 2）。打开旧库时按版本自动升级：v2 给 `chapter_meta` 补 `has_draft` / `has_final`（正文存在性入库），`ALTER TABLE` 与版本更新在同一个事务里完成，旧数据原样保留。
+schema 版本记录在 `PRAGMA user_version`（当前为 3）。打开旧库时按版本自动升级：v2 给 `chapter_meta` 补 `has_draft` / `has_final`（正文存在性入库）；v3 新增 `materials`（素材库）；`ALTER TABLE` / 建表与版本更新在同一个事务里完成，旧数据原样保留。
 
 ## 旧项目迁移
 

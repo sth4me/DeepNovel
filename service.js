@@ -6,12 +6,16 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
 import { CRAFT_CARDS } from './craft.js'
+import { BUILTIN_REFERENCE_SKILLS } from './builtin-skills.js'
 import {
   craftCardIdFromSkill,
   craftSkillBody,
   craftSkillName,
   deleteImportedSkill,
   allSkillRoots,
+  builtinReferenceBody,
+  builtinSkillDisabled,
+  isBuiltinSkillName,
   importSkill as importSkillToProject,
   projectSkillRoots,
   scanImportedSkills,
@@ -59,7 +63,7 @@ function estimateAiFlavor(text) {
 }
 import { openDatabase } from './db.js'
 import { migrateLegacyProject } from './migrate.js'
-import { NovelStore } from './store.js'
+import { MATERIAL_KINDS, NovelStore } from './store.js'
 import {
   BIBLE_SYSTEM_PROMPT,
   BIBLE_CHARACTERS_SYSTEM_PROMPT,
@@ -248,6 +252,22 @@ const DIRS = [
 
 function now() {
   return new Date().toISOString()
+}
+
+/** 从提示词文本提取 `{{name}}` 或 `${name}` 占位符（去重、最多 20 个）。 */
+function extractTemplateVariables(text) {
+  const source = String(text ?? '')
+  const found = []
+  const seen = new Set()
+  const regex = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}|\$\{\s*([A-Za-z0-9_.-]+)\s*\}/g
+  for (const match of source.matchAll(regex)) {
+    const name = match[1] ?? match[2]
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    found.push(name)
+    if (found.length >= 20) break
+  }
+  return found
 }
 
 function errorText(error) {
@@ -3033,6 +3053,8 @@ export class NovelWriterService {
         key: entry.key,
         label: entry.label,
         category: entry.category,
+        group: entry.group ?? 'other',
+        tags: Array.isArray(entry.tags) ? entry.tags : [],
         description: entry.description,
         content,
         default: entry.default,
@@ -3049,6 +3071,41 @@ export class NovelWriterService {
       }
     })
     return { prompts }
+  }
+
+  /**
+   * 提示词渲染预览（只读，不调 LLM）：返回默认/当前生效文本、覆盖状态与可替换占位符。
+   * 函数拼装的模板不执行，返回 variablesHint。
+   */
+  async previewPromptTemplate(agent, options = {}) {
+    const key = String(options.key ?? '').trim()
+    const entry = PROMPT_CATALOG.find((item) => item.key === key)
+    if (!entry) throw new Error(`未知提示词：${key}`)
+    const overrides = await this.readSystemOverrides(agent)
+    const override = overrides?.[key]
+    const revision = entry.revision ?? 1
+    const defaultIsFunction = typeof entry.default === 'function'
+    const defaultText = defaultIsFunction ? null : String(entry.default)
+    const customized = Boolean(override && override.text !== entry.default)
+    const currentText = defaultIsFunction
+      ? (customized ? override.text : null)
+      : (customized ? override.text : defaultText)
+    const baseRevision = override?.baseRevision ?? null
+    const variables = defaultIsFunction ? [] : extractTemplateVariables(currentText ?? defaultText ?? '')
+    const result = {
+      key: entry.key,
+      label: entry.label,
+      group: entry.group ?? 'other',
+      tags: Array.isArray(entry.tags) ? entry.tags : [],
+      defaultText,
+      currentText,
+      customized,
+      baseRevision,
+      revision,
+      variables,
+    }
+    if (defaultIsFunction) result.variablesHint = '该模板由代码拼装，无可替换占位符'
+    return result
   }
 
   async saveSystemPrompt(agent, options = {}) {
@@ -3626,6 +3683,31 @@ export class NovelWriterService {
     await this.writeJson(agent, path, { items, updatedAt: now() })
     return { saved: ideas.length, items }
   }
+  /* ------------------------------ 素材库 ------------------------------ */
+
+  async materialsList(agent) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    return { materials: store.listMaterials() }
+  }
+
+  async materialSave(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const content = String(options.content ?? '')
+    if (!content.trim()) throw new Error('素材内容不能为空')
+    const kind = MATERIAL_KINDS.includes(options.kind) ? options.kind : '其他'
+    return store.saveMaterial({ ...options, content, kind })
+  }
+
+  async materialDelete(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定素材 id')
+    if (!store.deleteMaterial(id)) throw new Error(`找不到素材：${id}`)
+    return { id, deleted: true }
+  }
 
   async generateBible(agent, options = {}, signal) {
     await this.assertInitialized(agent)
@@ -4078,7 +4160,10 @@ export class NovelWriterService {
     const cwd = await this.cwd(agent)
     const disabled = await this.readCraftDisabled(agent)
     const imported = await scanImportedSkills(allSkillRoots(cwd, DSH_HOME))
-    const builtinNames = new Set(CRAFT_CARDS.map((card) => craftSkillName(card.id)))
+    const builtinNames = new Set([
+      ...CRAFT_CARDS.map((card) => craftSkillName(card.id)),
+      ...BUILTIN_REFERENCE_SKILLS.map((skill) => skill.name),
+    ])
     const merged = new Map()
     for (const card of CRAFT_CARDS) {
       merged.set(craftSkillName(card.id), {
@@ -4086,11 +4171,24 @@ export class NovelWriterService {
         description: card.summary,
         source: 'builtin',
         scope: 'builtin',
-        enabled: !disabled.includes(card.id),
+        enabled: !builtinSkillDisabled(disabled, craftSkillName(card.id)),
         canDelete: false,
         overridesBuiltin: false,
         tags: card.tags ?? [],
         tasks: card.tasks ?? [],
+      })
+    }
+    for (const skill of BUILTIN_REFERENCE_SKILLS) {
+      merged.set(skill.name, {
+        name: skill.name,
+        description: skill.description,
+        source: 'builtin',
+        scope: 'builtin',
+        enabled: !builtinSkillDisabled(disabled, skill.name),
+        canDelete: false,
+        overridesBuiltin: false,
+        tags: skill.tags ?? [],
+        tasks: [],
       })
     }
     for (const skill of imported) {
@@ -4112,11 +4210,24 @@ export class NovelWriterService {
   /** 技能开关：内置 craft-* 写项目 craftDisabled；导入技能不支持开关（应删除）。 */
   async toggleSkill(agent, options = {}) {
     const name = String(options.name ?? '').trim()
-    const cardId = craftCardIdFromSkill(name)
-    if (!cardId || !CRAFT_CARDS.some((card) => card.id === cardId)) {
+    if (!isBuiltinSkillName(name)) {
       throw new Error('导入技能不支持开关；如需移除请删除')
     }
-    return this.setCraftCardEnabled(agent, { id: cardId, enabled: options.enabled !== false })
+    const cardId = craftCardIdFromSkill(name)
+    const isCraftCard = Boolean(cardId) && CRAFT_CARDS.some((card) => card.id === cardId)
+    const isRefSkill = BUILTIN_REFERENCE_SKILLS.some((skill) => skill.name === name)
+    if (!isCraftCard && !isRefSkill) {
+      throw new Error('导入技能不支持开关；如需移除请删除')
+    }
+    const project = await this.readJson(agent, this.marker)
+    const disabled = new Set(Array.isArray(project.craftDisabled) ? project.craftDisabled : [])
+    // 统一存技能名；旧数据里的裸 craft id 一并清理
+    if (cardId) disabled.delete(cardId)
+    if (options.enabled === false) disabled.add(name)
+    else disabled.delete(name)
+    project.craftDisabled = [...disabled]
+    await this.writeJson(agent, this.marker, project)
+    return { name, enabled: !disabled.has(name) }
   }
 
   /** 导入技能：scope=project 写项目 .dsh/skills；scope=global 写 DSH_HOME/novel-writer/library/skills。 */
@@ -4146,6 +4257,16 @@ export class NovelWriterService {
   async readSkill(agent, name, scope) {
     const cwd = await this.cwd(agent)
     const skillName = String(name ?? '').trim()
+    const refSkill = BUILTIN_REFERENCE_SKILLS.find((skill) => skill.name === skillName)
+    if (refSkill) {
+      return {
+        name: refSkill.name,
+        source: 'builtin',
+        scope: 'builtin',
+        description: refSkill.description,
+        content: builtinReferenceBody(refSkill),
+      }
+    }
     const cardId = craftCardIdFromSkill(skillName)
     if (cardId) {
       const card = CRAFT_CARDS.find((item) => item.id === cardId)
@@ -6173,6 +6294,7 @@ export class NovelWriterService {
         }
       }
     }
+    await pushJson('story/materials.json', { materials: store.listMaterials() })
     await pushJson('story/stats.json', store.readStats())
     for (const run of store.listRuns(50)) await pushJson(`.dsh-writing/runs/${run.runId}.json`, run)
     store.checkpoint()
@@ -6426,6 +6548,21 @@ export class NovelWriterService {
             createdAt: item.createdAt ?? null,
           }))
         return { kind, items }
+      }
+      case 'materials': {
+        const store = await this.storeFor(agent)
+        const materials = store.listMaterials()
+          .filter((item) => match(item.title) || match(item.content) || (item.tags ?? []).some((tag) => match(tag)))
+          .slice(0, Number(options.limit) || 20)
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            kind: item.kind,
+            content: String(item.content ?? '').slice(0, 400),
+            tags: item.tags ?? [],
+            updatedAt: item.updatedAt ?? null,
+          }))
+        return { kind, materials }
       }
       case 'deconstructions': {
         const data = await this.readDeconstructions(agent)

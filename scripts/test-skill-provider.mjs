@@ -18,6 +18,7 @@ const {
   skillRoots,
 } = await import('../skills.js')
 const { CRAFT_CARDS } = await import('../craft.js')
+const { BUILTIN_REFERENCE_SKILLS } = await import('../builtin-skills.js')
 
 const abs = (target) => join(target.cwd, target.relativePath)
 const fsCtx = {
@@ -51,8 +52,9 @@ const plainDir = await mkdtemp(join(tmpdir(), 'deepnovel-skill-plain-'))
 assert.deepEqual(await provider.list({ cwd: plainDir }), [])
 assert.deepEqual(await provider.list({}), [])
 const listed = await provider.list({ cwd: project })
-assert.equal(listed.length, CRAFT_CARDS.length)
-assert.ok(listed.every((candidate) => candidate.name.startsWith('craft-')))
+assert.equal(listed.length, CRAFT_CARDS.length + BUILTIN_REFERENCE_SKILLS.length)
+assert.equal(listed.filter((candidate) => candidate.name.startsWith('craft-')).length, CRAFT_CARDS.length)
+assert.equal(listed.filter((candidate) => candidate.name.startsWith('ref-')).length, BUILTIN_REFERENCE_SKILLS.length)
 assert.ok(listed.every((candidate) => candidate.rank === CRAFT_SKILL_RANK))
 assert.ok(listed.every((candidate) => candidate.metadata?.source === 'builtin'))
 assert.ok(listed.some((candidate) => candidate.name === 'craft-scene' && candidate.description.includes('场景')))
@@ -69,7 +71,7 @@ assert.equal(await provider.get({ name: 'craft-no-such' }), undefined)
 await service.setCraftCardEnabled(project, { id: 'scene', enabled: false })
 const filtered = await provider.list({ cwd: project })
 assert.equal(filtered.some((candidate) => candidate.name === 'craft-scene'), false, '禁用后不应出现')
-assert.equal(filtered.length, CRAFT_CARDS.length - 1)
+assert.equal(filtered.length, CRAFT_CARDS.length + BUILTIN_REFERENCE_SKILLS.length - 1)
 const disabledList = await service.listSkills(project)
 assert.equal(disabledList.skills.find((skill) => skill.name === 'craft-scene').enabled, false)
 assert.equal(disabledList.skills.find((skill) => skill.name === 'craft-dialogue').enabled, true)
@@ -116,10 +118,10 @@ assert.equal(readImported.content, '导入技能正文：先写动作。')
 await assert.rejects(() => service.readSkill(project, 'no-such-skill'), /找不到技能/)
 
 // ---------- 6) skill-toggle：内置写 craftDisabled；导入报错 ----------
-assert.deepEqual(await service.toggleSkill(project, { name: 'craft-dialogue', enabled: false }), { id: 'dialogue', enabled: false })
+assert.deepEqual(await service.toggleSkill(project, { name: 'craft-dialogue', enabled: false }), { name: 'craft-dialogue', enabled: false })
 assert.equal((await service.listSkills(project)).skills.find((skill) => skill.name === 'craft-dialogue').enabled, false)
 await assert.rejects(() => service.toggleSkill(project, { name: 'my-skill', enabled: false }), /导入技能不支持开关/)
-assert.deepEqual(await service.toggleSkill(project, { name: 'craft-dialogue', enabled: true }), { id: 'dialogue', enabled: true })
+assert.deepEqual(await service.toggleSkill(project, { name: 'craft-dialogue', enabled: true }), { name: 'craft-dialogue', enabled: true })
 
 // ---------- 7) skill-delete：仅导入、删除目录包、不存在报错、内置不可删 ----------
 const deleted = await service.deleteSkill(project, 'my-skill')
@@ -298,6 +300,36 @@ assert.equal(scopedList.find((skill) => skill.name === 'craft-fight').scope, 'bu
 assert.equal(scopedList.find((skill) => skill.name === 'foo').scope, 'project')
 assert.ok(scopedList.find((skill) => skill.name === 'foo').path.includes('.dsh'))
 assert.equal(scopedList.find((skill) => skill.name === 'global-skill').scope, 'global')
+
+// ---------- 13) 内置参考技能（ref-*）：14 个内置、get 内容、toggle、旧数据兼容 ----------
+const refList = await provider.list({ cwd: project })
+const refCandidates = refList.filter((candidate) => candidate.name.startsWith('ref-'))
+assert.equal(refCandidates.length, BUILTIN_REFERENCE_SKILLS.length, '应返回 5 个 ref-*')
+assert.ok(refCandidates.every((candidate) => candidate.rank === 600 && candidate.source === 'builtin'))
+assert.ok(refCandidates.some((candidate) => candidate.name === 'ref-hooks'))
+const refHooks = await provider.get(refCandidates.find((candidate) => candidate.name === 'ref-hooks'))
+assert.ok(refHooks.content.includes('判断'), 'ref get 应带适配提示')
+assert.ok(refHooks.content.includes('钩子库'), 'ref 内容应包含标题')
+assert.equal(refHooks.source, 'builtin')
+// 禁用 / 恢复 ref
+assert.deepEqual(await service.toggleSkill(project, { name: 'ref-hooks', enabled: false }), { name: 'ref-hooks', enabled: false })
+assert.equal((await provider.list({ cwd: project })).some((candidate) => candidate.name === 'ref-hooks'), false, '禁用后不应出现')
+assert.equal((await service.listSkills(project)).skills.find((skill) => skill.name === 'ref-hooks').enabled, false)
+assert.deepEqual(await service.toggleSkill(project, { name: 'ref-hooks', enabled: true }), { name: 'ref-hooks', enabled: true })
+assert.ok((await provider.list({ cwd: project })).some((candidate) => candidate.name === 'ref-hooks'))
+// 旧 craftDisabled 兼容：裸 id 与 craft-<id> 都禁用对应 craft 卡
+await service.writeJson(project, 'story/project.json', { schemaVersion: 1, title: 't', craftDisabled: ['scene'] })
+assert.equal((await provider.list({ cwd: project })).some((candidate) => candidate.name === 'craft-scene' && candidate.source === 'builtin'), false, '旧裸 id 应禁用内置')
+await service.writeJson(project, 'story/project.json', { schemaVersion: 1, title: 't', craftDisabled: ['craft-scene'] })
+assert.equal((await provider.list({ cwd: project })).some((candidate) => candidate.name === 'craft-scene' && candidate.source === 'builtin'), false, '技能名写法应禁用内置')
+await service.writeJson(project, 'story/project.json', { schemaVersion: 1, title: 't', craftDisabled: [] })
+// skills-list 内置项：14 个、不可删、含 tags
+const builtinList = (await service.listSkills(project)).skills.filter((skill) => skill.scope === 'builtin')
+assert.equal(builtinList.length, CRAFT_CARDS.length + BUILTIN_REFERENCE_SKILLS.length - 2, '项目/全局各覆盖一个内置（craft-scene/craft-dialogue）')
+assert.ok(builtinList.every((skill) => skill.canDelete === false))
+assert.ok(builtinList.find((skill) => skill.name === 'ref-quality').tags.length > 0)
+// 导入技能 toggle 仍报错
+await assert.rejects(() => service.toggleSkill(project, { name: 'foo', enabled: false }), /导入技能不支持开关/)
 service.disposeStores()
 await new Promise((resolve) => setTimeout(resolve, 80))
 await rm(home, { recursive: true, force: true })

@@ -1054,6 +1054,8 @@ export function buildVolumePlanUserPrompt(input) {
 export const PROMPT_CATALOG = [
   {
     key: 'premise',
+    group: 'premise',
+    tags: ['构思', '候选'],
     label: '构思候选',
     category: '构思',
     description: '生成差异明显的长篇构思卡：标题、核心故事、题材、主角、篇幅。',
@@ -1061,6 +1063,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'premiseIntent',
+    group: 'premise',
+    tags: ['构思', '意图'],
     label: '构思意图摘要',
     category: '构思',
     description: '从多轮构思对话提炼稳定的用户意图，再交给候选生成。',
@@ -1068,6 +1072,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'bible',
+    group: 'bible',
+    tags: ['设定', '角色'],
     label: '角色与设定',
     category: '设定',
     description: '生成角色、地点、规则、势力和物品五类设定。',
@@ -1075,6 +1081,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'bibleCharacters',
+    group: 'bible',
+    tags: ['设定', '角色'],
     label: '角色生成',
     category: '设定',
     description: '只生成角色，保留已有地点、规则、势力和物品。',
@@ -1082,6 +1090,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'bibleWorld',
+    group: 'bible',
+    tags: ['设定', '世界'],
     label: '世界生成',
     category: '设定',
     description: '只生成地点、规则、势力和物品，保留已有角色。',
@@ -1089,6 +1099,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'outline',
+    group: 'outline',
+    tags: ['大纲', '章纲'],
     label: '章纲生成',
     category: '大纲',
     description: '按构思、文风、分卷信息和上一章落点生成章纲。',
@@ -1096,6 +1108,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'reverseOutline',
+    group: 'outline',
+    tags: ['大纲', '反推'],
     label: '正文反推章纲',
     category: '大纲',
     description: '从已有正文反推每章 synopsis，不新增正文没有的事件。',
@@ -1103,6 +1117,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'volumePlan',
+    group: 'outline',
+    tags: ['大纲', '分卷'],
     label: '分卷舞台计划',
     category: '大纲',
     description: '从上一卷离卷结果和本卷已有章纲归纳地图、卷目标、战力天花板与离卷条件。',
@@ -1110,6 +1126,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'draft',
+    group: 'chapter',
+    tags: ['正文', '草稿'],
     label: '正文草稿',
     category: '正文',
     description: '按章纲、文风、设定和连续性写本章正文。',
@@ -1117,6 +1135,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'revise',
+    group: 'chapter',
+    tags: ['正文', '修订'],
     label: '按意见修订',
     category: '正文',
     description: '按用户修订要求改写本章，保留章纲事实与文风。',
@@ -1124,6 +1144,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'fix',
+    group: 'chapter',
+    tags: ['正文', '修复'],
     label: '自动修复',
     category: '正文',
     description: '修复规则质检与审校指出的问题，不改变剧情走向。',
@@ -1131,6 +1153,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'inspiration',
+    group: 'other',
+    tags: ['灵感', '桥段'],
     label: '灵感桥段',
     category: '构思',
     description: '生成具体的场景、桥段和可用点子，不写正文。',
@@ -1138,6 +1162,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'deconstruct',
+    group: 'other',
+    tags: ['拆书'],
     label: '拆书分析',
     category: '拆书',
     description: '从已有文本提炼梗概、文风、人物和可复用桥段，不编造。',
@@ -1145,6 +1171,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'deconstructStructure',
+    group: 'other',
+    tags: ['拆书', '结构'],
     label: '拆书·结构',
     category: '拆书',
     revision: 1,
@@ -1153,6 +1181,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'deconstructCharacters',
+    group: 'other',
+    tags: ['拆书', '人物'],
     label: '拆书·人物设定',
     category: '拆书',
     revision: 1,
@@ -1161,6 +1191,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'deconstructTechnique',
+    group: 'other',
+    tags: ['拆书', '技法'],
     label: '拆书·技法',
     category: '拆书',
     revision: 1,
@@ -1169,6 +1201,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'styleAudit',
+    group: 'review',
+    tags: ['审校', '文风'],
     label: '文风检测',
     category: '审校',
     revision: 2,
@@ -1177,6 +1211,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'review',
+    group: 'review',
+    tags: ['审校', '文风', '连续性'],
     label: '统一审校',
     category: '审校',
     revision: 2,
@@ -1185,6 +1221,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'deslop',
+    group: 'craft',
+    tags: ['去AI味', '改写'],
     label: '去 AI 味改写',
     category: '审校',
     revision: 1,
@@ -1193,6 +1231,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'summary',
+    group: 'data',
+    tags: ['摘要', '记忆'],
     label: '章节摘要',
     category: '记忆',
     description: '生成客观连续性摘要、出场人物、关键事件和未解决线索。',
@@ -1200,6 +1240,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'continuity',
+    group: 'review',
+    tags: ['审校', '连续性'],
     label: '连续性检查',
     category: '审校',
     description: '只根据前文摘要、设定和当前章纲报告可证明的矛盾。',
@@ -1207,6 +1249,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'outlineAudit',
+    group: 'outline',
+    tags: ['大纲', '审查'],
     label: '章纲审查',
     category: '大纲',
     description: '检查章纲的逻辑、时间线、因果、设定和重复桥段。',
@@ -1214,6 +1258,8 @@ export const PROMPT_CATALOG = [
   },
   {
     key: 'outlineRepair',
+    group: 'outline',
+    tags: ['大纲', '修复'],
     label: '章纲修复',
     category: '大纲',
     description: '按审查问题最小改动 chapters 的 synopsis。',

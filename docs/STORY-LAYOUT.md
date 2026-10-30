@@ -136,6 +136,14 @@ $DSH_HOME/novel-writer/library/
 
 `state_meta` 是已定稿章节索引；`chapter_state` 保存本章 outline/meta/summary/cast/time/place/hook。
 
+## 素材（`materials` 表）
+
+`materials` 存参考素材：`id / title / kind / content / tags_json / source / created_at / updated_at`。
+
+- 类型 `kind`：片段 / 资料 / 桥段 / 引用 / 其他（缺省「其他」）。
+- `tags` 最多 10 个（去重，单个 ≤40 字）；`title` 缺省取内容首行（≤120 字），否则「未命名素材」。
+- 素材不会自动注入写作提示词，由助手用 `novel_query kind=materials` 按需查询；导出纯文件项目时写成 `story/materials.json`，快照含 `project.db` 自然包含。
+
 ## 写安全
 
 - 结构化写入走 SQLite 事务（`BEGIN IMMEDIATE`，失败回滚）；多窗口冲突由 WAL 与 `busy_timeout` 兜底。

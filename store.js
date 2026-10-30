@@ -4,11 +4,29 @@
  * 正文（draft.md / final.md / revisions）仍保留在文件系统，不在这里管理；
  * 只有 FTS 索引在 reindex* 时读取正文建立。
  */
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { jsonGet, jsonSet, transaction, withBusyRetry } from './db.js'
 
 const BIBLE_CATEGORIES = ['characters', 'locations', 'rules', 'factions', 'items']
+export const MATERIAL_KINDS = ['片段', '资料', '桥段', '引用', '其他']
+const MATERIAL_TAGS_LIMIT = 10
+
+/** 素材标签：数组或逗号/空白分隔字符串 → 去重、最多 10 个。 */
+function normalizeMaterialTags(tags) {
+  const list = Array.isArray(tags) ? tags : (typeof tags === 'string' ? tags.split(/[,，\s]+/) : [])
+  const seen = new Set()
+  const out = []
+  for (const tag of list) {
+    const value = String(tag ?? '').trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push(value.slice(0, 40))
+    if (out.length >= MATERIAL_TAGS_LIMIT) break
+  }
+  return out
+}
 const BIBLE_LABELS = { characters: '角色', locations: '地点', rules: '规则', factions: '势力', items: '物品' }
 
 function now() {
@@ -1221,6 +1239,69 @@ export class NovelStore {
       bible: count('fts_bible'),
       summaries: count('fts_summaries'),
     }
+  }
+
+  /* ------------------------------ 素材库 ------------------------------ */
+
+  materialFromRow(row) {
+    return {
+      id: row.id,
+      title: row.title ?? '',
+      kind: row.kind ?? '其他',
+      content: row.content ?? '',
+      tags: jsonGet(row.tags_json, []),
+      source: row.source ?? null,
+      createdAt: row.created_at ?? null,
+      updatedAt: row.updated_at ?? null,
+    }
+  }
+
+  listMaterials() {
+    return this.all('SELECT * FROM materials ORDER BY updated_at DESC, created_at DESC').map((row) => this.materialFromRow(row))
+  }
+
+  readMaterial(id) {
+    const row = this.get('SELECT * FROM materials WHERE id = ?', String(id ?? ''))
+    return row ? this.materialFromRow(row) : null
+  }
+
+  saveMaterial(input = {}) {
+    const content = String(input.content ?? '')
+    if (!content.trim()) throw new Error('素材内容不能为空')
+    const kind = MATERIAL_KINDS.includes(input.kind) ? input.kind : '其他'
+    const tags = normalizeMaterialTags(input.tags)
+    const requestedId = String(input.id ?? '').trim()
+    const existing = requestedId ? this.readMaterial(requestedId) : null
+    const id = existing?.id ?? (requestedId || `mat-${Date.now()}-${randomUUID().slice(0, 8)}`)
+    const firstLine = content.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? ''
+    const title = String(input.title ?? '').trim().slice(0, 120) || firstLine.slice(0, 120) || '未命名素材'
+    const timestamp = now()
+    const createdAt = existing?.createdAt ?? timestamp
+    this.run(
+      `INSERT INTO materials (id, title, kind, content, tags_json, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title,
+         kind = excluded.kind,
+         content = excluded.content,
+         tags_json = excluded.tags_json,
+         source = excluded.source,
+         updated_at = excluded.updated_at`,
+      id,
+      title,
+      kind,
+      content,
+      jsonSet(tags),
+      input.source == null ? null : String(input.source).slice(0, 200),
+      createdAt,
+      timestamp,
+    )
+    return this.readMaterial(id)
+  }
+
+  deleteMaterial(id) {
+    const result = this.run('DELETE FROM materials WHERE id = ?', String(id ?? ''))
+    return Number(result?.changes ?? 0) > 0
   }
 
   /* ------------------------------ 生命周期 ------------------------------ */

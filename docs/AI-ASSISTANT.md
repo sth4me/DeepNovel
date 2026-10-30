@@ -14,7 +14,7 @@
 | `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系 |
 | `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
 | `novel_craft` | 兼容入口：写作技法卡片列表、按任务读取、推荐（新方案用 skill 工具按需加载 `craft-*`） |
-| `novel_query` | 只读查询项目数据：13 个 `kind`（见下方「查询面」） |
+| `novel_query` | 只读查询项目数据：14 个 `kind`（见下方「查询面」） |
 
 正文仍然可以用文件工具读写，但**推荐用 `novel_chapter action=patch`**：它受控、留备份、自动重建索引，不会绕过数据层的其他约束。
 
@@ -49,7 +49,7 @@
 
 - 加载入口只保留 `tool-skill`（`skill-filesystem` 已从预设移除）；助手通过 skill 工具按需加载全文，新增/改名/删除技能不需要重启。
 - 助手技能来源有三类，按 rank 从小到大优先：
-  - **内置技法**：9 张技法卡片以 `craft-*` 随插件提供（provider `deepnovel-craft`，rank 600，source builtin）；**不能删除，只能按项目开关**；只在写作项目里出现（cwd 有 `story/project.db` 或 `story/project.json`），非写作会话不出现。
+  - **内置技能（共 14 个）**：9 张技法卡片以 `craft-*`、5 个参考库以 `ref-*`（`ref-hooks` 钩子库、`ref-openings` 开篇库、`ref-reversals` 反转工具箱、`ref-emotional-arc` 情绪弧线、`ref-quality` 章节质检清单）随插件提供（provider `deepnovel-craft`，rank 600，source builtin）；**不能删除，只能按项目开关**；只在写作项目里出现（cwd 有 `story/project.db` 或 `story/project.json`），非写作会话不出现。`craft-*` 与 `ref-*` 同样走模型路由、同样可逐项开关。
   - **项目导入技能**：`<projectRoot>/.dsh/skills`（rank 100）、`<projectRoot>/.agents/skills`（rank 200）下的 `SKILL.md`，可删除；只对当前项目生效。
   - **全局 / 插件级导入技能**：`DSH_HOME/novel-writer/library/skills/`（rank 300）下的 `SKILL.md`，可删除；所有写作项目都能用。
 - 冲突优先级：**项目 > 全局 > 内置**（rank 小者胜）；同名导入覆盖时先备份——项目覆盖备份到 `.dsh-writing/backups/skills-<时间>/`，全局覆盖备份到 `DSH_HOME/novel-writer/library/backups/skills-<时间>/`；列表里 `overridesBuiltin` 标出覆盖内置的技能。
@@ -112,7 +112,7 @@
 
 ## 查询面：`novel_query`
 
-只读，不开放裸 SQL；13 个 kind 都支持 `keyword` / `limit`（章节类用 `number` / `limit` / `keyword`）。
+只读，不开放裸 SQL；14 个 kind 都支持 `keyword` / `limit`（章节类用 `number` / `limit` / `keyword`）。
 
 | kind | 返回要点 |
 |---|---|
@@ -129,6 +129,7 @@
 | `deconstructions` | 默认 `{ items: [{ title, createdAt, summary(≤300), counts }] }`，不返回全文；用 `entryId`（title 或 createdAt）或 `number`（第 N 条）取单条全文 |
 | `prompt-overrides` | 只回自定义过的提示词：key、版本、`preview`（≤120 字） |
 | `premise-chat` | 构思对话消息（内容 ≤400 字）与批次（带 `candidateCount`） |
+| `materials` | 素材库：keyword 匹配标题 / 内容 / 标签，limit 默认 20，`content` 截断 400 字 |
 
 长文本刻意截断：需要详情时先看摘要，再用 `entryId` / `number` 取单条，避免一次把大段内容塞进上下文。
 

@@ -105,7 +105,11 @@
 - AI 味审查：`style-audit` 与统一审校输出 `aiFlavor: { level: 轻|中|重, score: 0-100, markers: [{ type: 禁用词|句式|结构|节奏, quote, word? }] }`，按 35 个一级禁用词 / AI 句式 / 结构指纹 / 真人基准检查；模型结构不合法时用启发式（禁用词密度）兜底。
 - deslop 改写：`novel_chapter action=deslop` / 章节页「去 AI 味」；`dryRun` 预览不落盘；应用写 `revisions/deslop-<时间>.md`、字数 ±30% 校验、失败恢复原文、清旧 QA、重建索引，返回 `changes` / `beforeAiFlavor` / `afterAiFlavor`；写作/修订/修复提示词注入 deslop 技法规则，PROMPT_CATALOG 有可覆盖的 `deslop` 条目。
 - 技能库：三类来源——内置 `craft-*`（provider `deepnovel-craft`、rank 600、不可删、按项目开关、仅写作项目）、项目导入（`<projectRoot>/.dsh/skills` 100 / `.agents/skills` 200）、全局导入（`DSH_HOME/novel-writer/library/skills` 300，跨写作项目可用）；同名优先级 项目 > 全局 > 内置，覆盖前备份（项目 `.dsh-writing/backups/skills-<时间>/`、全局 `DSH_HOME/novel-writer/library/backups/skills-<时间>/`）；`skills-list` 每项带 scope / path，`skill-delete` / `skill-read` 带 scope，`skill-toggle` 仅内置写 `craftDisabled`；用户级 / 公共技能（`<dshHome>/skills`、`<agentsHome>/skills`、bundled、custom 根）不出现，非写作项目返回空；`skill-read` 内置正文带「判断是否适合本章」提示。
+- 内置参考库：`ref-hooks` / `ref-openings` / `ref-reversals` / `ref-emotional-arc` / `ref-quality` 与 9 张 craft 同为内置技能（provider `deepnovel-craft`、rank 600、source builtin、不可删），技能库共 14 个内置；`skill-read ref-*` 返回正文（带「判断是否适合本章」提示）；`skill-toggle` 对 ref 生效并可恢复；`craftDisabled` 存技能名，兼容旧的裸 craft id。
 - 模型路由：不再程序注入技法全文（旧 `craftCardsFor` 注入已废弃），系统提示词 10152 写明「技法不是本书设定、不是硬性规则」；AI 用 skill 工具按需加载并自行判断适用性。
+
+- 提示词模板：`PROMPT_CATALOG` 23 条均带 `group`（premise/bible/outline/chapter/review/craft/data/other）与 `tags`；只读 `prompt-preview` 返回 `defaultText` / `currentText` / `customized` / `baseRevision` / `revision` / `variables`（`{{name}}` / `${name}` 去重、≤20），函数拼装模板返回 `variablesHint`；覆盖后 `currentText` 为覆盖文本且 `customized = true`，恢复默认后回到 `defaultText`；预览不调用模型、不改提示词。
+- 素材库：schema v3 新增 `materials` 表（v2→v3 事务内升级、旧数据保留）；类型 片段/资料/桥段/引用/其他，`tags` ≤10、`title` 缺省取首行 ≤120；`materials-list` / `material-save` / `material-delete` 走 `materials` 资源锁；`novel_query kind=materials`（keyword 匹配标题/内容/标签、limit 默认 20、content 截断 400）；导出纯文件项目含 `story/materials.json`，快照含 `project.db` 自然包含。
 
 ## 错误处理
 

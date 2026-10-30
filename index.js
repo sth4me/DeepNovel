@@ -783,6 +783,8 @@ export function apply(ctx) {
         return service.promptInjectionStatus(agent)
       case 'prompt-catalog':
         return service.promptCatalog(agent)
+      case 'prompt-preview':
+        return service.previewPromptTemplate(agent, { key: options.key })
       case 'prompt-catalog-save':
         return service.saveSystemPrompt(agent, { key: options.key, content: options.content })
       case 'prompt-catalog-reset':
@@ -1045,6 +1047,8 @@ export function apply(ctx) {
         return service.saveSystemOverrides(agent, params.overrides)
       case 'prompt-catalog':
         return service.promptCatalog(agent)
+      case 'prompt-preview':
+        return service.previewPromptTemplate(agent, { key: params.key })
       case 'prompt-catalog-save':
         return service.saveSystemPrompt(agent, { key: params.key, content: params.content })
       case 'prompt-catalog-reset':
@@ -1100,6 +1104,19 @@ export function apply(ctx) {
         return service.exportFileProject(agent)
       case 'inspiration-save':
         return service.saveInspiration(agent, { topic: params.topic, ideas: params.ideas })
+      case 'materials-list':
+        return service.materialsList(agent)
+      case 'material-save':
+        return service.materialSave(agent, {
+          id: params.id,
+          title: params.title,
+          kind: params.kind,
+          content: params.content,
+          tags: params.tags,
+          source: params.source,
+        })
+      case 'material-delete':
+        return service.materialDelete(agent, { id: params.id })
       case 'run-detail':
         return service.readRun(agent, { runId: params.runId })
       case 'deconstruct-text':

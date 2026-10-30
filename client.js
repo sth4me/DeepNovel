@@ -5773,6 +5773,43 @@ window.__ModuleLoader__.load({
 
     function SystemPromptsEditor({ state, run, busy, setToast }) {
       const catalog = state.promptCatalog?.prompts ?? []
+      const GROUP_LABELS = {
+        premise: '构思',
+        bible: '设定',
+        outline: '大纲',
+        chapter: '正文',
+        review: '审校',
+        craft: '技法',
+        data: '数据',
+        other: '其他',
+        style: '文风',
+      }
+      const GROUP_ORDER = ['premise', 'bible', 'outline', 'chapter', 'review', 'craft', 'data', 'other', 'style']
+      const groupOf = (entry) => String(entry?.group ?? entry?.category ?? 'other')
+      const availableGroups = GROUP_ORDER.filter((group) => catalog.some((entry) => groupOf(entry) === group))
+      const unknownGroups = [...new Set(catalog.map((entry) => groupOf(entry)).filter((group) => !GROUP_ORDER.includes(group)))]
+      const [groupFilter, setGroupFilter] = useState('all')
+      const [preview, setPreview] = useState(null)
+      const visibleCatalog = groupFilter === 'all' ? catalog : catalog.filter((entry) => groupOf(entry) === groupFilter)
+      const togglePreview = async (entry) => {
+        if (!entry?.key) return
+        if (preview?.key === entry.key) {
+          setPreview(null)
+          return
+        }
+        setPreview({ key: entry.key, loading: true, data: null, error: '', tab: 'current' })
+        try {
+          const data = await run('prompt-preview', { key: entry.key }, { silent: true })
+          if (!data) {
+            setPreview({ key: entry.key, loading: false, data: null, error: '读取预览失败', tab: 'current' })
+            setToast?.('读取预览失败')
+            return
+          }
+          setPreview({ key: entry.key, loading: false, data, error: '', tab: 'current' })
+        } catch (error) {
+          setPreview({ key: entry.key, loading: false, data: null, error: String(error?.message ?? error), tab: 'current' })
+        }
+      }
       const [values, setValues] = useState({})
       const [importOpen, setImportOpen] = useState(false)
       const [importText, setImportText] = useState('')
@@ -5813,10 +5850,26 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setImportOpen(true) }, '导入提示词包'),
           ),
         ),
-        h('p', { className: 'nw-muted' }, '每个模板显示默认/已覆盖状态；可单独保存或恢复默认。留空恢复内置默认。'),
+        h('p', { className: 'nw-muted' }, '每个模板显示默认/已覆盖状态；可预览、单独保存或恢复默认。留空恢复内置默认。'),
         catalog.length === 0
           ? h('p', { className: 'nw-muted' }, '当前没有可用的提示词目录，刷新项目状态后再试。')
-          : catalog.map((entry) =>
+          : h('div', null,
+              h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' } },
+                [['all', '全部']]
+                  .concat(availableGroups.map((group) => [group, GROUP_LABELS[group] ?? group]))
+                  .concat(unknownGroups.map((group) => [group, group]))
+                  .map(([value, label]) =>
+                    h('button', {
+                      key: value,
+                      type: 'button',
+                      className: groupFilter === value ? 'nw-btn primary' : 'nw-btn ghost',
+                      onClick: () => setGroupFilter(value),
+                    }, label),
+                  ),
+              ),
+              visibleCatalog.length === 0
+                ? h('p', { className: 'nw-muted' }, '该分类下没有模板。')
+                : visibleCatalog.map((entry) =>
               h('details', { key: entry.key, className: 'nw-card', style: { marginTop: '8px' }, open: entry.customized },
                 h('summary', { className: 'nw-qa-summary-line' },
                   `${entry.label} · ${entry.category}`,
@@ -5858,7 +5911,42 @@ window.__ModuleLoader__.load({
                     disabled: busy || !entry.customized,
                     onClick: () => run('prompt-catalog-reset', { key: entry.key }, { toast: `${entry.label}已恢复默认` }),
                   }, '恢复默认'),
+                  h('button', {
+                    type: 'button',
+                    className: 'nw-btn ghost',
+                    disabled: busy,
+                    onClick: () => togglePreview(entry),
+                  }, preview?.key === entry.key ? '收起预览' : '预览'),
                 ),
+                preview?.key === entry.key
+                  ? h('div', { style: { marginTop: '6px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '8px' } },
+                      preview.loading
+                        ? h('div', { className: 'nw-muted' }, '读取预览中…')
+                        : preview.error
+                          ? h('div', { className: 'nw-error' }, preview.error)
+                          : h('div', null,
+                              h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
+                                h('span', { className: preview.data?.customized ? 'nw-badge ok' : 'nw-badge' }, preview.data?.customized ? '已覆盖' : '默认'),
+                                Number.isFinite(Number(preview.data?.revision)) ? h('span', { className: 'nw-badge' }, `v${preview.data.revision}`) : null,
+                                preview.data?.customized && Number.isFinite(Number(preview.data?.baseRevision))
+                                  ? h('span', { className: 'nw-muted' }, `基于 v${preview.data.baseRevision}`)
+                                  : null,
+                              ),
+                              preview.data?.customized
+                                ? h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
+                                    h('button', { type: 'button', className: preview.tab === 'default' ? 'nw-btn primary' : 'nw-btn ghost', onClick: () => setPreview((prev) => (prev ? { ...prev, tab: 'default' } : prev)) }, '默认版本'),
+                                    h('button', { type: 'button', className: preview.tab === 'current' ? 'nw-btn primary' : 'nw-btn ghost', onClick: () => setPreview((prev) => (prev ? { ...prev, tab: 'current' } : prev)) }, '当前版本'),
+                                  )
+                                : null,
+                              h('pre', { className: 'nw-pre', style: { maxHeight: '260px', overflow: 'auto', whiteSpace: 'pre-wrap', marginTop: '4px' } },
+                                preview.tab === 'default' ? (preview.data?.defaultText ?? '') : (preview.data?.currentText ?? '')),
+                              Array.isArray(preview.data?.variables) && preview.data.variables.length
+                                ? h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, `占位符：${preview.data.variables.map((item) => `{{${item}}}`).join('、')}`)
+                                : null,
+                              preview.data?.variablesHint ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, preview.data.variablesHint) : null,
+                            ),
+                    )
+                  : null,
                 entry.customized
                   ? h('details', { style: { marginTop: '6px' } },
                       h('summary', { className: 'nw-qa-summary-line' }, '查看内置默认'),
@@ -5866,6 +5954,7 @@ window.__ModuleLoader__.load({
                     )
                   : null,
               ),
+                ),
             ),
         importOpen
           ? h('div', { className: 'nw-modal-backdrop', onClick: () => setImportOpen(false) },
@@ -6480,6 +6569,194 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /*
+     * 素材库：参考片段 / 资料 / 桥段 / 引用；助手通过查询读取，不会自动注入提示词。
+     */
+    function MaterialsLibraryCard({ state, run, busy, setToast }) {
+      const [materials, setMaterials] = useState(() => (Array.isArray(state.materials) ? state.materials : []))
+      const [loading, setLoading] = useState(false)
+      const [expandedId, setExpandedId] = useState(null)
+      const [dialogOpen, setDialogOpen] = useState(false)
+      const [editing, setEditing] = useState(null)
+      const [form, setForm] = useState({ title: '', kind: '片段', content: '', tags: '' })
+      const [saving, setSaving] = useState(false)
+      const [dialogError, setDialogError] = useState('')
+      const refreshMaterials = async (showToast = false) => {
+        setLoading(true)
+        try {
+          const data = await run('materials-list', {}, { silent: true })
+          const list = Array.isArray(data?.materials) ? data.materials : Array.isArray(data) ? data : null
+          if (list) setMaterials(list)
+          if (showToast) setToast?.('素材库已刷新')
+        } catch {
+          // 读取失败保留旧列表
+        } finally {
+          setLoading(false)
+        }
+      }
+      useEffect(() => {
+        refreshMaterials(false)
+      }, [])
+      const openCreate = () => {
+        setEditing(null)
+        setForm({ title: '', kind: '片段', content: '', tags: '' })
+        setDialogError('')
+        setDialogOpen(true)
+      }
+      const openEdit = (item) => {
+        setEditing({ id: item?.id })
+        setForm({
+          title: item?.title ?? '',
+          kind: item?.kind ?? '片段',
+          content: item?.content ?? '',
+          tags: Array.isArray(item?.tags) ? item.tags.join('，') : String(item?.tags ?? ''),
+        })
+        setDialogError('')
+        setDialogOpen(true)
+      }
+      const closeDialog = () => {
+        if (saving) return
+        setDialogOpen(false)
+        setDialogError('')
+      }
+      const saveMaterial = async () => {
+        if (saving) return
+        const content = form.content.trim()
+        if (!content) {
+          setDialogError('内容不能为空')
+          return
+        }
+        setSaving(true)
+        setDialogError('')
+        try {
+          const payload = { content, kind: form.kind || '片段' }
+          if (form.title.trim()) payload.title = form.title.trim()
+          const tags = form.tags.split(/[，,]/).map((item) => item.trim()).filter(Boolean).slice(0, 10)
+          if (tags.length) payload.tags = tags
+          if (editing?.id) payload.id = editing.id
+          await run('material-save', payload, { silent: true, throwOnError: true })
+          setDialogOpen(false)
+          setToast?.(editing?.id ? '素材已更新' : '素材已保存')
+          await refreshMaterials(false)
+        } catch (error) {
+          setDialogError(String(error?.message ?? error))
+        } finally {
+          setSaving(false)
+        }
+      }
+      const removeMaterial = async (item) => {
+        if (!item?.id) return
+        if (!(await requestConfirm({ title: '删除素材', message: `删除素材「${item.title || item.id}」？删除后无法恢复。`, danger: true, confirmLabel: '删除' }))) return
+        try {
+          await run('material-delete', { id: item.id }, { silent: true, throwOnError: true })
+          setToast?.('素材已删除')
+          if (expandedId === item.id) setExpandedId(null)
+          await refreshMaterials(false)
+        } catch (error) {
+          setToast?.(String(error?.message ?? error))
+        }
+      }
+      const summaryOf = (content) => {
+        const text = String(content ?? '').replace(/\s+/g, ' ').trim()
+        return text.length > 120 ? `${text.slice(0, 120)}…` : text
+      }
+      const formatDate = (value) => {
+        const text = String(value ?? '')
+        return text.length >= 10 ? text.slice(0, 10) : ''
+      }
+      return h('div', { className: 'nw-card' },
+        h('div', { className: 'nw-row' },
+          h('h3', { className: 'nw-h3' }, '素材库'),
+          h('span', { className: 'nw-muted' }, `${materials.length} 条素材`),
+          h('div', { className: 'nw-actions', style: { margin: 0 } },
+            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || saving, onClick: openCreate }, '新增素材'),
+            h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || loading, onClick: () => refreshMaterials(true) }, loading ? '刷新中…' : '刷新'),
+          ),
+        ),
+        h('p', { className: 'nw-muted' }, '助手可通过查询读取素材；素材不会自动注入提示词。'),
+        materials.length === 0
+          ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, loading ? '正在读取素材库…' : '还没有素材。可以存参考片段、资料、桥段或引用。')
+          : h('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+              materials.map((item) => {
+                const expanded = expandedId === item?.id
+                const tags = Array.isArray(item?.tags) ? item.tags.map((tag) => String(tag ?? '')).filter(Boolean).slice(0, 10) : []
+                const date = formatDate(item?.updatedAt ?? item?.createdAt)
+                return h('div', { key: item?.id ?? item?.title, className: 'nw-field', style: { margin: 0, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '10px' } },
+                  h('div', { className: 'nw-row' },
+                    h('div', { style: { minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                      h('span', { style: { fontSize: '12px', fontWeight: 600, cursor: 'pointer' }, title: '点击展开/收起全文', onClick: () => setExpandedId(expanded ? null : item?.id) }, item?.title || '未命名素材'),
+                      h('span', { className: 'nw-badge' }, item?.kind ?? '其他'),
+                      tags.map((tag) => h('span', { key: tag, className: 'nw-badge' }, tag)),
+                    ),
+                    h('div', { className: 'nw-actions', style: { margin: 0 } },
+                      h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => setExpandedId(expanded ? null : item?.id) }, expanded ? '收起' : '展开'),
+                      h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => openEdit(item) }, '编辑'),
+                      h('button', { type: 'button', className: 'nw-btn danger', disabled: busy, onClick: () => removeMaterial(item) }, '删除'),
+                    ),
+                  ),
+                  expanded
+                    ? h('pre', { className: 'nw-pre', style: { maxHeight: '260px', overflow: 'auto', whiteSpace: 'pre-wrap', marginTop: '4px' } }, item?.content ?? '')
+                    : h('div', { className: 'nw-muted', style: { marginTop: '2px', whiteSpace: 'pre-wrap' } }, summaryOf(item?.content)),
+                  date ? h('div', { className: 'nw-muted', style: { marginTop: '2px' } }, `更新：${date}`) : null,
+                )
+              }),
+            ),
+        dialogOpen
+          ? h('div', { className: 'nw-modal-backdrop', onClick: closeDialog },
+              h('div', { className: 'nw-modal', onClick: (event) => event.stopPropagation() },
+                h('div', { className: 'nw-eyebrow' }, editing?.id ? '编辑素材' : '新增素材'),
+                h('div', { className: 'nw-field', style: { marginTop: '6px' } },
+                  h('label', { className: 'nw-label' }, '标题（可留空，空则取内容首行）'),
+                  h('input', {
+                    className: 'nw-input',
+                    value: form.title,
+                    disabled: saving,
+                    maxLength: 120,
+                    onChange: (event) => setForm((prev) => ({ ...prev, title: event.target.value })),
+                  }),
+                ),
+                h('div', { className: 'nw-field' },
+                  h('label', { className: 'nw-label' }, '类型'),
+                  h('select', {
+                    className: 'nw-select',
+                    value: form.kind,
+                    disabled: saving,
+                    onChange: (event) => setForm((prev) => ({ ...prev, kind: event.target.value })),
+                  },
+                    ['片段', '资料', '桥段', '引用', '其他'].map((kind) => h('option', { key: kind, value: kind }, kind)),
+                  ),
+                ),
+                h('div', { className: 'nw-field' },
+                  h('label', { className: 'nw-label' }, '内容'),
+                  h('textarea', {
+                    className: 'nw-textarea',
+                    style: { minHeight: '140px' },
+                    value: form.content,
+                    disabled: saving,
+                    placeholder: '粘贴参考片段、资料、桥段或引用',
+                    onChange: (event) => setForm((prev) => ({ ...prev, content: event.target.value })),
+                  }),
+                ),
+                h('div', { className: 'nw-field' },
+                  h('label', { className: 'nw-label' }, '标签（逗号分隔，最多 10 个）'),
+                  h('input', {
+                    className: 'nw-input',
+                    value: form.tags,
+                    disabled: saving,
+                    onChange: (event) => setForm((prev) => ({ ...prev, tags: event.target.value })),
+                  }),
+                ),
+                dialogError ? h('div', { className: 'nw-error', style: { marginTop: '6px' } }, dialogError) : null,
+                h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                  h('button', { type: 'button', className: 'nw-btn', disabled: saving, onClick: closeDialog }, '取消'),
+                  h('button', { type: 'button', className: 'nw-btn primary', disabled: saving || !form.content.trim(), onClick: saveMaterial }, saving ? '保存中…' : editing?.id ? '保存修改' : '保存素材'),
+                ),
+              ),
+            )
+          : null,
+      )
+    }
+
     function ProjectView({ state, run, busy, catalog, goTo, setToast, setFocusChapter }) {
       const [title, setTitle] = useState(state.project?.title ?? '')
       const [writingNotes, setWritingNotes] = useState(state.project?.writingNotes ?? '')
@@ -6793,6 +7070,7 @@ window.__ModuleLoader__.load({
             '已生效于：设定生成、大纲生成、章节草稿、章节修订（保存后下一次生成生效）'),
         ),
         h(SkillsLibraryCard, { state, run, busy, setToast }),
+        h(MaterialsLibraryCard, { state, run, busy, setToast }),
         state.dataLayer
           ? h('div', { className: 'nw-card' },
               h('div', { className: 'nw-row' },

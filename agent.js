@@ -553,11 +553,11 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'novel_query',
     description:
-      '只读查询项目数据库（绝不会修改任何内容）。kind：chapter（带 number 查单章状态；不带 number 时列章节，limit 默认 30）、outline（默认只回卷列表+每卷章数，expand=chapters 才展开，默认 20 条）、bible、state、summary、stats、runs、relations（人物关系）、power（境界/战力/章节变化）、inspirations（灵感，默认 10 条）、deconstructions（拆书记录，默认只回摘要+字段计数；用 entryId 或 number 看单条全文）、prompt-overrides（提示词覆盖，只回预览）、premise-chat（构思对话与批次）。可用 keyword 过滤、limit 限制条数；大纲展开可配 volumeId/fromNumber/toNumber。',
+      '只读查询项目数据库（绝不会修改任何内容）。kind：chapter（带 number 查单章状态；不带 number 时列章节，limit 默认 30）、outline（默认只回卷列表+每卷章数，expand=chapters 才展开，默认 20 条）、bible、state、summary、stats、runs、relations（人物关系）、power（境界/战力/章节变化）、inspirations（灵感，默认 10 条）、materials（素材库：参考片段/资料/桥段/引用，keyword 匹配标题/内容/标签，limit 默认 20，content 截断 400）、deconstructions（拆书记录，默认只回摘要+字段计数；用 entryId 或 number 看单条全文）、prompt-overrides（提示词覆盖，只回预览）、premise-chat（构思对话与批次）。可用 keyword 过滤、limit 限制条数；大纲展开可配 volumeId/fromNumber/toNumber。',
     parameters: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['chapter', 'outline', 'bible', 'state', 'summary', 'stats', 'runs', 'relations', 'power', 'inspirations', 'deconstructions', 'prompt-overrides', 'premise-chat'] },
+        kind: { type: 'string', enum: ['chapter', 'outline', 'bible', 'state', 'summary', 'stats', 'runs', 'relations', 'power', 'inspirations', 'materials', 'deconstructions', 'prompt-overrides', 'premise-chat'] },
         number: { type: 'number', description: '章节号（chapter/state/summary）；deconstructions 时为第 N 条记录' },
         entryId: { type: 'string', description: 'deconstructions 时按 title 或 createdAt 精确取单条全文' },
         limit: { type: 'number', description: '返回条数上限（默认 30；chapter 列表 30、outline 展开 20、inspirations 10、deconstructions 5、premise-chat 20）' },

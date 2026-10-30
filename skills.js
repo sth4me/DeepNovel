@@ -9,6 +9,7 @@
 import { copyFile, cp, mkdir, readdir, readFile, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join, resolve, sep } from 'node:path'
+import { BUILTIN_REFERENCE_SKILLS } from './builtin-skills.js'
 import { CRAFT_CARDS } from './craft.js'
 
 export const CRAFT_SKILL_PREFIX = 'craft-'
@@ -62,6 +63,32 @@ export function craftCardIdFromSkill(name) {
 export function craftSkillBody(card) {
   return `${CRAFT_SKILL_ADAPT_HINT}\n\n${String(card?.body ?? '')}`
 }
+export const BUILTIN_REFERENCE_PREFIX = 'ref-'
+
+/** 内置技能名：craft-*（技法卡）或 ref-*（参考库）。 */
+export function isBuiltinSkillName(name) {
+  const text = String(name ?? '')
+  return text.startsWith(CRAFT_SKILL_PREFIX) || text.startsWith(BUILTIN_REFERENCE_PREFIX)
+}
+
+/** 内置技能正文（参考库）。 */
+export function builtinReferenceBody(skill) {
+  return `${CRAFT_SKILL_ADAPT_HINT}\n\n${String(skill?.content ?? '')}`
+}
+
+/**
+ * 判断内置技能是否被项目禁用（craftDisabled）。
+ * 兼容旧数据：craft 卡既接受 craft-<id> 也接受裸 id。
+ */
+export function builtinSkillDisabled(disabled = [], skillName) {
+  const list = Array.isArray(disabled) ? disabled : []
+  const name = String(skillName ?? '')
+  if (!name) return false
+  if (list.includes(name)) return true
+  const cardId = craftCardIdFromSkill(name)
+  if (cardId && list.includes(cardId)) return true
+  return false
+}
 
 /**
  * 写作助手技能 provider（注册在宿主层）：只提供「内置 craft-* + 项目导入技能」。
@@ -85,7 +112,7 @@ export function createCraftSkillProvider(service, options = {}) {
         ? await service.readCraftDisabledByCwd(cwd).catch(() => [])
         : []
       const candidates = CRAFT_CARDS
-        .filter((card) => !disabled.includes(card.id))
+        .filter((card) => !builtinSkillDisabled(disabled, craftSkillName(card.id)))
         .map((card) => ({
           name: craftSkillName(card.id),
           description: `${card.summary}${Array.isArray(card.tags) && card.tags.length ? `（${card.tags.join('/')}）` : ''}`,
@@ -95,6 +122,18 @@ export function createCraftSkillProvider(service, options = {}) {
           provider: providerName,
           metadata: { tags: card.tags ?? [], tasks: card.tasks ?? [], source: 'builtin', craftId: card.id },
         }))
+      for (const skill of BUILTIN_REFERENCE_SKILLS) {
+        if (builtinSkillDisabled(disabled, skill.name)) continue
+        candidates.push({
+          name: skill.name,
+          description: skill.description,
+          invocation: { modelInvocable: true, userInvocable: true },
+          rank: CRAFT_SKILL_RANK,
+          source: 'builtin',
+          provider: providerName,
+          metadata: { tags: skill.tags ?? [], source: 'builtin', builtinId: skill.name },
+        })
+      }
       const imported = await scanImportedSkills(allSkillRoots(cwd))
       for (const skill of imported) {
         candidates.push({
@@ -126,6 +165,18 @@ export function createCraftSkillProvider(service, options = {}) {
           provider: providerName,
           content: parsed.content,
           metadata: { source: 'imported', scope: candidate?.scope ?? candidate?.metadata?.scope ?? 'project', path: locatorPath },
+        }
+      }
+      const refSkill = BUILTIN_REFERENCE_SKILLS.find((item) => item.name === candidate?.name)
+      if (refSkill) {
+        return {
+          name: refSkill.name,
+          description: refSkill.description,
+          invocation: candidate.invocation ?? { modelInvocable: true, userInvocable: true },
+          source: 'builtin',
+          provider: providerName,
+          content: builtinReferenceBody(refSkill),
+          metadata: { tags: refSkill.tags ?? [], source: 'builtin', builtinId: refSkill.name },
         }
       }
       const id = craftCardIdFromSkill(candidate?.name ?? '')

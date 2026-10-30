@@ -123,4 +123,39 @@ assert.equal(bulk.premise.text, '批量保存内容')
 assert.equal(bulk.premise.baseRevision, 1)
 assert.equal((await service.readSystemOverrides(project)).premise.text, '批量保存内容')
 
+// 10) 分类元数据 + 渲染预览（prompt-preview）
+const catalogNow = await service.promptCatalog(project)
+const groups = new Set(['premise', 'style', 'outline', 'bible', 'chapter', 'review', 'craft', 'data', 'other'])
+for (const item of catalogNow.prompts) {
+  assert.ok(groups.has(item.group), `未知 group：${item.key} → ${item.group}`)
+  assert.ok(Array.isArray(item.tags), `${item.key} tags 应为数组`)
+}
+assert.equal(new Set(catalogNow.prompts.map((item) => item.key)).size, catalogNow.prompts.length, 'key 应唯一')
+// 清掉前面的覆盖，验证无覆盖时的预览
+await service.resetSystemPrompt(project, { key: 'premise' })
+const preview = await service.previewPromptTemplate(project, { key: 'premise' })
+assert.equal(preview.key, 'premise')
+assert.equal(preview.group, 'premise')
+assert.ok(Array.isArray(preview.tags) && preview.tags.length > 0)
+assert.ok(preview.defaultText.length > 0)
+assert.equal(preview.currentText, preview.defaultText, '无覆盖时 currentText 等于默认')
+assert.equal(preview.customized, false)
+assert.equal(preview.baseRevision, null)
+assert.equal(preview.revision, 1)
+assert.deepEqual(preview.variables, [])
+await service.saveSystemPrompt(project, {
+  key: 'premise',
+  content: '请围绕 {{theme}} 写一段，${protagonist} 出场，再次强调 {{theme}}。',
+})
+const customizedPreview = await service.previewPromptTemplate(project, { key: 'premise' })
+assert.equal(customizedPreview.customized, true)
+assert.equal(customizedPreview.currentText, '请围绕 {{theme}} 写一段，${protagonist} 出场，再次强调 {{theme}}。')
+assert.equal(customizedPreview.baseRevision, 1)
+assert.equal(customizedPreview.revision, 1)
+assert.deepEqual(customizedPreview.variables, ['theme', 'protagonist'], '应提取 {{name}} 与 ${name} 并去重')
+await assert.rejects(() => service.previewPromptTemplate(project, { key: 'no-such' }), /未知提示词/)
+const catalogItem = (await service.promptCatalog(project)).prompts.find((item) => item.key === 'premise')
+assert.equal(catalogItem.group, 'premise')
+assert.ok(Array.isArray(catalogItem.tags))
+
 console.log('prompt catalog tests passed')

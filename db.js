@@ -7,7 +7,7 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 const activeTransactions = new WeakSet()
 
@@ -228,6 +228,18 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS materials (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  kind TEXT,
+  content TEXT NOT NULL,
+  tags_json TEXT,
+  source TEXT,
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_materials_updated ON materials(updated_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_chapters USING fts5(number UNINDEXED, title, body, tokenize='trigram');
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_outline USING fts5(number UNINDEXED, title, synopsis, tokenize='trigram');
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_bible USING fts5(entry_id UNINDEXED, category, name, description, tokenize='trigram');
@@ -248,6 +260,7 @@ export function openDatabase(dbPath) {
 /**
  * 按 PRAGMA user_version 建表/升级。
  * v2：chapter_meta 增加 has_draft / has_final（正文存在性入库，避免每次递归扫目录）。
+ * v3：新增 materials（素材库：参考片段/资料/桥段/引用）。
  * 升级在一个事务内完成（ALTER TABLE + 置版本），旧库数据原样保留。
  */
 export function ensureSchema(db) {

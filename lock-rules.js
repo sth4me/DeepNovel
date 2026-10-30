@@ -45,6 +45,7 @@ export const LOCK_RULES = {
     ['power-', 'bible'],
     ['premise-', 'premise'],
     ['style-', 'style'],
+    ['material-', 'materials'],
   ],
 }
 
