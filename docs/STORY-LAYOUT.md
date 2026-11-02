@@ -8,6 +8,7 @@
 story/
   project.db                # 结构化数据（SQLite，WAL，唯一真源）
   prompt.json               # 项目级提示词注入（文件）
+  style/profile.json        # 风格指纹（最近定稿统计，生成时参考、诊断时比对）
   chapters/
     001/
       draft.md              # 当前草稿
@@ -32,7 +33,7 @@ exports/                    # 导出的 md/html/epub/docx（不属于插件仓�
 ```text
 $DSH_HOME/novel-writer/library/
   characters/*.json         # 角色库
-  craft/*.json              # 旧版自定义技法卡片（novel_craft 兼容；推荐改用导入技能）
+  craft/*.json              # 已移除：旧版自定义技法卡不再读取，自定义改用导入技能
 ```
 
 ## project（`project` 表）
@@ -118,9 +119,9 @@ $DSH_HOME/novel-writer/library/
 
 `volumes` 存卷；`outline_chapters` 每个章纲节点包含：
 
-`id / number / status / title / synopsis / wordBudget / inputs / generatedAt / confirmedAt`。
+`id / number / status / title / synopsis / wordBudget / change / storyQuestion / promise / beats / inputs / generatedAt / confirmedAt`。
 
-`synopsis` 是唯一的内容字段。大纲整体的状态与更新时间在 `outline_meta`。
+`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。大纲整体的状态与更新时间在 `outline_meta`。
 
 ## 章节（`chapters/NNN/` + `chapter_*` 表）
 
@@ -143,6 +144,15 @@ $DSH_HOME/novel-writer/library/
 - 类型 `kind`：片段 / 资料 / 桥段 / 引用 / 其他（缺省「其他」）。
 - `tags` 最多 10 个（去重，单个 ≤40 字）；`title` 缺省取内容首行（≤120 字），否则「未命名素材」。
 - 素材不会自动注入写作提示词，由助手用 `novel_query kind=materials` 按需查询；导出纯文件项目时写成 `story/materials.json`，快照含 `project.db` 自然包含。
+
+## 事实包（`facts` 表）
+
+`facts` 存约束事实：`id / chapter / kind / key / value / must / note / updated_at`。
+
+- `kind`：术语（`key` 为规范写法，`value` 为别名/写法说明）、硬事实（人名/地名/时间/伤势/持有物等固定事实）、安全（内容底线）、称呼（`key` → `value` 统一称呼）。
+- `chapter` 为 NULL 表示全局事实，否则只对指定章生效。
+- 生成正文前作为硬约束进入提示词；生成后可用 `validateAgainstFacts` 检查违规（只报告、不自动改）。
+- 管理：助手 `novel_facts`（list / save / delete）或 project-action `facts-list` / `fact-save` / `fact-delete`；锁资源 `facts`。
 
 ## 写安全
 

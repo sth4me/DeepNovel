@@ -11,6 +11,7 @@ import { jsonGet, jsonSet, transaction, withBusyRetry } from './db.js'
 
 const BIBLE_CATEGORIES = ['characters', 'locations', 'rules', 'factions', 'items']
 export const MATERIAL_KINDS = ['片段', '资料', '桥段', '引用', '其他']
+export const FACT_KINDS = ['术语', '硬事实', '安全', '称呼']
 const MATERIAL_TAGS_LIMIT = 10
 
 /** 素材标签：数组或逗号/空白分隔字符串 → 去重、最多 10 个。 */
@@ -1302,6 +1303,84 @@ export class NovelStore {
   deleteMaterial(id) {
     const result = this.run('DELETE FROM materials WHERE id = ?', String(id ?? ''))
     return Number(result?.changes ?? 0) > 0
+  }
+
+  /* ------------------------------ 事实包 ------------------------------ */
+
+  factFromRow(row) {
+    return {
+      id: row.id,
+      chapter: row.chapter == null ? null : Number(row.chapter),
+      kind: row.kind ?? '硬事实',
+      key: row.key ?? '',
+      value: row.value ?? '',
+      must: row.must == null ? true : Boolean(row.must),
+      note: row.note ?? null,
+      updatedAt: row.updated_at ?? null,
+    }
+  }
+
+  listFacts(filter = {}) {
+    const rows = filter.chapter == null
+      ? this.all('SELECT * FROM facts ORDER BY kind, updated_at DESC')
+      : this.all('SELECT * FROM facts WHERE chapter IS NULL OR chapter = ? ORDER BY kind, updated_at DESC', Number(filter.chapter))
+    return rows.map((row) => this.factFromRow(row))
+  }
+
+  readFact(id) {
+    const row = this.get('SELECT * FROM facts WHERE id = ?', String(id ?? ''))
+    return row ? this.factFromRow(row) : null
+  }
+
+  saveFact(input = {}) {
+    const key = String(input.key ?? '').trim()
+    const value = String(input.value ?? '').trim()
+    if (!key) throw new Error('事实 key 不能为空')
+    if (!value) throw new Error('事实 value 不能为空')
+    const kind = FACT_KINDS.includes(input.kind) ? input.kind : '硬事实'
+    const chapter = Number.isFinite(Number(input.chapter)) && Number(input.chapter) > 0 ? Number(input.chapter) : null
+    const requestedId = String(input.id ?? '').trim()
+    const existing = requestedId ? this.readFact(requestedId) : null
+    const id = existing?.id ?? (requestedId || `fact-${Date.now()}-${randomUUID().slice(0, 8)}`)
+    const timestamp = now()
+    this.run(
+      `INSERT INTO facts (id, chapter, kind, key, value, must, note, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         chapter = excluded.chapter,
+         kind = excluded.kind,
+         key = excluded.key,
+         value = excluded.value,
+         must = excluded.must,
+         note = excluded.note,
+         updated_at = excluded.updated_at`,
+      id,
+      chapter,
+      kind,
+      key,
+      value,
+      input.must === false ? 0 : 1,
+      input.note == null ? null : String(input.note).slice(0, 500),
+      timestamp,
+    )
+    return this.readFact(id)
+  }
+
+  deleteFact(id) {
+    const result = this.run('DELETE FROM facts WHERE id = ?', String(id ?? ''))
+    return Number(result?.changes ?? 0) > 0
+  }
+
+  /** 术语/称呼事实：canonical 规范写法 + aliases 别名。 */
+  glossaryFacts() {
+    return this.listFacts()
+      .filter((fact) => fact.kind === '术语' || fact.kind === '称呼')
+      .map((fact) => ({
+        id: fact.id,
+        canonical: fact.kind === '称呼' ? fact.value : fact.key,
+        aliases: fact.kind === '称呼' ? [fact.key] : String(fact.value).split(/[,，、\s]+/).map((alias) => alias.trim()).filter(Boolean),
+        kind: fact.kind,
+      }))
   }
 
   /* ------------------------------ 生命周期 ------------------------------ */

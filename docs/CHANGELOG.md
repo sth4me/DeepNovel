@@ -1,5 +1,17 @@
 # 更新记录
 
+## 0.1.20
+
+- **约束引擎**：新增七层优先级（本轮对话/显式指令 > 硬事实/术语/安全 > 设定 > 章纲 > 文风契约 > 写作要求 > 备注）；生成前做结构化冲突检测（人称/时态、句长、对话比例、称呼/术语、章纲 vs 设定状态、伏笔状态）与可选语义预检，冲突按优先级裁决、不交给模型折中；`HARD_RULES`（≤12 条）在提示词开头完整 + 结尾复述双注入；不删原有上下文块、不做 token 瘦身。
+- **事实包**：数据层 schema v4 新增 `facts` 表（术语/硬事实/安全/称呼，全局或按章，must 表示生成时必须遵守）；生成前注入硬约束，生成后 `validateAgainstFacts` 可查违规；project-action `facts-list` / `fact-save` / `fact-delete`，锁资源 `facts`。
+- **助手工具**：新增 `novel_facts`（list/save/delete）与 `novel_constraints`（check：hardRules/conflicts/warnings，只读不生成）；系统提示词补充「约束优先级」段（explicit 最高、不折中、设定/章纲冲突提示同步）。
+- **诊断与定向修复**：新增 `novel_diagnose`（facts 违规、逻辑/因果/时间/空间/信息差/动机/能力/设定、连续性、文风/AI 味，hard/soft 分级）与 `novel_repair`（auto 只修 hard 的最小 diff、唯一匹配、备份、复检、不降或新增 >2 回滚、≤2 轮；prescribe 只出处方）；soft 指标按阈值放行、只提示；提示词 `logicAudit` / `fixIssues` 可覆盖。
+- **故事性（诊断式，不强制）**：章纲新增可选 `change` / `storyQuestion` / `promise` / `beats`（beats 仅为可选脚手架）；新增 `storyAudit` 检测「无变化 / 因果断裂 / 承诺未推进 / 为冲突而冲突 / 降智 / 巧合解决」，全部 soft、只诊断不硬改；允许安静章节，不要求每场冲突或章末钩子；`novel_diagnose` 支持 `scope: all|logic|story`。
+- **风格指纹**：从最近定稿章节统计平均句长、短句比例、对话占比、段落句数、修饰密度、高频词 Top10（`story/style/profile.json`）；生成时在文风契约后注入数字摘要（参考、不覆盖契约），诊断时报告 `styleDrift`（soft）；`novel_style profile-build/profile-get`。
+- **修复空卷**：生成当前卷不再提前创建空卷（只记 `pendingNextVolume`）；真正生成下一卷（起始章进入新卷）时才创建并挂章节；写盘前清理末尾遗留空卷；`volume-create` 显式建卷不受影响。
+- **简化**：删除旧技法卡 `craft-card-*` 接口与用户自定义技法卡读写；`novel_craft` 仅兼容列出内置技法，自定义统一用导入技能；约束/事实/诊断逻辑各收拢到一处。
+- **打包**：`package.json` 的 `files` 补入 `constraints.js`、`style-profile.js`，`npm pack` 包含全部运行模块。
+
 ## 0.1.19
 
 - **修复安装缺模块**：`package.json` 的 `files` 白名单补上 `writing-rules.js` 与 `builtin-skills.js`（0.1.17/0.1.18 从 npm 安装时这两个模块未被打包，导致启动报缺失）。`npm pack` 现已包含全部运行模块。

@@ -9,12 +9,24 @@
 | `novel_status` | 项目初始化状态与各阶段产物 |
 | `novel_init` | 初始化当前目录：创建 `story/` 目录骨架与项目数据库（`story/project.db`）；已初始化时只返回现状，不覆盖数据 |
 | `novel_premise` | 构思：生成候选、确认候选、读取状态 |
-| `novel_style` | 文风：模板列表、套用模板、保存自定义模板、确认契约、读取状态 |
-| `novel_outline` | 章纲：生成、重生成、确认、读取状态、把某章移到指定卷 |
+| `novel_style` | 文风：模板列表、套用模板、保存自定义模板、确认契约、读取状态；`profile-build`（最近定稿统计风格指纹，只统计不改文）/ `profile-get`（读取已存指纹） |
+| `novel_outline` | 章纲：生成、重生成、确认、读取状态、把某章移到指定卷；每章可带 `change`（不可逆变化）/ `storyQuestion`（读者问题）/ `promise`（承诺推进）/ `beats`（可选脚手架） |
 | `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系 |
 | `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `revision-learn`（分析草稿→定稿差异、提炼写作偏好，只返回建议、不自动写入）/ `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
+| `novel_facts` | 事实/术语库：`list` / `save` / `delete`；kind 术语/硬事实/安全/称呼，可全局或按章（`chapter`），`must` 表示生成时必须遵守 |
+| `novel_constraints` | 只读约束检查：`check`（`number` / `instruction`）返回 hardRules（≤12）、conflicts（含裁决与理由）、warnings；不生成正文 |
+| `novel_diagnose` | 只读诊断某章：事实/术语违规、逻辑问题（因果/时间/空间/信息差/动机/能力/设定）、连续性（error 硬 / warn 软）、文风与 AI 味（软）、故事性（全软，`story`：变化/读者问题/承诺/因果/刻意感）与风格偏离（`styleDrift`，scope=all）；返回 issues（hard 全量、soft ≤10）与 scores/stats |
+| `novel_repair` | 定向修复：`auto` 只修 hard（最小 diff、复检、未降低则回滚，≤2 轮；soft 只提示）；`prescribe` 只返回处方（`autoFixable` / `risk`），不改正文 |
 | `novel_craft` | 兼容入口：写作技法卡片列表、按任务读取、推荐（新方案用 skill 工具按需加载 `craft-*`） |
 | `novel_query` | 只读查询项目数据：14 个 `kind`（见下方「查询面」） |
+
+## 约束优先级
+
+写正文前先按优先级裁决冲突（高→低）：本轮对话 / 用户显式要求（`explicit`）> 硬事实 / 术语 / 安全（`facts`）> 项目设定（`bible`）> 本章章纲（`outline`）> 文风契约（`style`）> 写作要求（`requirements`）> 作者备注（`notes`）。冲突时按优先级执行并在回复里说明，不要自行折中；若是「设定 / 章纲不一致」，生成照做但提醒用户同步更新设定。写正文前可先 `novel_constraints action=check`（只读，不生成正文）；涉及新固定事实（人名 / 地名 / 称呼 / 时间 / 伤势 / 持有物）先用 `novel_facts` 保存。
+
+## 写后默认流程
+
+写完或改完章节后：先 `novel_diagnose` 检查逻辑/连续性/事实/文风；有 hard issues（逻辑、连续性 error、事实/术语）就 `novel_repair action=auto` 自动修最小 diff，soft issues（文风/AI 味）只在回复里提示（AI 味可建议 deslop），不要为满分反复修。逻辑/设定冲突优先；repair 会复检，未降低 hard 问题会自动回滚。深度档可用 `novel_repair action=prescribe` 只拿处方、不自动改。故事性与文风偏离只诊断（`story` / `styleDrift` 全为软提示）：故事问题优先改章纲 change/storyQuestion/promise，文风偏差按指纹指标用 revise 定向调整，不要为凑冲突/钩子硬改正文。
 
 正文仍然可以用文件工具读写，但**推荐用 `novel_chapter action=patch`**：它受控、留备份、自动重建索引，不会绕过数据层的其他约束。
 

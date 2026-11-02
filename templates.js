@@ -12,6 +12,7 @@ import {
   renderHumanBaseline,
   renderSentencePatterns,
 } from './writing-rules.js'
+import { renderConstraints } from './constraints.js'
 export const STYLE_TEMPLATES = [
   {
     id: 'fast-web',
@@ -599,11 +600,16 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '- synopsis: string，200–400 字的具体剧情梗概：写清谁在什么处境、做了什么、发生了什么、结果如何；不要拆成目标/冲突/转折/结果等标签；宁可写足细节，不要凑字数或留空',
   '- 长度约束：每章 synopsis 控制在 200–400 字（约 1.5–2 倍差），最多不超过 400 字；一章一段，不要分点。',
   '- wordBudget: number，可选的目标字数',
+  '- change: string（可选），一句话：本章结束时改变的局势/关系/信息/处境；要有代价，不可逆或难逆',
+  '- storyQuestion: string（可选），一句话：本章让读者想知道什么',
+  '- promise: string（可选），一句话：本章推进或兑现的承诺（可写“推进：…”或“兑现：…”）',
+  '- beats: array（可选脚手架），每项 {goal, obstacle, turn, cost}；只是可选的拆解工具，不要求每章都填，不要求每场都有冲突',
   '要求：章节序号连续；每章只写一个完整、具体的剧情事件链；与已确认的构思、文风契约、相邻章节保持一致；只输出请求范围内的章节。',
   '章纲是给正文写作的剧情提要，不是谜面，也不要强行套结构：不要用“关系变化”“有事发生”“被卷入”之类空话，也不要为了填字段把剧情拆成抽象分类。',
   '每章 synopsis 的结尾必须落在一个下一章能直接承接的具体状态：人物在哪里、刚做了什么决定或发生了什么；下一章从这个状态继续，不要跳空、不要重复交代。',
   '出场人物、身份和场景状态要前后一致；不要用模糊数量或含糊指代造成前后矛盾。',
   '用户本次额外要求优先于默认结构模板；如果与通用要求冲突，以额外要求为准。',
+  '故事性要求：为每章生成 change/storyQuestion/promise（实在不适合时可留空，但字段保留）；允许安静章节，不要为了条目硬造冲突、反转或钩子；变化必须由人物动机与信息差推出，不要靠突然事故；单章内部不要同时爆发多个无关冲突。',
   '能力体系必须按既定层级推进：不得让角色无铺垫跨级；若本章涉及能力变化，在 synopsis 中写明旧层级→新层级、变化原因与影响。',
   '分卷生成时以【本卷阶段控制】为准：本卷章节只能发生在“本卷舞台”（按题材：武侠/修真用地图，言情用场所与关系阶段，悬疑用案发地与调查范围）；本卷阶段目标达成、舞台迁移、主要对手更替或大事件收束，任一满足即可结束本卷并留钩子；战力天花板只是武侠/修真题材的可选参考，不要求每卷升级；每卷 8–12 章是参考，不是硬性章数。',
   '分卷标记：只有当本章是“阶段收束章”（阶段目标达成、大事件收束、主要对手更替或舞台迁移）时，才在该章对象里加 "volumeEnd": true；其余章不加。不要为了凑章数强行标记收束；也不要在 12 章后仍不收束却继续原地打转。',
@@ -832,14 +838,17 @@ export function formatCraftCards(cards) {
 }
 
 export const CRAFT_AGENT_HINT = [
-  '写正文、修订或修复前，如果涉及具体场景类型（打斗、对白、情绪、伏笔、转场、开篇、节奏），可先调 novel_craft action=recommend（带 task/instruction）取 1–2 张推荐卡片，或 action=read id=... 读取完整技法。',
-  '技法卡片是通用写作方法，不是本书设定，不必全部套用；与章纲、文风契约冲突时以章纲和文风契约为准。',
+  '技法卡片是兼容入口：优先用 skill 工具按需加载内置技能（craft-*）或项目/全局导入技能；novel_craft 仍可列内置技法卡，但不再是主入口。',
+  '技法卡片是通用写作方法，不是本书设定，不必全部套用；与章纲、文风契约、硬约束冲突时以高优先级来源为准。',
 ].join('\n')
 
 export function buildChapterUserPrompt(input) {
+  const constraintStart = input.constraints ? renderConstraints(input.constraints, { phase: 'start' }) : ''
+  const constraintEnd = input.constraints ? renderConstraints(input.constraints, { phase: 'end' }) : ''
   const lines = [
     `项目：${input.title}（语言：${input.language}）`,
     `任务：写第 ${input.number} 章《${input.chapter.title || '未命名'}》的正文，目标约 ${input.wordBudget} 字。`,
+    ...(constraintStart ? ['', constraintStart] : []),
     '',
     '【章纲】',
     JSON.stringify(input.chapter, null, 2),
@@ -847,6 +856,9 @@ export function buildChapterUserPrompt(input) {
     '【文风契约】',
     formatStyleFields(input.styleFields),
   ]
+  if (input.styleProfile) {
+    lines.push('', '【风格指纹（参考，不覆盖文风契约）】', input.styleProfile)
+  }
   if (Array.isArray(input.samples) && input.samples.length > 0) {
     lines.push('', '【文风示例（模仿其语感与节奏，不要照抄情节）】', input.samples.slice(0, 3).join('\n\n'))
   }
@@ -899,6 +911,7 @@ export function buildChapterUserPrompt(input) {
   if (input.previousTail || input.storyContext?.continuity?.previousTail) {
     lines.push('', '【续写规则】从上一章结尾的场景或动作往后写；禁止重复上一章已经发生的事件、对话和环境描写，也不要写“接上回”之类的过渡套话。')
   }
+  if (constraintEnd) lines.push('', constraintEnd)
   lines.push('', '只输出本章正文。')
   return lines.join('\n')
 }
@@ -966,6 +979,35 @@ export const CHAPTER_REVIEW_SYSTEM_PROMPT = [
   '连续性判断：只报告能从前文摘要、章纲和设定中证明的矛盾——时间线、人物位置/状态、因果链、伏笔、设定、能力层级；没有就返回空数组。',
   '不要因为题材或关系尺度本身判问题；不要评价题材偏好。',
 ].join('\n')
+
+export const LOGIC_AUDIT_SYSTEM_PROMPT = [
+  '你是中文小说的逻辑审查员，只检查可证明的逻辑问题，不评价文笔。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"summary":"一句话","logicIssues":[{"type":"因果|时间|空间|信息差|动机|能力|设定","severity":"low|medium|high","quote":"原文精确片段","advice":"具体怎么改","confidence":0-1}]}。',
+  '只报能由给定正文、设定、前文摘要或章纲证明的问题：事件因果断裂、时间线矛盾、人物位置/空间冲突、角色知道了不该知道的信息、动机与行为不符、能力超出设定、与设定/章纲冲突。',
+  'quote 必须能在正文中精确匹配；同类问题合并；不确定或无法证明的不要报；没有返回空数组。',
+].join('\n')
+
+export const FIX_ISSUES_SYSTEM_PROMPT = [
+  '你是中文小说的定向修复编辑：只修复列出的硬问题（逻辑/连续性/事实），做最小改动。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"patches":[{"from":"原文精确片段","to":"改后片段","reason":"修正逻辑/一致性/事实"}],"summary":"一句话","skipped":[{"quote":"原文片段","reason":"为什么无法在不改剧情的前提下修复"}]}。',
+  '规则：',
+  '- 只做句子/短语级最小改动；不得改剧情走向、人物关系与结局；不得新增或删减情节。',
+  '- from 必须能在给定正文中精确匹配（逐字一致），否则该 patch 无效。',
+  '- 每条 patch 只解决一个问题；最多 20 条。',
+  '- 无法在不改剧情的前提下修复的问题放进 skipped，不要硬改。',
+].join('\n')
+
+export const STORY_AUDIT_SYSTEM_PROMPT = [
+  '你是中文小说的故事性审校，只判断这章作为故事是否成立，不评价文笔、不要求冲突或钩子。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"changeHappened":true|false,"changeQuote":"正文中体现变化的片段","questionProgress":"answered|advanced|stalled","promiseProgress":"kept|partial|broken","newQuestion":"结尾产生的新问题/新代价（可为空）","causalChain":"ok|broken","contrived":"none|low|medium|high","issues":[{"type":"无变化|因果断裂|承诺未推进|为冲突而冲突|降智|巧合解决","quote":"","advice":""}],"summary":""}。',
+  '判定标准：只依据给定正文与章纲（change/storyQuestion/promise）；不要求每场冲突、不要求章末钩子；安静章节只要 change 成立就不算问题（contrived 可为 none）。',
+  'contrived 只针对「无动机对抗、突然降智、巧合解决、为冲突而冲突」；causalChain 只报可证明的因果断裂；promiseProgress 只有明确违背承诺才判 broken，推进中判 partial。',
+].join('\n')
+
+
 
 export const DESLOP_SYSTEM_PROMPT = [
   '你是中文网文的“去 AI 味”改写编辑。只输出 JSON，不要 Markdown 围栏。',
@@ -1227,6 +1269,36 @@ export const PROMPT_CATALOG = [
     revision: 2,
     description: '同时检查文风（含 AI 味）和连续性冲突，只报影响阅读的问题。',
     default: CHAPTER_REVIEW_SYSTEM_PROMPT,
+  },
+  {
+    key: 'logicAudit',
+    group: 'review',
+    tags: ['审校', '逻辑'],
+    label: '逻辑审查',
+    category: '审校',
+    revision: 1,
+    description: '只检查可证明的逻辑问题（因果/时间/空间/信息差/动机/能力/设定），输出可定位 issues。',
+    default: LOGIC_AUDIT_SYSTEM_PROMPT,
+  },
+  {
+    key: 'fixIssues',
+    group: 'review',
+    tags: ['修复', '定向'],
+    label: '定向修复',
+    category: '审校',
+    revision: 1,
+    description: '按 issue 列表做最小 diff 修复，只输出可精确匹配的 patches。',
+    default: FIX_ISSUES_SYSTEM_PROMPT,
+  },
+  {
+    key: 'storyAudit',
+    group: 'review',
+    tags: ['审校', '故事'],
+    label: '故事审校',
+    category: '审校',
+    revision: 1,
+    description: '判断本章作为故事是否成立（变化/读者问题/承诺/因果/刻意感），不要求冲突与钩子。',
+    default: STORY_AUDIT_SYSTEM_PROMPT,
   },
   {
     key: 'deslop',

@@ -78,6 +78,47 @@
 - **写入**：结果在弹窗里勾选后，才用 `project-update` 追加到 `writingNotes`；不自动改写正文。
 - **助手**：`novel_chapter action=revision-learn` 只返回建议，不写入。
 
+## 约束引擎
+
+生成正文前把各层要求按优先级裁决成一份「硬约束」，同一份内容在提示词开头完整给出、结尾再复述一次，避免提示词自相矛盾。
+
+- **优先级**（高→低）：`explicit`（本轮对话 / 显式指令）> `facts`（硬事实 / 术语 / 安全 / 称呼）> `bible`（设定）> `outline`（本章章纲）> `style`（文风契约）> `requirements`（写作要求）> `notes`（作者备注）。
+- **结构化冲突**：视角 / 时态 / 句长 / 对话比例与文风契约冲突；术语 / 称呼写法；章纲要求人物死亡但设定记录存活；章纲要求回收但伏笔台账已完成。前两类按优先级自动裁决（记录 conflicts）；后两类不静默覆盖，生成照做并用 warning 提示同步更新设定 / 台账。
+- **可选语义预检**：LLM 检查规则间矛盾（失败降级为仅结构化检测，不阻塞生成）。
+- **硬约束**：≤12 条；`renderConstraints` 开头完整 + 结尾紧凑复述（内容一致、不新增规则；保留全量上下文，不瘦身）。
+- **事实包**：`facts` 表（schema v4）存术语 / 硬事实 / 安全 / 称呼，全局或按章；生成前进硬约束，生成后 `validateAgainstFacts` 可查违规（只报告、不自动改）。
+- **入口**：`novel_constraints action=check`（只读检查）、`novel_facts`（list / save / delete）；project-action `facts-list` / `fact-save` / `fact-delete`，锁资源 `facts`。
+
+## 诊断与修复
+
+写完 / 改完章节后的默认链路：先诊断、再只对硬问题做最小修复，软指标按阈值放行，不追求满分。
+
+- **诊断**（`diagnoseChapter`）：合并三路结果——facts 规则违规（hard）、`logicAudit` 逻辑审查（因果/时间/空间/信息差/动机/能力/设定，hard）、章节审校（continuity error→hard、warn→软；styleIssue/AI 味→软）。每条 issue 有稳定 id（按 type+quote 哈希）、`level`（hard/soft）、`source`（facts/logic/continuity/style/aiFlavor）；返回 `scores` 与 `stats`。
+- **修复**（`repairChapter`）：
+  - `mode=auto` 只修 hard：按 issue 生成最小 diff patches，`from` 必须逐字且唯一匹配，否则记入 `skipped`；写前备份 `revisions/repair-r<轮>-<时间>.md`；每轮后复检 facts + logic；hard 不降或新增 >2 条则回滚；最多 2 轮。
+  - `mode=prescribe` 只返回处方（每条含 `autoFixable` / `risk`），不改正文。
+  - soft 问题只返回 `softHints`（AI 味/文风建议 `chapter-deslop`），不自动修改。
+- **入口**：project-action `chapter-diagnose` / `chapter-repair`；助手 `novel_diagnose`（只读）/ `novel_repair`（auto / prescribe）；锁 `chapter:<n>`；提示词 `logicAudit` / `fixIssues`（group review）可覆盖。
+- **原则**：逻辑/连续性/事实优先；软指标（文风分、AI 味）按阈值放行，不为满分反复修。
+
+## 故事性（诊断式）
+
+故事性问题只诊断、不强制，不要求每章都有冲突/反转/钩子。
+
+- **章纲字段**：每章可选 `change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）、`beats`（可选脚手架，不要求每章填）。`OUTLINE` 提示词要求生成这些字段，并明确允许安静章节：不为凑条目硬造冲突/反转/钩子，变化必须由人物动机与信息差推出。
+- **诊断**：`STORY_AUDIT_SYSTEM_PROMPT`（group review，可覆盖）输出 `changeHappened` / `questionProgress` / `promiseProgress` / `newQuestion` / `causalChain` / `contrived` / `issues`（无变化 | 因果断裂 | 承诺未推进 | 为冲突而冲突 | 降智 | 巧合解决）。`diagnoseChapter` 增加 `story` 维度（全部 soft、source `story`）与 `scope: all|logic|story`；`logicOnly` 不跑故事；`outlineAudit` 对缺字段给软提示；`repair` 不自动改 story（prescribe `autoFixable:false` / `risk:high`，建议调章纲）。
+- **理由**：把「故事是否成立」作为诊断信号，而不是硬性结构模板——强制每章冲突/钩子会催生为冲突而冲突、降智与巧合解决。
+
+## 风格指纹
+
+轻量、纯规则（不调 LLM）的作者风格统计，用于「参考 + 偏离诊断」，不覆盖文风契约。
+
+- **指标**：平均句长、短句比例、对话占比、段落平均句数、修饰/比喻密度（估算）、高频词 Top10。
+- **构建**：`buildStyleProfile` 取最近 10 个定稿（`count` 1–30）→ `story/style/profile.json`；`getStyleProfile` 读取。
+- **注入**：draft / revise / fix 在文风契约后注入【风格指纹（参考，不覆盖文风契约）】。
+- **偏离诊断**：`compareStyleProfile` 按偏差给 low / medium / high（比值 >35% medium、>60% high；对话占比绝对差 >0.15 / 0.25）；`diagnoseChapter` 在 `scope=all` 时增加 `styleDrift`（soft、source `styleProfile`）。
+- **入口**：project-action `style-profile-build` / `style-profile-get`；助手 `novel_style action=profile-build|profile-get`；系统提示词 10156（偏差只诊断、契约优先、用 revise 带指标）。
+
 ## 参考
 
 `docs/RESEARCH.md` 汇总 novelWriter、Manuskript 等开源工具的结构视图、专注模式、导出、写作统计等做法。项目已吸收专注模式、导出、统计/目标、质检摘要与自动化配置。

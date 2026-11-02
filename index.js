@@ -1041,6 +1041,10 @@ export function apply(ctx) {
         return service.exportStyleTemplate(agent, { id: params.id })
       case 'style-import-template':
         return service.importStyleTemplate(agent, { template: params.template })
+      case 'style-profile-build':
+        return service.buildStyleProfile(agent, { count: params.count })
+      case 'style-profile-get':
+        return { profile: await service.getStyleProfile(agent) }
       case 'style-samples-save':
         return service.saveStyleSamples(agent, params.samples)
       case 'system-overrides-save':
@@ -1067,23 +1071,6 @@ export function apply(ctx) {
         return service.importLibraryCharacter(agent, { id: params.id })
       case 'library-character-delete':
         return service.deleteLibraryCharacter({ id: params.id })
-      case 'craft-cards':
-        return service.listCraftCards(agent)
-      case 'craft-card-read':
-        return service.readCraftCard(agent, { id: params.id })
-      case 'craft-card-save':
-        return service.saveCraftCard(agent, {
-          id: params.id,
-          title: params.title,
-          summary: params.summary,
-          tags: params.tags,
-          tasks: params.tasks,
-          body: params.body,
-        })
-      case 'craft-card-delete':
-        return service.deleteCraftCard(agent, params.id)
-      case 'craft-card-toggle':
-        return service.setCraftCardEnabled(agent, { id: params.id, enabled: params.enabled !== false })
       case 'craft-auto-toggle':
         return service.setCraftAuto(agent, { enabled: params.enabled === true })
       case 'skills-list':
@@ -1117,6 +1104,22 @@ export function apply(ctx) {
         })
       case 'material-delete':
         return service.materialDelete(agent, { id: params.id })
+      case 'facts-list':
+        return service.listFacts(agent, { chapter: params.chapter })
+      case 'fact-save': {
+        const fact = await service.saveFact(agent, {
+          id: params.id,
+          chapter: params.chapter,
+          kind: params.kind,
+          key: params.key,
+          value: params.value,
+          must: params.must,
+          note: params.note,
+        })
+        return { fact }
+      }
+      case 'fact-delete':
+        return service.deleteFact(agent, { id: params.id })
       case 'run-detail':
         return service.readRun(agent, { runId: params.runId })
       case 'deconstruct-text':
@@ -1296,6 +1299,15 @@ export function apply(ctx) {
         }, signal)
       case 'chapter-review':
         return service.chapterReview(agent, { number: params.number }, signal)
+      case 'chapter-diagnose':
+        return service.diagnoseChapter(agent, { number: params.number, scope: params.scope }, signal)
+      case 'chapter-repair':
+        return service.repairChapter(agent, {
+          number: params.number,
+          mode: params.mode,
+          issueIds: params.issueIds,
+          maxRounds: params.maxRounds,
+        }, signal)
       case 'chapter-audit':
         return service.auditChapter(agent, { number: params.number }, signal)
       case 'export-manuscript':

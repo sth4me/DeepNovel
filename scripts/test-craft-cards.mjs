@@ -72,35 +72,18 @@ assert.ok(list.cards.every((card) => card.body === undefined))
 assert.ok(list.cards.every((card) => card.source === 'builtin'))
 await assert.rejects(() => service.readCraftCard(null, { id: 'no-such-card' }), /找不到技法卡片/)
 
-// 4) 用户卡片：读取、source=user、同 id 覆盖内置、坏文件跳过
+// 4) 用户卡接口已移除：只读内置卡，不再加载 DSH_HOME 用户卡片
+assert.equal(typeof service.saveCraftCard, 'undefined', 'saveCraftCard 接口应已移除')
+assert.equal(typeof service.deleteCraftCard, 'undefined', 'deleteCraftCard 接口应已移除')
 const craftDir = join(home, 'novel-writer', 'library', 'craft')
 await mkdir(craftDir, { recursive: true })
 await writeFile(join(craftDir, 'my-card.json'), JSON.stringify({
-  id: 'my-card',
-  title: '自定义技法卡',
-  summary: '用户卡片测试',
-  tags: ['测试', '自定义'],
-  tasks: ['draft'],
-  body: '自'.repeat(350),
+  id: 'my-card', title: '自定义技法卡', tags: ['测试'], tasks: ['draft'], body: '自'.repeat(350),
 }), 'utf8')
-await writeFile(join(craftDir, 'broken.json'), '{ 这不是 JSON', 'utf8')
 const withUser = await service.listCraftCards(null)
-const userCard = withUser.cards.find((card) => card.id === 'my-card')
-assert.ok(userCard, '应读到用户卡片')
-assert.equal(userCard.source, 'user')
-assert.equal(userCard.body, undefined, '列表不含 body')
-assert.equal((await service.readCraftCard(null, { id: 'my-card' })).body.length, 350)
-assert.equal(withUser.cards.some((card) => card.id === 'broken'), false, '坏文件应跳过')
-
-// 同 id 覆盖内置
-await writeFile(join(craftDir, 'scene.json'), JSON.stringify({
-  id: 'scene', title: '覆盖后的场景卡', tags: ['场景'], tasks: ['draft'], body: '覆'.repeat(320),
-}), 'utf8')
-const overridden = await service.readCraftCard(null, { id: 'scene' })
-assert.equal(overridden.source, 'user')
-assert.equal(overridden.title, '覆盖后的场景卡')
-const overriddenPick = await service.selectCraftCards(null, { task: 'draft', instruction: '场景推进', max: 5 })
-assert.ok(overriddenPick.cards.some((card) => card.id === 'scene' && card.title === '覆盖后的场景卡'))
+assert.equal(withUser.cards.some((card) => card.id === 'my-card'), false, '不应再加载用户卡片')
+assert.ok(withUser.cards.every((card) => card.source === 'builtin'))
+assert.ok(withUser.cards.every((card) => card.body === undefined))
 
 // 5) buildChapterUserPrompt 注入段落
 const baseInput = { title: 't', language: 'zh', number: 1, chapter: { title: '测试章' }, styleFields: {}, wordBudget: 3000 }
@@ -135,28 +118,10 @@ assert.equal(disabledPick.cards.some((card) => card.id === 'scene'), false, '禁
 assert.deepEqual(await service.setCraftCardEnabled(project, { id: 'scene', enabled: true }), { id: 'scene', enabled: true })
 assert.ok((await service.selectCraftCards(project, { task: 'draft', max: 5 })).cards.length >= 1)
 
-// 7b) 用户卡片 save/delete/覆盖/恢复内置/校验
-const userBody = '这是一张用户自定义技法卡的正文，用于测试保存与覆盖。'.repeat(5)
-await service.saveCraftCard(project, { id: 'my-temp-card', title: '临时卡', summary: '测试', tags: ['测试'], tasks: ['draft'], body: userBody })
-const afterSave = await service.listCraftCards(project)
-const saved = afterSave.cards.find((card) => card.id === 'my-temp-card')
-assert.ok(saved, '应读到用户卡片')
-assert.equal(saved.source, 'user')
-assert.equal(saved.enabled, true)
-assert.equal((await service.readCraftCard(project, { id: 'my-temp-card' })).body.length, userBody.length)
-await service.saveCraftCard(project, { id: 'scene', title: '覆盖场景卡', summary: '覆盖', tags: ['场景'], tasks: ['draft'], body: userBody })
-const overrideList = await service.listCraftCards(project)
-assert.equal(overrideList.cards.find((card) => card.id === 'scene').hasOverride, true)
-assert.equal((await service.readCraftCard(project, { id: 'scene' })).title, '覆盖场景卡')
-await service.deleteCraftCard(project, 'scene')
-const restored = await service.listCraftCards(project)
-assert.equal(restored.cards.find((card) => card.id === 'scene').source, 'builtin')
-assert.equal(restored.cards.find((card) => card.id === 'scene').hasOverride, false)
-await service.deleteCraftCard(project, 'my-temp-card')
-await assert.rejects(() => service.saveCraftCard(project, { id: 'Bad Id', tasks: ['draft'], body: userBody }), /id 需为/)
-await assert.rejects(() => service.saveCraftCard(project, { id: 'ok-card', tasks: ['draft'], body: '太短' }), /100–4000/)
-await assert.rejects(() => service.saveCraftCard(project, { id: 'ok-card', tasks: ['bogus'], body: userBody }), /tasks/)
-await assert.rejects(() => service.deleteCraftCard(project, 'no-such-user-card'), /不存在/)
+// 7b) 用户卡 CRUD 接口已移除（统一走技能库：内置 craft-* + 项目/全局导入技能）
+assert.equal(typeof service.saveCraftCard, 'undefined')
+assert.equal(typeof service.deleteCraftCard, 'undefined')
+assert.equal(service.listCraftCards.constructor.name, 'AsyncFunction')
 
 // 7c) 挑选偏差：同一 instruction 下 5 章选卡组合不完全相同
 const combos = []

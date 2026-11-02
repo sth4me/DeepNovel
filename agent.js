@@ -59,6 +59,15 @@ function lockActionFor(toolName, args = {}) {
   }
   if (toolName === 'novel_style') return args?.action ? `style-${args.action}` : null
   if (toolName === 'novel_premise') return args?.action ? `premise-${args.action}` : null
+
+  if (toolName === 'novel_repair') {
+    if (args?.action === 'prescribe') return null
+    return 'chapter-repair'
+  }
+  if (toolName === 'novel_facts') {
+    if (!args?.action || args.action === 'list') return null
+    return `fact-${args.action}`
+  }
   return null
 }
 
@@ -158,6 +167,34 @@ export function apply(ctx) {
   })
 
   ctx.systemPrompt.section({
+    name: 'deepnovel:style-profile',
+    order: 10156,
+    text: () =>
+      '文风偏差只诊断、不自动改；风格指纹是参考，文风契约优先。偏差大时建议用 novel_chapter action=revise 带上具体指标要求（如“句长压到 15 字以内”），不要整章重写；需要指纹用 novel_style action=profile-build（只统计不改文）。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:story-audit',
+    order: 10155,
+    text: () =>
+      '故事问题只诊断不硬改：novel_diagnose 会给出变化/读者问题/承诺/因果/刻意感判定，其中 story 问题都是软提示。需要调整时优先改章纲（change/storyQuestion/promise），不要为凑冲突或钩子硬改正文；安静章节允许通过，只要本章有成立的不可逆变化。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:repair-loop',
+    order: 10154,
+    text: () =>
+      '写完或改完章节后的默认流程：先 novel_diagnose 检查逻辑/连续性/事实/文风；有 hard issues（逻辑、连续性 error、事实/术语）就调 novel_repair action=auto 自动修最小 diff，soft issues（文风/AI 味）只在回复里提示（AI 味可建议 deslop），不要为满分反复修。逻辑/设定冲突优先；repair 会复检，未降低 hard 问题会自动回滚。深度档用 novel_repair action=prescribe 只拿处方、不自动改。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:constraint-priority',
+    order: 10153,
+    text: () =>
+      '约束优先级（高→低）：本轮对话/用户显式要求（explicit）> 硬事实/术语/安全 > 项目设定 > 本章章纲 > 文风契约 > 写作要求/备注。冲突时按此优先级执行并在回复里说明，不要自行折中；若冲突是「设定/章纲不一致」，生成照做但提醒用户同步更新设定。写正文前先调 novel_constraints 检查（带 number 与 instruction）；涉及新固定事实（人名/地名/称呼/时间/伤势/持有物）先用 novel_facts 保存。',
+  })
+
+  ctx.systemPrompt.section({
     name: 'deepnovel:craft-routing',
     order: 10152,
     text: () =>
@@ -234,11 +271,11 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'novel_style',
     description:
-      '文风工具。action=templates 列出内置与自定义模板；action=apply 套用模板（可覆盖字段）；action=save 保存当前字段为自定义模板；action=commit 确认文风契约；action=status 读取当前契约。',
+      '文风工具。action=templates 列出内置与自定义模板；action=apply 套用模板（可覆盖字段）；action=save 保存当前字段为自定义模板；action=commit 确认文风契约；action=status 读取当前契约；action=profile-build 从最近定稿统计风格指纹（句长/短句/对话/段落/密度/高频词，只统计不改文）；action=profile-get 读取已存指纹。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['templates', 'apply', 'save', 'commit', 'status'] },
+        action: { type: 'string', enum: ['templates', 'apply', 'save', 'commit', 'status', 'profile-build', 'profile-get'] },
         templateId: { type: 'string', description: 'apply 时的模板 id' },
         name: { type: 'string', description: 'save 时的模板名称' },
         fields: { type: 'object', additionalProperties: true, description: '覆盖的契约字段' },
@@ -259,6 +296,8 @@ export function apply(ctx) {
       if (args?.action === 'status') {
         return service.readJson(exec.agent, 'story/style/contract.json')
       }
+      if (args?.action === 'profile-build') return service.buildStyleProfile(exec.agent, { count: args?.count })
+      if (args?.action === 'profile-get') return { profile: await service.getStyleProfile(exec.agent) }
       return service.applyStyleTemplate(exec.agent, {
         templateId: args?.templateId,
         fields: args?.fields,
@@ -522,9 +561,145 @@ export function apply(ctx) {
   })
 
   registerTool(ctx, {
+    name: 'novel_facts',
+    description: '项目事实/术语库（硬事实、术语、称呼、安全底线）。写正文或改设定前先查；发现新的固定设定（人名/地名/专有名词/称呼/伤势/持有物/时间）及时保存，避免跨章不一致。must=true 表示生成时必须遵守。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        id: { type: 'string', description: 'delete 时的事实 id；save 带 id 则更新' },
+        chapter: { type: 'number', description: '仅本章生效的事实的章号；省略为全局事实' },
+        kind: { type: 'string', enum: ['术语', '硬事实', '安全', '称呼'], description: 'save 时的事实类型' },
+        key: { type: 'string', description: 'save 时的事实名（术语为规范写法）' },
+        value: { type: 'string', description: 'save 时的事实内容（术语为别名/写法说明）' },
+        must: { type: 'boolean', description: 'save 时是否必须遵守（默认 true）' },
+        note: { type: 'string', description: 'save 时的补充说明（可写禁止值/关键值）' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      if (args?.action === 'delete') return service.deleteFact(exec.agent, { id: args.id })
+      if (args?.action === 'save') {
+        const fact = await service.saveFact(exec.agent, {
+          id: args.id,
+          chapter: args.chapter,
+          kind: args.kind,
+          key: args.key,
+          value: args.value,
+          must: args.must,
+          note: args.note,
+        })
+        return { fact }
+      }
+      const { facts } = await service.listFacts(exec.agent)
+      const limit = 50
+      return {
+        total: facts.length,
+        limit,
+        truncated: facts.length > limit,
+        facts: facts.slice(0, limit).map((fact) => ({
+          id: fact.id,
+          chapter: fact.chapter,
+          kind: fact.kind,
+          key: String(fact.key ?? '').slice(0, 200),
+          value: String(fact.value ?? '').slice(0, 200),
+          must: fact.must,
+          note: fact.note ? String(fact.note).slice(0, 200) : null,
+        })),
+      }
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'novel_constraints',
+    description: '写/改某章前检查约束冲突（只读，不生成正文）。返回硬约束清单（≤12）、冲突（含裁决与理由）、需要同步设定的 warning。存在 autoResolved=false 的设定冲突时，应先提示用户/同步更新设定，再生成。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['check'] },
+        number: { type: 'number', description: '章节号' },
+        instruction: { type: 'string', description: '本轮显式要求/指令（explicit 层，优先级最高）' },
+      },
+      required: ['action', 'number'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      const { number, summary } = await service.constraintsForChapter(exec.agent, {
+        number: args.number,
+        instruction: args.instruction,
+      })
+      const unresolved = summary.conflicts.some((item) => item.autoResolved === false)
+      return {
+        number,
+        hardRules: summary.hardRules,
+        conflicts: summary.conflicts.slice(0, 10),
+        warnings: summary.warnings,
+        hint: unresolved ? '存在需要同步的设定/章纲冲突：先提示用户或更新设定/伏笔台账，再生成。' : null,
+      }
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'novel_diagnose',
+    description: '诊断某章正文：检查事实/术语违规、逻辑问题（因果/时间/空间/信息差/动机/能力/设定）、连续性（error 硬、warn 软）、文风与 AI 味（软）。只读，不修改正文。返回 issues（hard 全量、soft 最多 10）与 scores。写完/改完章节后先调用。',
+    parameters: {
+      type: 'object',
+      properties: {
+        number: { type: 'number', description: '章节号' },
+      },
+      required: ['number'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const result = await getNovelWriter().diagnoseChapter(exec.agent, { number: args?.number })
+      return {
+        number: result.number,
+        scores: result.scores,
+        stats: result.stats,
+        story: result.story ?? null,
+        issues: [
+          ...result.issues.filter((issue) => issue.level === 'hard'),
+          ...result.issues.filter((issue) => issue.level === 'soft').slice(0, 10),
+        ],
+      }
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'novel_repair',
+    description: '定向修复章节：action=auto 自动修 hard 问题（逻辑/连续性 error/事实/术语），只做最小 diff、复检、未降低则回滚，soft 只提示；action=prescribe 只返回处方不修改。不改剧情/人物关系/结局。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['auto', 'prescribe'] },
+        number: { type: 'number', description: '章节号' },
+        issueIds: { type: 'array', items: { type: 'string' }, description: '只修指定 issue id（可选）' },
+        maxRounds: { type: 'number', description: '自动修复轮数，1–2，默认 2' },
+      },
+      required: ['action', 'number'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      return getNovelWriter().repairChapter(exec.agent, {
+        number: args?.number,
+        mode: args?.action === 'prescribe' ? 'prescribe' : 'auto',
+        issueIds: args?.issueIds,
+        maxRounds: args?.maxRounds,
+      })
+    },
+  })
+
+  registerTool(ctx, {
     name: 'novel_craft',
     description:
-      '写作技法库。action=list 列出全部技法卡片（不含正文）；action=read 按 id 读取一张卡片全文（读完判断是否适合本章：题材/文风/节奏/契约，不适合就不要套用）；action=recommend 按 task（draft/revise/fix/outline）与 instruction 推荐 1–2 张卡片。技法卡片是可选参考、通用写作方法，不是本书设定，也不是硬性规则。',
+      '写作技法库（兼容入口，优先用 skill 工具按需加载内置/导入技能）。action=list 列出全部内置技法卡片（不含正文）；action=read 按 id 读取一张卡片全文（读完判断是否适合本章：题材/文风/节奏/契约，不适合就不要套用）；action=recommend 按 task（draft/revise/fix/outline）与 instruction 推荐 1–2 张内置卡片。技法卡片是可选参考、通用写作方法，不是本书设定，也不是硬性规则。',
     parameters: {
       type: 'object',
       properties: {

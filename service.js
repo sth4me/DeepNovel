@@ -57,13 +57,18 @@ function estimateAiFlavor(text) {
 }
 import { openDatabase } from './db.js'
 import { migrateLegacyProject } from './migrate.js'
-import { MATERIAL_KINDS, NovelStore } from './store.js'
+import { FACT_KINDS, MATERIAL_KINDS, NovelStore } from './store.js'
+import { renderConstraints, resolveChapterConstraints, validateAgainstFacts } from './constraints.js'
+import { compareStyleProfile, computeStyleProfile, renderStyleProfile } from './style-profile.js'
 import { AI_BANNED_WORDS } from './writing-rules.js'
 import {
   BIBLE_SYSTEM_PROMPT,
   BIBLE_CHARACTERS_SYSTEM_PROMPT,
   BIBLE_WORLD_SYSTEM_PROMPT,
   CHAPTER_REVIEW_SYSTEM_PROMPT,
+  FIX_ISSUES_SYSTEM_PROMPT,
+  STORY_AUDIT_SYSTEM_PROMPT,
+  LOGIC_AUDIT_SYSTEM_PROMPT,
   CHAPTER_SYSTEM_PROMPT,
   CONTINUITY_SYSTEM_PROMPT,
   DECONSTRUCT_STRUCTURE_SYSTEM_PROMPT,
@@ -250,6 +255,17 @@ function now() {
   return new Date().toISOString()
 }
 
+/** 清理末尾连续空卷：保留最后一个有章节的卷及其之前的卷（含显式创建的空卷）。 */
+function pruneTrailingEmptyVolumes(volumes) {
+  const list = Array.isArray(volumes) ? volumes : []
+  let lastWithChapters = -1
+  for (let index = 0; index < list.length; index += 1) {
+    if (Array.isArray(list[index]?.chapters) && list[index].chapters.length > 0) lastWithChapters = index
+  }
+  if (lastWithChapters < 0) return list
+  return list.filter((volume, index) => index <= lastWithChapters || (Array.isArray(volume?.chapters) && volume.chapters.length > 0))
+}
+
 /** 草稿→定稿的简单 diff：长度差 + 段落级删除/新增片段（各最多 3 条、每条 ≤120 字）。 */
 function diffChapterTexts(draft, final) {
   const draftText = String(draft ?? '')
@@ -375,41 +391,6 @@ function normalizeCraftCard(raw, fallbackId = '', source = 'user') {
   }
 }
 
-const USER_CRAFT_ID = /^[a-z0-9-]{2,32}$/
-const USER_CRAFT_TASKS = ['draft', 'revise', 'fix', 'outline', 'deslop']
-
-/** 保存用户技法卡片到 DSH_HOME/novel-writer/library/craft/<id>.json。 */
-async function saveUserCraftCard(input = {}) {
-  const id = String(input.id ?? '').trim()
-  if (!USER_CRAFT_ID.test(id)) throw new Error('技法卡片 id 需为 2–32 位小写字母、数字或连字符')
-  const body = String(input.body ?? '').trim()
-  if (body.length < 100 || body.length > 4000) throw new Error('技法卡片正文需 100–4000 字')
-  const tasks = Array.isArray(input.tasks) ? input.tasks.map(String).map((task) => task.trim()).filter(Boolean) : []
-  if (tasks.length === 0 || tasks.some((task) => !USER_CRAFT_TASKS.includes(task))) {
-    throw new Error('tasks 只能包含：' + USER_CRAFT_TASKS.join('/'))
-  }
-  const card = {
-    id,
-    title: String(input.title ?? id).trim().slice(0, 80) || id,
-    summary: String(input.summary ?? '').trim().slice(0, 200),
-    tags: (Array.isArray(input.tags) ? input.tags : []).map(String).map((tag) => tag.trim()).filter(Boolean).slice(0, 8),
-    tasks,
-    body,
-    updatedAt: now(),
-  }
-  await mkdir(LIBRARY_CRAFT_DIR, { recursive: true })
-  await writeFile(join(LIBRARY_CRAFT_DIR, `${id}.json`), JSON.stringify(card, null, 2), 'utf8')
-  return { id, source: 'user' }
-}
-
-/** 删除用户技法卡片；若是内置 id 的覆盖，删除后自动恢复内置卡片。 */
-async function deleteUserCraftCard(id) {
-  const target = join(LIBRARY_CRAFT_DIR, `${String(id ?? '').trim()}.json`)
-  if (!existsSync(target)) throw new Error(`用户技法卡片不存在：${id}`)
-  await unlink(target)
-  return { id, deleted: true }
-}
-
 /** 从 instruction 提取 2–4 字中文片段与英文词，用于与卡片标题/摘要/标签做重叠匹配。 */
 function craftInstructionKeywords(instruction) {
   const source = String(instruction ?? '')
@@ -441,29 +422,6 @@ function withCraftContractNote(cards) {
   if (!Array.isArray(cards) || cards.length === 0) return cards
   const [first, ...rest] = cards
   return [{ ...first, body: '（本卡只是参考；与文风契约冲突时，一律以文风契约为准。）\n' + first.body }, ...rest]
-}
-
-/** 读 DSH_HOME 下的用户技法卡片；坏文件跳过，同 id 由调用方覆盖内置。 */
-async function loadUserCraftCards() {
-  let entries = []
-  try {
-    entries = await readdir(LIBRARY_CRAFT_DIR, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const cards = []
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-    try {
-      const raw = JSON.parse(await readFile(join(LIBRARY_CRAFT_DIR, entry.name), 'utf8'))
-      const card = normalizeCraftCard(raw, entry.name.replace(/\.json$/, ''), 'user')
-      if (!card.id || !card.body) continue
-      cards.push(card)
-    } catch {
-      // 坏文件跳过，不影响其它卡片
-    }
-  }
-  return cards
 }
 
 /* ------------------------------ 拆书流水线归一化 ------------------------------ */
@@ -3729,6 +3687,172 @@ export class NovelWriterService {
     return { id, deleted: true }
   }
 
+  /* ------------------------------ 事实包 / 约束引擎 ------------------------------ */
+
+  async listFacts(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const chapter = Number(options.chapter)
+    const facts = Number.isFinite(chapter) && chapter > 0 ? store.listFacts({ chapter }) : store.listFacts()
+    return { facts }
+  }
+
+  async saveFact(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const key = String(options.key ?? '').trim()
+    const value = String(options.value ?? '').trim()
+    if (!key) throw new Error('事实 key 不能为空')
+    if (!value) throw new Error('事实 value 不能为空')
+    if (options.kind != null && !FACT_KINDS.includes(options.kind)) throw new Error(`事实 kind 只能是：${FACT_KINDS.join('/')}`)
+    const kind = FACT_KINDS.includes(options.kind) ? options.kind : '硬事实'
+    return store.saveFact({ ...options, key, value, kind })
+  }
+
+  async deleteFact(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    const id = String(options.id ?? '').trim()
+    if (!id) throw new Error('请指定事实 id')
+    if (!store.deleteFact(id)) throw new Error(`找不到事实：${id}`)
+    return { id, deleted: true }
+  }
+
+  /** 本章事实 = 全局事实（chapter 为 null）+ 本章事实（chapter = number）。 */
+  async chapterFacts(agent, number) {
+    const store = await this.storeFor(agent)
+    return store.listFacts({ chapter: Number(number) })
+  }
+
+  /**
+   * 构建本章约束：结构化裁决 + 可选语义预检（LLM 失败降级为仅结构化，不阻塞生成）。
+   */
+  async buildConstraintsFor(agent, { number, chapter, project, inputs, storyContext, instruction, stage }) {
+    const facts = await this.chapterFacts(agent, number).catch(() => [])
+    const glossary = facts.filter((fact) => fact.kind === '术语' || fact.kind === '称呼')
+    const writingNotes = this.writingNotesFor(project, stage)
+    const notes = Array.isArray(storyContext?.notes) ? storyContext.notes : []
+    const base = {
+      instruction,
+      facts,
+      glossary,
+      bible: storyContext?.bible,
+      chapter,
+      styleFields: inputs?.styleFields ?? {},
+      writingNotes,
+      notes,
+      foreshadowing: storyContext?.foreshadowing,
+    }
+    const structural = resolveChapterConstraints(base)
+    if (!writingNotes && notes.length === 0 && !instruction) return structural
+    const semantic = await this.detectSemanticConflicts(agent, {
+      instruction,
+      writingNotes,
+      notes,
+      styleFields: inputs?.styleFields ?? {},
+    }).catch(() => [])
+    if (semantic.length === 0) return structural
+    return resolveChapterConstraints({ ...base, semanticConflicts: semantic })
+  }
+
+  async detectSemanticConflicts(agent, { instruction, writingNotes, notes, styleFields }) {
+    const system = [
+      '你是提示词冲突检查器。只输出 JSON，不要 Markdown 围栏。',
+      '格式：{"conflicts":[{"a":"explicit|facts|bible|outline|style|requirements|notes","ruleA":"...","b":"...","ruleB":"...","winner":"...","reason":"..."}]}。',
+      '只报彼此矛盾、会导致正文写法冲突的规则；没有冲突返回空数组；不要输出其他字段。',
+    ].join('\n')
+    const userText = [
+      `本轮指令：${instruction || '无'}`,
+      `文风契约：${JSON.stringify(styleFields ?? {})}`,
+      `写作要求：${writingNotes || '无'}`,
+      `作者备注：${notes.length ? notes.join('\n') : '无'}`,
+    ].join('\n')
+    const generated = await this.callJsonModel(agent, {
+      kind: 'chapter.constraints',
+      task: 'audit',
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+      maxTokens: 1200,
+      temperature: 0,
+      inputHash: this.hashInputs({ instruction, writingNotes, notes }),
+    })
+    const conflicts = generated?.parsed?.conflicts
+    if (!Array.isArray(conflicts)) return []
+    return conflicts.slice(0, 8).map((item) => ({
+      a: String(item?.a ?? item?.sourceA ?? '').slice(0, 40),
+      b: String(item?.b ?? item?.sourceB ?? '').slice(0, 40),
+      winner: String(item?.winner ?? '').slice(0, 40),
+      reason: String(item?.reason ?? '').slice(0, 300),
+      autoResolved: true,
+    })).filter((item) => item.a && item.b)
+  }
+
+  /** 返回给助手/UI 的约束摘要（不含 layers 全文）。 */
+  constraintSummary(constraints) {
+    return {
+      hardRules: constraints?.hardRules ?? [],
+      conflicts: constraints?.conflicts ?? [],
+      warnings: constraints?.warnings ?? [],
+    }
+  }
+
+  /** 从最近 count 个有定稿的章节统计风格指纹并写入 story/style/profile.json。 */
+  async buildStyleProfile(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const count = clamp(Number(options.count) || 10, 1, 30)
+    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+    const chapters = (outline?.volumes ?? [])
+      .flatMap((volume) => volume.chapters ?? [])
+      .filter((chapter) => Number(chapter.number) > 0)
+      .sort((left, right) => Number(right.number) - Number(left.number))
+    const texts = []
+    for (const chapter of chapters) {
+      if (texts.length >= count) break
+      const paths = this.chapterPaths(Number(chapter.number))
+      const finalText = await this.readText(agent, paths.final).catch(() => null)
+      if (!finalText || !finalText.trim()) continue
+      texts.push(finalText)
+    }
+    if (texts.length === 0) throw new Error('还没有定稿章节，无法统计风格指纹（先用 approve 采纳定稿）')
+    const profile = computeStyleProfile(texts)
+    if (!profile) throw new Error('定稿内容为空，无法统计风格指纹')
+    profile.generatedAt = now()
+    profile.chapterCount = texts.length
+    await this.writeJson(agent, 'story/style/profile.json', profile)
+    return profile
+  }
+
+  /** 读取风格指纹（无则 null）。 */
+  async getStyleProfile(agent) {
+    return this.readJson(agent, 'story/style/profile.json').catch(() => null)
+  }
+
+  /** 助手检查入口：按当前项目事实/设定/文风/章纲 + 本轮指令构建本章约束（只读，不生成正文）。 */
+  async constraintsForChapter(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number <= 0) throw new Error('请指定章节号')
+    const { chapter } = await this.findOutlineChapter(agent, number)
+    if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const project = await this.readJson(agent, this.marker)
+    const inputs = await this.currentInputs(agent)
+    const storyContext = await this.buildStoryContext(agent, chapter, number)
+    const constraints = await this.buildConstraintsFor(agent, {
+      number,
+      chapter,
+      project,
+      inputs,
+      storyContext,
+      instruction: String(options.instruction ?? '').trim(),
+      stage: 'draft',
+    })
+    return { number, constraints, summary: this.constraintSummary(constraints) }
+  }
+
+  validateAgainstFacts(text, facts) {
+    return validateAgainstFacts(text, facts)
+  }
+
   async generateBible(agent, options = {}, signal) {
     await this.assertInitialized(agent)
     const premise = await this.readJson(agent, 'story/premise.json')
@@ -4007,24 +4131,16 @@ export class NovelWriterService {
 
   /* --------------------------- 写作技法库（内置 + 用户卡片） --------------------------- */
 
-  /** 合并内置技法卡片与 DSH_HOME 用户卡片；同 id 用户卡片覆盖内置，并带上 enabled/hasOverride。 */
+  /** 内置技法卡片（只读）+ 项目级启用状态；用户卡片接口已移除（统一走技能库）。 */
   async allCraftCards(agent = null) {
     const disabled = new Set(agent ? await this.readCraftDisabled(agent) : [])
-    const builtinIds = new Set(CRAFT_CARDS.map((card) => normalizeCraftCard(card, '', 'builtin').id).filter(Boolean))
-    const merged = new Map()
+    const cards = []
     for (const card of CRAFT_CARDS) {
       const normalized = normalizeCraftCard(card, '', 'builtin')
       if (!normalized.id) continue
-      merged.set(normalized.id, { ...normalized, enabled: !disabled.has(normalized.id), hasOverride: false })
+      cards.push({ ...normalized, enabled: !disabled.has(normalized.id), hasOverride: false })
     }
-    for (const card of await loadUserCraftCards()) {
-      merged.set(card.id, {
-        ...card,
-        enabled: !disabled.has(card.id),
-        hasOverride: builtinIds.has(card.id),
-      })
-    }
-    return [...merged.values()]
+    return cards
   }
 
   /** 卡片目录（不含 body，省流量）：带 source/enabled/hasOverride。 */
@@ -4067,15 +4183,6 @@ export class NovelWriterService {
     project.craftDisabled = [...disabled]
     await this.writeJson(agent, this.marker, project)
     return { id, enabled: !disabled.has(id) }
-  }
-
-  /** 保存/删除用户卡片（Host 侧管理；同 id 覆盖内置，删除后恢复内置）。 */
-  async saveCraftCard(agent, options = {}) {
-    return saveUserCraftCard(options)
-  }
-
-  async deleteCraftCard(agent, id) {
-    return deleteUserCraftCard(id)
   }
 
   /**
@@ -4671,6 +4778,17 @@ export class NovelWriterService {
       title: String(raw.title ?? ''),
       synopsis,
       wordBudget: Number(raw.wordBudget ?? wordBudget) || wordBudget,
+      change: String(raw.change ?? '').trim().slice(0, 200),
+      storyQuestion: String(raw.storyQuestion ?? '').trim().slice(0, 200),
+      promise: String(raw.promise ?? '').trim().slice(0, 200),
+      beats: Array.isArray(raw.beats)
+        ? raw.beats.slice(0, 12).map((beat) => ({
+            goal: String(beat?.goal ?? '').trim().slice(0, 120),
+            obstacle: String(beat?.obstacle ?? '').trim().slice(0, 120),
+            turn: String(beat?.turn ?? '').trim().slice(0, 120),
+            cost: String(beat?.cost ?? '').trim().slice(0, 120),
+          }))
+        : [],
       ...(raw?.volumeEnd === true ? { volumeEnd: true } : {}),
       inputs: {
         premise: inputs.premiseHash,
@@ -4722,12 +4840,19 @@ export class NovelWriterService {
       }
       volume = latest ?? volumes[0] ?? { id: 'vol-1', title: '第一卷', goal: '', chapters: [] }
     }
-    // 新开一卷：当前卷最后一章已标阶段收束时，下一次“续写/生成后”自动落到下一卷，
-    // 不要求用户先手动切卷；重生成仍留在原卷。
-    if (!options.regenerate && Array.isArray(volume.chapters) && volume.chapters.length > 0) {
+    // 新开一卷：只有本次生成的起始章超出当前最后一章、且最新卷已收束时，才创建下一卷；
+    // 平时生成当前卷章节时绝不预先创建空卷（避免多出空的“第 2 卷”）。
+    const maxExistingNumber = volumes.reduce((max, item) => {
+      for (const chapter of item.chapters ?? []) max = Math.max(max, Number(chapter.number) || 0)
+      return max
+    }, 0)
+    const plannedFrom = Number(options.fromChapter ?? 0) || 0
+    if (Array.isArray(volume.chapters) && volume.chapters.length > 0) {
       const sorted = volume.chapters.slice().sort((a, b) => Number(a.number) - Number(b.number))
       const last = sorted[sorted.length - 1]
-      if (last?.volumeEnd === true) {
+      const fromForDecision = plannedFrom > 0 ? plannedFrom : (options.regenerate ? maxExistingNumber : maxExistingNumber + 1)
+      const continueAfterEnd = last?.volumeEnd === true && fromForDecision > maxExistingNumber
+      if (continueAfterEnd) {
         const ordinal = Number(String(volume.id ?? '').replace(/\D+/g, '')) || 0
         let next = volumes.find((item) => item.id === `vol-${ordinal + 1}`)
         if (!next) {
@@ -5023,35 +5148,18 @@ export class NovelWriterService {
 
     const runId = generated.runId
     const updatedAt = now()
-    // 自动分卷：只有模型标记“阶段收束章”（volumeEnd: true）才开启下一卷；章数只作参考，不强制分卷。
-    const targetChapters = Math.max(3, Number(options.targetChapters ?? project.automation?.volumeChapters ?? 10) || 10)
+    // 分卷只做标记：模型标记“阶段收束章”（volumeEnd: true）时记录 pendingNextVolume，
+    // 不预先创建空卷；真正生成下一卷（起始章超出最后一章）时才创建卷并挂章节。
     const volumeEnded = normalized.some((chapter) => chapter.volumeEnd === true)
-    let nextVolumeId = null
     const autoNext = options.autoNextVolume !== false && project.automation?.autoNextVolume !== false
-    if (autoNext && volumeEnded) {
-      const maxVol = volumes.reduce((max, item) => {
-        const number = Number(String(item.id ?? '').replace(/\D+/g, '')) || 0
-        return Math.max(max, number)
-      }, 0)
-      const already = volumes.some((item) => item.id === `vol-${maxVol + 1}`)
-      if (!already) {
-        const nextVolume = {
-          id: `vol-${maxVol + 1}`,
-          title: `第 ${maxVol + 1} 卷`,
-          goal: '',
-          map: '',
-          targetChapters,
-          chapters: [],
-        }
-        volumes.push(nextVolume)
-        nextVolumeId = nextVolume.id
-      }
-    }
+    const pendingNextVolume = volumeEnded && autoNext
+    const nextVolumeId = null
     const next = {
       ...outline,
       status: 'candidate',
       logline: outline.logline || inputs.chosen.premise || null,
-      volumes: volumes.map((item) => item.id === volume.id ? { ...volume, chapters: merged } : item),
+      volumes: pruneTrailingEmptyVolumes(volumes.map((item) => item.id === volume.id ? { ...volume, chapters: merged } : item)),
+      pendingNextVolume: pendingNextVolume ? true : undefined,
       updatedAt,
       lastRunId: runId,
     }
@@ -5074,6 +5182,7 @@ export class NovelWriterService {
         missing: missingList,
         volumeId: volume.id,
         nextVolumeId,
+        pendingNextVolume,
         volumeEnded,
       }
     }
@@ -5122,6 +5231,7 @@ export class NovelWriterService {
       missing: missingList,
       volumeId: volume.id,
       nextVolumeId,
+      pendingNextVolume,
       volumeEnded,
     }
   }
@@ -5273,6 +5383,7 @@ export class NovelWriterService {
     const next = {
       ...outline,
       status: allConfirmed ? 'confirmed' : 'candidate',
+      volumes: pruneTrailingEmptyVolumes(outline?.volumes ?? []),
       updatedAt: now(),
     }
     await this.writeJson(agent, 'story/plot/outline.json', next)
@@ -5347,6 +5458,19 @@ export class NovelWriterService {
     if (fields.synopsis !== undefined) target.synopsis = String(fields.synopsis)
     if (fields.wordBudget !== undefined) {
       target.wordBudget = Number(fields.wordBudget) || target.wordBudget || 3000
+    }
+    if (fields.change !== undefined) target.change = String(fields.change).trim().slice(0, 200)
+    if (fields.storyQuestion !== undefined) target.storyQuestion = String(fields.storyQuestion).trim().slice(0, 200)
+    if (fields.promise !== undefined) target.promise = String(fields.promise).trim().slice(0, 200)
+    if (fields.beats !== undefined) {
+      target.beats = Array.isArray(fields.beats)
+        ? fields.beats.slice(0, 12).map((beat) => ({
+            goal: String(beat?.goal ?? '').trim().slice(0, 120),
+            obstacle: String(beat?.obstacle ?? '').trim().slice(0, 120),
+            turn: String(beat?.turn ?? '').trim().slice(0, 120),
+            cost: String(beat?.cost ?? '').trim().slice(0, 120),
+          }))
+        : []
     }
     target.status = 'candidate'
     target.editedAt = now()
@@ -7138,6 +7262,387 @@ export class NovelWriterService {
     return { styleQa, continuity: savedContinuity ?? continuity }
   }
 
+  /**
+   * 章节诊断：事实规则 + 逻辑审查 + 统一审校（连续性/文风），合并为分级 issues（只读正文）。
+   * logicOnly=true 时只做事实+逻辑复检（用于修复后的轻量复检，省成本）。
+   */
+  async diagnoseChapter(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
+    const detail = await this.chapterDetail(agent, number)
+    const text = typeof options.text === 'string' && options.text.length > 0 ? options.text : (detail.draft ?? detail.final)
+    if (!text) throw new Error(`第 ${number} 章还没有正文，无法诊断`)
+    const logicOnly = options.logicOnly === true
+    const scope = logicOnly ? 'logic' : (options.scope === 'logic' || options.scope === 'story' || options.scope === 'all' ? options.scope : 'all')
+    const runLogic = scope === 'all' || scope === 'logic'
+    const runReview = scope === 'all'
+    const runStory = scope === 'all' || scope === 'story'
+    const inputs = await this.currentInputs(agent)
+    const facts = runLogic ? await this.chapterFacts(agent, number).catch(() => []) : []
+    const violations = runLogic ? validateAgainstFacts(text, facts) : { violations: [] }
+    const issues = []
+    const addIssue = (issue) => {
+      const type = String(issue.type ?? '问题').slice(0, 20)
+      const quote = String(issue.quote ?? '').slice(0, 160)
+      const id = `iss-${this.hashInputs(`${type}|${quote}`).slice(0, 12)}`
+      issues.push({
+        id,
+        level: issue.level === 'hard' ? 'hard' : 'soft',
+        type,
+        quote,
+        advice: String(issue.advice ?? '').slice(0, 300),
+        source: issue.source,
+      })
+    }
+    for (const violation of violations.violations.slice(0, 20)) {
+      addIssue({ type: '事实', level: 'hard', quote: '', advice: violation.rule, source: 'facts' })
+    }
+    const outline = await this.readJson(agent, 'story/plot/outline.json').catch(() => null)
+    const chapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
+    const previous = []
+    for (const chapter of chapters.filter((item) => Number(item.number) < number).slice(-8)) {
+      const summary = await this.readChapterSummary(agent, chapter.number)
+      previous.push({
+        number: chapter.number,
+        title: chapter.title,
+        outline: { synopsis: chapter.synopsis },
+        summary: summary?.summary ?? null,
+        characters: summary?.characters ?? [],
+        events: summary?.events ?? [],
+      })
+    }
+    const bible = await this.readBible(agent).catch(() => null)
+    const basePrompt = [
+      `当前章：第 ${number} 章《${detail.chapter.title || '未命名'}》`,
+      `文风契约：${JSON.stringify(inputs.styleFields ?? {})}`,
+      `当前章纲：${JSON.stringify(detail.chapter)}`,
+      `前文摘要：${JSON.stringify(previous)}`,
+      `设定：${JSON.stringify(bible?.characters ?? [])}`,
+      `项目事实：${JSON.stringify(facts.map((fact) => ({ kind: fact.kind, key: fact.key, value: fact.value })))}`,
+      `当前正文：\n${text}`,
+    ].join('\n\n')
+    let logicIssues = []
+    let logicParsed = {}
+    if (runLogic) {
+      this.reportStage('diagnosing', '逻辑审查')
+      const logicSystem = await this.systemFor(agent, 'logicAudit', LOGIC_AUDIT_SYSTEM_PROMPT)
+      try {
+        const generated = await this.callJsonModel(agent, {
+          kind: 'chapter.logic-audit',
+          task: 'audit',
+          number,
+          system: logicSystem,
+          messages: [{ role: 'user', content: [{ type: 'text', text: basePrompt }] }],
+          signal,
+          maxTokens: 6000,
+          temperature: 0.2,
+          inputHash: this.hashInputs({ chapter: detail.chapter.id, text: this.hashInputs(text), kind: 'logic' }),
+        })
+        logicParsed = generated?.parsed ?? {}
+      } catch {
+        logicParsed = {}
+      }
+      logicIssues = Array.isArray(logicParsed.logicIssues) ? logicParsed.logicIssues : []
+      for (const issue of logicIssues.slice(0, 20)) {
+        addIssue({ type: `逻辑·${issue.type || '问题'}`, level: 'hard', quote: issue.quote, advice: issue.advice, source: 'logic' })
+      }
+    }
+    let styleIssues = []
+    let continuityIssues = []
+    let reviewParsed = {}
+    let aiFlavor = null
+    if (runReview) {
+      this.reportStage('diagnosing', '统一审校')
+      const reviewSystem = await this.systemFor(agent, 'review', CHAPTER_REVIEW_SYSTEM_PROMPT)
+      try {
+        const generated = await this.callJsonModel(agent, {
+          kind: 'chapter.review',
+          task: 'audit',
+          number,
+          system: reviewSystem,
+          messages: [{ role: 'user', content: [{ type: 'text', text: basePrompt }] }],
+          signal,
+          maxTokens: 6000,
+          temperature: 0.3,
+          inputHash: this.hashInputs({ chapter: detail.chapter.id, text: this.hashInputs(text), kind: 'review' }),
+        })
+        reviewParsed = generated?.parsed ?? {}
+      } catch {
+        reviewParsed = {}
+      }
+      styleIssues = Array.isArray(reviewParsed.styleIssues) ? reviewParsed.styleIssues : []
+      for (const issue of styleIssues.slice(0, 20)) {
+        addIssue({ type: `文风·${issue.category || '问题'}`, level: 'soft', quote: issue.quote, advice: issue.advice, source: 'style' })
+      }
+      continuityIssues = Array.isArray(reviewParsed.continuityIssues) ? reviewParsed.continuityIssues : []
+      for (const issue of continuityIssues.slice(0, 20)) {
+        addIssue({
+          type: '连续性',
+          level: issue.level === 'error' ? 'hard' : 'soft',
+          quote: '',
+          advice: `${issue.message ?? ''}${issue.advice ? `（${issue.advice}）` : ''}`,
+          source: 'continuity',
+        })
+      }
+      aiFlavor = normalizeAiFlavor(reviewParsed.aiFlavor) ?? this.detectAiStyle(text).aiFlavor ?? estimateAiFlavor(text)
+      if (aiFlavor && (aiFlavor.level === '中' || aiFlavor.level === '重')) {
+        addIssue({ type: 'AI味', level: 'soft', quote: '', advice: `AI 味${aiFlavor.level}：可用 chapter-deslop 改写`, source: 'aiFlavor' })
+      }
+    }
+    let story = null
+    if (runStory) {
+      this.reportStage('diagnosing', '故事审校')
+      const storySystem = await this.systemFor(agent, 'storyAudit', STORY_AUDIT_SYSTEM_PROMPT)
+      const storyPrompt = [
+        `当前章：第 ${number} 章《${detail.chapter.title || '未命名'}》`,
+        `章纲：${JSON.stringify({
+          synopsis: detail.chapter.synopsis,
+          change: detail.chapter.change ?? '',
+          storyQuestion: detail.chapter.storyQuestion ?? '',
+          promise: detail.chapter.promise ?? '',
+        })}`,
+        `前文摘要：${JSON.stringify(previous.map((item) => ({ number: item.number, summary: item.summary })))}`,
+        `当前正文：\n${text}`,
+      ].join('\n\n')
+      let storyParsed = {}
+      try {
+        const generated = await this.callJsonModel(agent, {
+          kind: 'chapter.story-audit',
+          task: 'audit',
+          number,
+          system: storySystem,
+          messages: [{ role: 'user', content: [{ type: 'text', text: storyPrompt }] }],
+          signal,
+          maxTokens: 4000,
+          temperature: 0.2,
+          inputHash: this.hashInputs({ chapter: detail.chapter.id, text: this.hashInputs(text), kind: 'story' }),
+        })
+        storyParsed = generated?.parsed ?? {}
+      } catch {
+        storyParsed = {}
+      }
+      for (const issue of Array.isArray(storyParsed.issues) ? storyParsed.issues.slice(0, 20) : []) {
+        addIssue({ type: `故事·${issue.type || '问题'}`, level: 'soft', quote: issue.quote, advice: issue.advice, source: 'story' })
+      }
+      if (storyParsed.changeHappened === false) {
+        addIssue({ type: '无变化', level: 'soft', quote: storyParsed.changeQuote ?? '', advice: '本章缺少不可逆变化：补一个处境/关系/信息变化，或调整章纲 change', source: 'story' })
+      }
+      if (storyParsed.causalChain === 'broken') {
+        addIssue({ type: '因果断裂', level: 'soft', quote: '', advice: '梳理事件因果：删掉没有触发原因的转折，或补上动机与信息差', source: 'story' })
+      }
+      if (storyParsed.promiseProgress === 'broken') {
+        addIssue({ type: '承诺未推进', level: 'soft', quote: '', advice: '本章承诺未推进/兑现：调整章纲 promise，或在正文补一次明确推进', source: 'story' })
+      }
+      if (storyParsed.contrived === 'medium' || storyParsed.contrived === 'high') {
+        addIssue({ type: '为冲突而冲突', level: 'soft', quote: '', advice: '减少无动机对抗、突然降智与巧合解决；优先让人物按动机行动', source: 'story' })
+      }
+      story = {
+        changeHappened: storyParsed.changeHappened ?? null,
+        questionProgress: storyParsed.questionProgress ?? null,
+        promiseProgress: storyParsed.promiseProgress ?? null,
+        newQuestion: String(storyParsed.newQuestion ?? ''),
+        contrived: storyParsed.contrived ?? null,
+      }
+    }
+    let styleDrift = null
+    if (scope === 'all') {
+      const profile = await this.getStyleProfile(agent).catch(() => null)
+      if (profile?.metrics) {
+        const drift = compareStyleProfile(profile, text)
+        styleDrift = { score: drift.score, deviations: drift.deviations }
+        for (const deviation of drift.deviations.filter((item) => item.level !== 'low')) {
+          addIssue({
+            type: `文风偏离：${deviation.label}`,
+            level: 'soft',
+            quote: '',
+            advice: `当前 ${deviation.current} / 指纹 ${deviation.expected}（偏差 ${Math.round(deviation.ratio * 100)}%）；参考文风契约与风格指纹调整，或按指标做定向修订`,
+            source: 'styleProfile',
+          })
+        }
+      }
+    }
+    const logicPenalty = logicIssues.reduce((sum, issue) => sum + (issue.severity === 'high' ? 25 : issue.severity === 'low' ? 5 : 12), 0)
+    const scores = {
+      logic: runLogic ? Math.max(0, 100 - logicPenalty) : null,
+      style: runReview ? Number(reviewParsed.score ?? (styleIssues.length > 0 ? 60 : 85)) : null,
+      aiFlavor: aiFlavor?.score ?? null,
+    }
+    return {
+      number,
+      issues,
+      scores,
+      story,
+      styleDrift,
+      stats: {
+        characters: countChars(text),
+        issues: issues.length,
+        hard: issues.filter((issue) => issue.level === 'hard').length,
+        soft: issues.filter((issue) => issue.level === 'soft').length,
+      },
+    }
+  }
+
+  /**
+   * 定向修复：mode=prescribe 只返回处方；mode=auto 只修 hard，最小 diff + 复检 + 不降则回滚。
+   */
+  async repairChapter(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
+    const mode = options.mode === 'prescribe' ? 'prescribe' : 'auto'
+    const maxRounds = clamp(Number(options.maxRounds) || 2, 1, 2)
+    const issueIds = Array.isArray(options.issueIds) ? options.issueIds.map(String) : null
+    const detail = await this.chapterDetail(agent, number)
+    const originalText = detail.draft ?? detail.final
+    if (!originalText) throw new Error(`第 ${number} 章还没有正文，无法修复`)
+    const diagnosis = await this.diagnoseChapter(agent, { number }, signal)
+    const selectHard = (issues) => issues.filter((issue) => issue.level === 'hard' && (!issueIds || issueIds.includes(issue.id)))
+    const softHints = diagnosis.issues.filter((issue) => issue.level === 'soft').map((issue) => ({
+      issueId: issue.id,
+      type: issue.type,
+      advice: issue.advice,
+      suggestion: issue.source === 'story'
+        ? '优先调整章纲（change/storyQuestion/promise），必要时重写该章，而不是句级修补'
+        : issue.source === 'aiFlavor' || issue.source === 'style'
+          ? '可运行 chapter-deslop 去 AI 味/改文风'
+          : '软问题，不自动修改',
+    }))
+    if (mode === 'prescribe') {
+      return {
+        number,
+        mode,
+        prescriptions: diagnosis.issues.map((issue) => ({
+          issueId: issue.id,
+          level: issue.level,
+          type: issue.type,
+          quote: issue.quote,
+          advice: issue.advice,
+          autoFixable: issue.level === 'hard' && issue.source !== 'style' && issue.source !== 'story',
+          risk: issue.source === 'story' ? 'high' : issue.level === 'hard' ? 'medium' : 'low',
+        })),
+        softHints,
+        scores: diagnosis.scores,
+      }
+    }
+    const project = await this.readJson(agent, this.marker)
+    const inputs = await this.currentInputs(agent)
+    const paths = this.chapterPaths(number)
+    const fixSystem = await this.systemFor(agent, 'fixIssues', FIX_ISSUES_SYSTEM_PROMPT)
+    const applied = []
+    const skipped = []
+    const rounds = []
+    let rolledBack = false
+    let currentText = originalText
+    let currentIssues = diagnosis.issues
+    for (let round = 1; round <= maxRounds; round += 1) {
+      if (signal?.aborted) break
+      const hardIssues = selectHard(currentIssues)
+      if (hardIssues.length === 0) break
+      this.reportStage('repairing', `第 ${round}/${maxRounds} 轮修复`)
+      const constraints = await this.buildConstraintsFor(agent, {
+        number,
+        chapter: detail.chapter,
+        project,
+        inputs,
+        storyContext: {},
+        instruction: '',
+        stage: 'fix',
+      }).catch(() => null)
+      const userText = [
+        `第 ${number} 章《${detail.chapter.title || '未命名'}》`,
+        constraints ? renderConstraints(constraints, { phase: 'start' }) : '',
+        '【需要修复的硬问题】',
+        ...hardIssues.map((issue, index) => `${index + 1}. [${issue.type}]${issue.quote ? ` 原文片段：「${issue.quote}」` : ''} ${issue.advice}`),
+        '只做最小 diff；from 必须逐字精确匹配原文；不改剧情/人物关系/结局；无法修复的放 skipped。',
+        '【当前正文】',
+        currentText,
+        '只输出 JSON。',
+      ].filter((line) => line !== '').join('\n')
+      const generated = await this.callJsonModel(agent, {
+        kind: 'chapter.repair',
+        task: 'fix',
+        number,
+        system: fixSystem,
+        messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+        signal,
+        maxTokens: 8000,
+        temperature: 0.2,
+        inputHash: this.hashInputs({ chapter: detail.chapter.id, text: this.hashInputs(currentText), round }),
+      })
+      const parsed = generated?.parsed ?? {}
+      const patches = Array.isArray(parsed.patches) ? parsed.patches.slice(0, 20) : []
+      for (const item of Array.isArray(parsed.skipped) ? parsed.skipped.slice(0, 10) : []) {
+        skipped.push({ quote: String(item?.quote ?? '').slice(0, 160), reason: String(item?.reason ?? '').slice(0, 200) })
+      }
+      if (patches.length === 0) break
+      const before = currentText
+      const roundApplied = []
+      let nextText = currentText
+      for (const patch of patches) {
+        const from = String(patch?.from ?? '')
+        const to = String(patch?.to ?? '')
+        if (!from || from === to) {
+          skipped.push({ quote: from.slice(0, 160), reason: '空 patch 或未变化' })
+          continue
+        }
+        const occurrences = nextText.split(from).length - 1
+        if (occurrences !== 1) {
+          skipped.push({ quote: from.slice(0, 160), reason: occurrences === 0 ? 'from 在原文中找不到（已跳过）' : `from 出现 ${occurrences} 次，无法唯一匹配` })
+          continue
+        }
+        nextText = nextText.replace(from, to)
+        roundApplied.push({ from: from.slice(0, 160), to: to.slice(0, 160), reason: String(patch?.reason ?? '').slice(0, 200) })
+      }
+      if (roundApplied.length === 0) break
+      const beforeChars = countChars(before)
+      const afterChars = countChars(nextText)
+      const targetWords = Number(inputs.styleFields?.chapterWords ?? detail.chapter.wordBudget ?? 3000) || 3000
+      const minChars = Math.max(1200, Math.round(Math.min(beforeChars, targetWords) * 0.6))
+      const maxChars = Math.round(Math.max(beforeChars, targetWords) * 1.8)
+      if (afterChars < minChars || afterChars > maxChars) {
+        skipped.push({ quote: '', reason: `修复后字数异常（${afterChars}，允许 ${minChars}–${maxChars}）` })
+        break
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const backupPath = `${paths.revisions}/repair-r${round}-${stamp}.md`
+      await this.writeTextFile(agent, backupPath, before)
+      await this.writeTextFile(agent, paths.draft, nextText)
+      applied.push(...roundApplied)
+      this.reportStage('diagnosing', '复检硬问题')
+      const after = await this.diagnoseChapter(agent, { number, text: nextText, logicOnly: true }, signal)
+      const hardBefore = hardIssues.length
+      const hardAfter = selectHard(after.issues).length
+      rounds.push({ round, issuesBefore: hardBefore, issuesAfter: hardAfter })
+      if (hardAfter >= hardBefore || hardAfter - hardBefore > 2) {
+        await this.writeTextFile(agent, paths.draft, before)
+        rolledBack = true
+        currentText = before
+        const restored = await this.diagnoseChapter(agent, { number, text: before, logicOnly: true }, signal).catch(() => null)
+        if (restored) currentIssues = restored.issues
+        break
+      }
+      currentText = nextText
+      currentIssues = after.issues
+      if (hardAfter === 0) break
+    }
+    return {
+      number,
+      mode,
+      applied,
+      skipped,
+      rounds,
+      rolledBack,
+      finalIssues: currentIssues,
+      softHints,
+      summary: rolledBack
+        ? '本轮修复未降低硬问题，已回滚；建议换一种改法或人工处理。'
+        : applied.length > 0
+          ? `已应用 ${applied.length} 处最小修复；剩余硬问题 ${selectHard(currentIssues).length} 条。`
+          : '没有可自动应用的最小修复（可能需要人工处理）。',
+    }
+  }
+
   async fixByQa(agent, options = {}, signal) {
     await this.assertInitialized(agent)
     const number = Number(options.number)
@@ -7148,6 +7653,7 @@ export class NovelWriterService {
     const defaultRounds = this.automationConfig(project).fixRounds
     const rounds = clamp(Number(options.rounds ?? defaultRounds) || defaultRounds, 1, 3)
     const paths = this.chapterPaths(number)
+    const styleProfile = await this.getStyleProfile(agent).catch(() => null)
     const fixBase = await this.systemFor(agent, 'fix', CHAPTER_SYSTEM_PROMPT)
     const system = [
       fixBase,
@@ -7159,6 +7665,16 @@ export class NovelWriterService {
     let lastUsage = null
     let best = null
     const initialDetail = await this.chapterDetail(agent, number)
+    const fixStoryContext = await this.buildStoryContext(agent, initialDetail.chapter, number).catch(() => ({}))
+    const constraints = await this.buildConstraintsFor(agent, {
+      number,
+      chapter: initialDetail.chapter,
+      project,
+      inputs,
+      storyContext: fixStoryContext,
+      instruction,
+      stage: 'fix',
+    })
     if (
       initialDetail.draft &&
       typeof initialDetail.styleQa?.score === 'number'
@@ -7200,9 +7716,11 @@ export class NovelWriterService {
       const userText = [
         `项目：${project.title}`,
         `任务：按质检问题修复第 ${number} 章《${detail.chapter.title || '未命名'}》（第 ${round}/${rounds} 轮）。`,
+        renderConstraints(constraints, { phase: 'start' }),
         '',
         '【文风契约】',
         JSON.stringify(inputs.styleFields ?? {}, null, 2),
+        styleProfile ? `【风格指纹（参考，不覆盖文风契约）】\n${renderStyleProfile(styleProfile)}` : '',
         '',
         '【章纲】',
         JSON.stringify(detail.chapter, null, 2),
@@ -7212,6 +7730,8 @@ export class NovelWriterService {
         `【字数】目标约 ${fixTargetWords} 字；当前 ${countChars(text)} 字。超标就压缩（合并过场、删重复解释），不足就补场景，但不要删情节与人物互动细节。`,
         `【禁用词】${bannedWords.length ? bannedWords.join('、') : '无'}；正文中不得出现这些词，逐处改写而不是只做同义替换。`,
         instruction ? `\n【额外要求】\n${instruction}` : '',
+        '',
+        renderConstraints(constraints, { phase: 'end' }),
         '',
         '【当前正文】',
         text,
@@ -7359,6 +7879,7 @@ export class NovelWriterService {
       qa: finalDetail.qa,
       styleQa: finalDetail.styleQa,
       remainingIssues: remaining,
+      constraints: this.constraintSummary(constraints),
       usage: lastUsage,
     }
   }
@@ -7638,6 +8159,16 @@ ${sections.join('\n')}
     const storyContext = await this.buildStoryContext(agent, chapter, number)
     const wordBudget = Number(inputs.styleFields?.chapterWords ?? chapter.wordBudget ?? 3000) || 3000
     const styleContract = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
+    const styleProfile = await this.getStyleProfile(agent).catch(() => null)
+    const constraints = await this.buildConstraintsFor(agent, {
+      number,
+      chapter,
+      project,
+      inputs,
+      storyContext,
+      instruction: options.instruction,
+      stage: 'draft',
+    })
     const system = await this.systemFor(agent, 'draft', CHAPTER_SYSTEM_PROMPT)
     const userText = buildChapterUserPrompt({
       title: project.title,
@@ -7649,6 +8180,8 @@ ${sections.join('\n')}
       writingNotes: this.writingNotesFor(project, 'draft'),
       storyContext,
       instruction: options.instruction,
+      constraints,
+      styleProfile: styleProfile ? renderStyleProfile(styleProfile) : '',
       wordBudget,
     })
     const messages = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
@@ -7745,6 +8278,7 @@ ${sections.join('\n')}
       autoFixAttempts: autoFix?.attempts ?? [],
       autoFixRemaining: autoFix?.remainingIssues ?? [],
       autoFixError: autoFix?.error ?? null,
+      constraints: this.constraintSummary(constraints),
       usage: call.usage,
     }
   }
@@ -7854,6 +8388,16 @@ ${sections.join('\n')}
     const paths = this.chapterPaths(number)
     this.reportStage('context', '组装修订上下文')
     const storyContext = await this.buildStoryContext(agent, detail.chapter, number)
+    const constraints = await this.buildConstraintsFor(agent, {
+      number,
+      chapter: detail.chapter,
+      project,
+      inputs,
+      storyContext,
+      instruction,
+      stage: 'revise',
+    })
+    const styleProfile = await this.getStyleProfile(agent).catch(() => null)
     const reviseBase = await this.systemFor(agent, 'revise', CHAPTER_SYSTEM_PROMPT)
     const deslopRule = '- 去 AI 味：禁用词（仿佛/一丝/缓缓/微微/眼中闪过/嘴角勾起…）换成具体动作或白描，抽象情绪外化，删章末总结/升华，拆掉“，带着…”“XX说道”等模板句式；只改相关句子，不重写无关段落。'
     const system = hasRange
@@ -7863,8 +8407,11 @@ ${sections.join('\n')}
       `项目：${project.title}（语言：${project.language ?? 'zh'}）`,
       `任务：${hasRange ? `局部重写第 ${number} 章的第 ${fromParagraph}–${toParagraph} 段（全文共 ${paragraphs.length} 段）。` : `修订第 ${number} 章《${detail.chapter.title || '未命名'}》。`}`,
       '',
+      renderConstraints(constraints, { phase: 'start' }),
+      '',
       '【文风契约】',
       JSON.stringify(inputs.styleFields ?? {}, null, 2),
+      styleProfile ? `【风格指纹（参考，不覆盖文风契约）】\n${renderStyleProfile(styleProfile)}` : '',
       '',
       this.writingNotesFor(project, 'revise') ? `【项目写作要求（必须遵守）】\n${this.writingNotesFor(project, 'revise')}\n` : '',
       '【章纲】',
@@ -7885,7 +8432,7 @@ ${sections.join('\n')}
       '【修订要求】',
       instruction,
       '',
-      craftCards.length ? formatCraftCards(craftCards) : '',
+      renderConstraints(constraints, { phase: 'end' }),
       '',
       hasRange ? '【需要重写的原段落】\n' + targetText : '',
       '',
@@ -7910,6 +8457,7 @@ ${sections.join('\n')}
       project,
       paths,
       storyContext,
+      constraints,
       system,
       messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
     }
@@ -7961,6 +8509,7 @@ ${sections.join('\n')}
       inputs,
       paths,
       storyContext,
+      constraints,
       system,
       messages,
     } = plan
@@ -8042,6 +8591,7 @@ ${sections.join('\n')}
       revisionPath: `${paths.revisions}/revise-${stamp}.md`,
       range: hasRange ? { fromParagraph, toParagraph } : null,
       qa,
+      constraints: this.constraintSummary(constraints),
       usage: call.usage,
     }
   }
@@ -8701,10 +9251,22 @@ ${sections.join('\n')}
           advice: String(issue.advice ?? '').slice(0, 400),
         })).filter((issue) => issue.message)
       : []
+    const storyWarnings = []
+    for (const chapter of inRange) {
+      const missing = ['change', 'storyQuestion', 'promise'].filter((field) => !String(chapter[field] ?? '').trim())
+      if (missing.length === 0) continue
+      const labels = missing.map((field) => ({ change: '变化', storyQuestion: '读者问题', promise: '承诺' }[field]))
+      storyWarnings.push({
+        level: 'warn',
+        number: Number(chapter.number) || null,
+        message: `第${chapter.number}章缺少${labels.join('/')}（软提示，不阻断生成）`,
+        advice: '可在 outline-update 里补充 change/storyQuestion/promise；安静章节可留空，但建议至少写清本章变化。',
+      })
+    }
     const result = {
       fromChapter,
       toChapter,
-      issues,
+      issues: [...issues, ...storyWarnings],
       checkedAt: now(),
       runId: generated.runId,
     }

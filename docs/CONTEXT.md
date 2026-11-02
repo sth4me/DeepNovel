@@ -75,7 +75,7 @@
 | `story/chapters/NNN/draft.md` / `final.md` / `revisions/` | 正文与旧稿（Markdown） |
 | `story/prompt.json` | 项目级提示词注入 |
 | `DSH_HOME/novel-writer/library/characters/*.json` | 跨项目角色库（全局，不属于单个项目） |
-| `DSH_HOME/novel-writer/library/craft/*.json` | 旧版自定义技法卡片（`novel_craft` 兼容；推荐改用导入技能） |
+| `DSH_HOME/novel-writer/library/craft/*.json` | 已移除：旧版自定义技法卡不再读取；自定义改用导入技能 |
 | `.dsh-writing/inspirations.json` | 灵感历史（最近 20 条） |
 | `.dsh-writing/deconstructions.json` | 拆书历史（最近 10 条；每条含 units/settings/relations/techniques/pacing 与 stages） |
 

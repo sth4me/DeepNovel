@@ -114,6 +114,12 @@
 
 - 修订学习：`revision-learn`（project-action / `novel_chapter action=revision-learn`）只分析同时有 draft+final 且内容不同的章节（指定章号或按 diff 取最近 N 章，`count` 默认 3 上限 6），返回 `{ summary, preferences, stats, chapters }`；偏好需稳定（同类 ≥2 次）、rule 可执行、≤8 条；只读不写文件/DB、可取消；UI「从修订学习」弹窗勾选后经 `project-update` 追加到 `writingNotes`，不自动改写正文；没有可学习修订时报错「需要同时存在草稿与定稿且内容不同」；提示词 `revisionLearn`（group craft）可覆盖。
 
+- 约束引擎 / 事实包：七层优先级 explicit > facts > bible > outline > style > requirements > notes；结构化冲突覆盖视角/时态/句长/对话比例、术语/称呼、章纲 vs 设定存活、章纲回收 vs 伏笔已完成；语义预检失败降级；hardRules ≤12，开头完整 + 结尾复述双注入（不瘦身）；`facts` 表 schema v4（kind 术语/硬事实/安全/称呼、全局或按章）、生成后 `validateAgainstFacts` 可查违规；助手 `novel_facts`（list/save/delete）与 `novel_constraints`（check，仅返回 hardRules/conflicts/warnings）、project-action `facts-list`/`fact-save`/`fact-delete`、锁 `facts`；旧 `craft-card-*` 接口与自定义技法卡已移除，`novel_craft` 仅列出内置技法。
+
+- 诊断与修复：`diagnoseChapter` 合并 facts 违规（hard）/ logicAudit 逻辑问题（hard）/ 审校 continuity（error→hard、warn→soft）与 styleIssue/AI 味（soft），issue 有稳定 id + level + source，返回 scores/stats；`repairChapter` auto 只修 hard、最小 diff `from` 唯一匹配否则 skipped、写前备份 `revisions/repair-r<轮>-<时间>.md`、复检 facts+logic、hard 不降或新增 >2 回滚、最多 2 轮；prescribe 只返回处方（autoFixable/risk）不改文件；soft 只回 softHints；`chapter-diagnose` / `chapter-repair` 与助手 `novel_diagnose` / `novel_repair`、锁 `chapter:<n>`；提示词 logicAudit/fixIssues（group review）可覆盖。
+
+- 故事性 / 风格指纹：章纲 `change`/`storyQuestion`/`promise`/`beats` 可生成与保留（可选、可留空）；OUTLINE 提示词允许安静章节、不硬造冲突/钩子；`storyAudit`（group review 可覆盖）判定 changeHappened/questionProgress/promiseProgress/causalChain/contrived/issues；`diagnoseChapter` story 全 soft（source story）、`scope: all|logic|story`、`logicOnly` 不跑、`styleDrift` 仅 `scope=all`（soft、source styleProfile）；`repair` 不自动改 story（prescribe `autoFixable:false` / `risk:high`）；风格指纹纯规则统计 6 项指标、`compareStyleProfile` 偏差 low/medium/high（>35% medium、>60% high；对话绝对差 >0.15/0.25）、`buildStyleProfile` 最近 10 定稿写 `story/style/profile.json`、draft/revise/fix 在文风契约后注入【风格指纹】；project-action `style-profile-build`/`style-profile-get` 与 `novel_style` profile-build/profile-get。
+
 ## 错误处理
 
 - 空输出且 `max-tokens` 自动加倍预算重试。
