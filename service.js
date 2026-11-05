@@ -261,6 +261,16 @@ function now() {
   return new Date().toISOString()
 }
 
+function cancelledError() {
+  const error = new Error('已取消')
+  error.code = 'NOVEL_WRITER_CANCELLED'
+  return error
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw cancelledError()
+}
+
 const BIBLE_META_STATUS = ['未登场', '活跃', '退场']
 const BIBLE_META_IMPORTANCE = ['主角', '核心', '配角', '龙套']
 
@@ -1793,7 +1803,7 @@ export class NovelWriterService {
       let reasoning = ''
       let usage = null
       let finish = null
-      for await (const chunk of this.ctx.llm.stream({
+      const iterator = this.ctx.llm.stream({
         provider: model.provider,
         model: model.model,
         system: effectiveSystem,
@@ -1803,20 +1813,52 @@ export class NovelWriterService {
         ...(effort ? { reasoningEffort: effort } : {}),
         sessionId,
         signal,
-      })) {
-        if (chunk.type === 'text-delta') {
-          text += chunk.text
-          if (onDelta) onDelta(chunk.text)
-        } else if (chunk.type === 'usage') usage = chunk.usage
-        else if (chunk.type === 'finish') {
-          finish = chunk.reason
-          if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
-            throw new Error(`模型调用失败：${JSON.stringify(chunk.reason)}`)
+      })[Symbol.asyncIterator]()
+      // 取消必须能中断「正在等待模型 chunk」的调用：即使提供方不响应 signal，
+      // 也在本地竞速 abort，让工具立即返回，而不是等整段生成结束。
+      let resolveAbort = null
+      const abortPromise = new Promise((resolve) => { resolveAbort = () => resolve({ aborted: true, done: true }) })
+      const onAbort = () => {
+        try {
+          void iterator.return?.()
+        } catch {
+          // ignore
+        }
+        resolveAbort?.()
+      }
+      if (signal?.aborted) throw cancelledError()
+      if (signal) signal.addEventListener('abort', onAbort, { once: true })
+      try {
+        while (true) {
+          throwIfAborted(signal)
+          const nextPromise = iterator.next()
+          nextPromise.catch(() => {})
+          const next = await Promise.race([nextPromise, abortPromise])
+          if (next?.aborted || signal?.aborted) throw cancelledError()
+          if (next?.done) break
+          const chunk = next.value
+          if (chunk.type === 'text-delta') {
+            text += chunk.text
+            if (onDelta) onDelta(chunk.text)
+          } else if (chunk.type === 'usage') usage = chunk.usage
+          else if (chunk.type === 'finish') {
+            finish = chunk.reason
+            if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+              throw new Error(`模型调用失败：${JSON.stringify(chunk.reason)}`)
+            }
+          } else if (typeof chunk.type === 'string' && /reason|think/i.test(chunk.type)) {
+            // 兼容各提供方的思考流（reasoning-delta / thinking-delta 等），只收集不展示。
+            const piece = chunk.text ?? chunk.reasoning ?? chunk.delta ?? ''
+            if (typeof piece === 'string') reasoning += piece
           }
-        } else if (typeof chunk.type === 'string' && /reason|think/i.test(chunk.type)) {
-          // 兼容各提供方的思考流（reasoning-delta / thinking-delta 等），只收集不展示。
-          const piece = chunk.text ?? chunk.reasoning ?? chunk.delta ?? ''
-          if (typeof piece === 'string') reasoning += piece
+        }
+      } finally {
+        if (signal) signal.removeEventListener('abort', onAbort)
+        try {
+          const returned = iterator.return?.()
+          if (returned && typeof returned.catch === 'function') returned.catch(() => {})
+        } catch {
+          // ignore
         }
       }
       return { text, usage, finish, reasoning }
@@ -2777,8 +2819,7 @@ export class NovelWriterService {
     return { status: next.status, chosen, chosenHash: next.chosenHash }
   }
 
-  async updatePremise(agent, fields = {}) {
-    await this.assertInitialized(agent)
+  async updatePremise(agent, fields = {}) {    await this.assertInitialized(agent)
     const premise = await this.readJson(agent, 'story/premise.json')
     if (!premise?.chosen) throw new Error('还没有已确认的构思可供修改')
     const chosen = {
@@ -2813,6 +2854,14 @@ export class NovelWriterService {
     }
     await this.writeJson(agent, 'story/premise.json', next)
     return { chosen, chosenHash: next.chosenHash }
+  }
+
+  async deletePremise(agent) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    store.deletePremise()
+    await this.deleteStoryFile(agent, 'story/premise.json').catch(() => {})
+    return { deleted: true }
   }
 
   /* ------------------------------ P0：文风 ------------------------------ */
@@ -2959,6 +3008,14 @@ export class NovelWriterService {
     }
     await this.writeJson(agent, 'story/style/contract.json', next)
     return { status: next.status, fields: nextFields, fieldsHash: next.fieldsHash }
+  }
+
+  async deleteStyleContract(agent) {
+    await this.assertInitialized(agent)
+    const store = await this.storeFor(agent)
+    store.deleteStyleContract()
+    await this.deleteStoryFile(agent, 'story/style/contract.json').catch(() => {})
+    return { deleted: true }
   }
 
   async updatePremiseCandidate(agent, options = {}) {
@@ -3900,7 +3957,8 @@ export class NovelWriterService {
   /**
    * 构建本章约束：结构化裁决 + 可选语义预检（LLM 失败降级为仅结构化，不阻塞生成）。
    */
-  async buildConstraintsFor(agent, { number, chapter, project, inputs, storyContext, instruction, stage }) {
+  async buildConstraintsFor(agent, { number, chapter, project, inputs, storyContext, instruction, stage, signal }) {
+    throwIfAborted(signal)
     const facts = await this.chapterFacts(agent, number).catch(() => [])
     const glossary = facts.filter((fact) => fact.kind === '术语' || fact.kind === '称呼')
     const writingNotes = this.writingNotesFor(project, stage)
@@ -3923,12 +3981,13 @@ export class NovelWriterService {
       writingNotes,
       notes,
       styleFields: inputs?.styleFields ?? {},
+      signal,
     }).catch(() => [])
     if (semantic.length === 0) return structural
     return resolveChapterConstraints({ ...base, semanticConflicts: semantic })
   }
 
-  async detectSemanticConflicts(agent, { instruction, writingNotes, notes, styleFields }) {
+  async detectSemanticConflicts(agent, { instruction, writingNotes, notes, styleFields, signal }) {
     const system = [
       '你是提示词冲突检查器。只输出 JSON，不要 Markdown 围栏。',
       '格式：{"conflicts":[{"a":"explicit|facts|bible|outline|style|requirements|notes","ruleA":"...","b":"...","ruleB":"...","winner":"...","reason":"..."}]}。',
@@ -3946,6 +4005,7 @@ export class NovelWriterService {
       system,
       messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
       temperature: 0,
+      signal,
       inputHash: this.hashInputs({ instruction, writingNotes, notes }),
     })
     const conflicts = generated?.parsed?.conflicts
@@ -4450,8 +4510,9 @@ export class NovelWriterService {
   }
 
   /** 助手检查入口：按当前项目事实/设定/文风/章纲 + 本轮指令构建本章约束（只读，不生成正文）。 */
-  async constraintsForChapter(agent, options = {}) {
+  async constraintsForChapter(agent, options = {}, signal) {
     await this.assertInitialized(agent)
+    throwIfAborted(signal)
     const number = Number(options.number)
     if (!Number.isFinite(number) || number <= 0) throw new Error('请指定章节号')
     const { chapter } = await this.findOutlineChapter(agent, number)
@@ -4467,6 +4528,7 @@ export class NovelWriterService {
       storyContext,
       instruction: String(options.instruction ?? '').trim(),
       stage: 'draft',
+      signal,
     })
     return { number, constraints, summary: this.constraintSummary(constraints) }
   }
@@ -6498,6 +6560,9 @@ export class NovelWriterService {
     if (!target) throw new Error(`找不到章纲节点：${options.chapterId ?? options.number}`)
 
     const fields = options.fields ?? {}
+    const knownFields = new Set(['title', 'synopsis', 'wordBudget', 'change', 'storyQuestion', 'promise', 'beats', 'time', 'agency', 'device', 'castUsed', 'newNamed'])
+    const unknown = Object.keys(fields).filter((key) => !knownFields.has(key))
+    if (unknown.length > 0) throw new Error(`update 不支持字段：${unknown.join('、')}；可用：${[...knownFields].join('/')}`)
     if (fields.title !== undefined) target.title = String(fields.title)
     if (fields.synopsis !== undefined) target.synopsis = String(fields.synopsis)
     if (fields.wordBudget !== undefined) {
@@ -6506,6 +6571,20 @@ export class NovelWriterService {
     if (fields.change !== undefined) target.change = String(fields.change).trim().slice(0, 200)
     if (fields.storyQuestion !== undefined) target.storyQuestion = String(fields.storyQuestion).trim().slice(0, 200)
     if (fields.promise !== undefined) target.promise = String(fields.promise).trim().slice(0, 200)
+    if (fields.agency !== undefined) {
+      const agency = fields.agency && typeof fields.agency === 'object' ? fields.agency : {}
+      target.agency = {
+        choice: String(agency.choice ?? '').trim().slice(0, 300),
+        cost: String(agency.cost ?? '').trim().slice(0, 300),
+      }
+    }
+    if (fields.device !== undefined) target.device = String(fields.device).trim().slice(0, 200)
+    if (fields.castUsed !== undefined) {
+      target.castUsed = Array.isArray(fields.castUsed) ? fields.castUsed.map((name) => String(name).trim()).filter(Boolean).slice(0, 20) : []
+    }
+    if (fields.newNamed !== undefined) {
+      target.newNamed = Array.isArray(fields.newNamed) ? fields.newNamed.map((name) => String(name).trim()).filter(Boolean).slice(0, 10) : []
+    }
     if (fields.beats !== undefined) {
       target.beats = Array.isArray(fields.beats)
         ? fields.beats.slice(0, 12).map((beat) => ({
@@ -6935,6 +7014,53 @@ export class NovelWriterService {
       }
     }
     return { movedDir, movedState }
+  }
+
+  /** 只删章纲（不动正文）；正文存在时必须 force，且默认不重排章号，避免孤儿目录。 */
+  async deleteOutlineChapter(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    if (!Number.isFinite(number) || number < 1) throw new Error('请指定要删除的章号')
+    const outline = await this.readJson(agent, 'story/plot/outline.json')
+    const volumes = Array.isArray(outline?.volumes) ? outline.volumes : []
+    const chapter = volumes.flatMap((volume) => volume.chapters ?? []).find((item) => Number(item.number) === number)
+    if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const paths = this.chapterPaths(number)
+    const draft = await this.readText(agent, paths.draft).catch(() => null)
+    const final = await this.readText(agent, paths.final).catch(() => null)
+    const hasText = Boolean(draft || final)
+    if (hasText && options.force !== true) throw new Error(`第 ${number} 章已有正文；如确定只删章纲，请传 force=true（正文会保留）`)
+    const renumber = options.renumber !== false && !hasText
+    const allBefore = volumes.flatMap((volume) => volume.chapters ?? [])
+    const maxNumberBefore = allBefore.reduce((max, item) => Math.max(max, Number(item.number) || 0), 0)
+    for (const volume of volumes) {
+      volume.chapters = (volume.chapters ?? []).filter((item) => Number(item.number) !== number)
+    }
+    if (renumber) {
+      for (const volume of volumes) {
+        for (const item of volume.chapters ?? []) {
+          const current = Number(item.number) || 0
+          if (current > number) item.number = current - 1
+        }
+      }
+    }
+    outline.status = 'candidate'
+    outline.updatedAt = now()
+    const store = await this.storeFor(agent)
+    store.tx(() => {
+      store.deleteOutlineChapter(number)
+      if (renumber) {
+        for (let current = number + 1; current <= maxNumberBefore; current += 1) {
+          store.renameChapterRows(current, current - 1)
+        }
+      }
+      store.writeOutline(outline)
+      store.reindexOutline()
+      store.writeStateMeta(now())
+    })
+    store.checkpoint()
+    await this.pruneOutlineAudit(agent).catch(() => {})
+    return { deleted: number, renumbered: renumber, hasText }
   }
 
   /**
@@ -8504,6 +8630,7 @@ export class NovelWriterService {
    */
   async diagnoseChapter(agent, options = {}, signal) {
     await this.assertInitialized(agent)
+    throwIfAborted(signal)
     const number = Number(options.number)
     if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
     const detail = await this.chapterDetail(agent, number)
@@ -8565,6 +8692,7 @@ export class NovelWriterService {
     if (runLogic) {
       this.reportStage('diagnosing', '逻辑审查')
       const logicSystem = await this.systemFor(agent, 'logicAudit', LOGIC_AUDIT_SYSTEM_PROMPT)
+      throwIfAborted(signal)
       try {
         const generated = await this.callJsonModel(agent, {
           kind: 'chapter.logic-audit',
@@ -8592,6 +8720,7 @@ export class NovelWriterService {
     if (runReview) {
       this.reportStage('diagnosing', '统一审校')
       const reviewSystem = await this.systemFor(agent, 'review', CHAPTER_REVIEW_SYSTEM_PROMPT)
+      throwIfAborted(signal)
       try {
         const generated = await this.callJsonModel(agent, {
           kind: 'chapter.review',
@@ -8766,6 +8895,7 @@ export class NovelWriterService {
    */
   async repairChapter(agent, options = {}, signal) {
     await this.assertInitialized(agent)
+    throwIfAborted(signal)
     const number = Number(options.number)
     if (!Number.isFinite(number) || number < 1) throw new Error('请指定章号')
     const mode = options.mode === 'prescribe' ? 'prescribe' : 'auto'
@@ -8826,6 +8956,7 @@ export class NovelWriterService {
         storyContext: {},
         instruction: '',
         stage: 'fix',
+        signal,
       }).catch(() => null)
       const userText = [
         `第 ${number} 章《${detail.chapter.title || '未命名'}》`,
@@ -8952,6 +9083,7 @@ export class NovelWriterService {
       storyContext: fixStoryContext,
       instruction,
       stage: 'fix',
+      signal,
     })
     if (
       initialDetail.draft &&
@@ -9453,6 +9585,7 @@ ${sections.join('\n')}
       storyContext,
       instruction: options.instruction,
       stage: 'draft',
+      signal,
     })
     const system = await this.systemFor(agent, 'draft', CHAPTER_SYSTEM_PROMPT)
     const userText = buildChapterUserPrompt({
@@ -9759,6 +9892,7 @@ ${sections.join('\n')}
       storyContext,
       instruction,
       stage: 'revise',
+      signal,
     })
     const styleProfile = await this.getStyleProfile(agent).catch(() => null)
     const previousState = number > 1 ? await this.chapterState(agent, number - 1).catch(() => null) : null
@@ -11334,8 +11468,9 @@ ${sections.join('\n')}
     return { revised, stale, skipped }
   }
 
-  async approveChapter(agent, options = {}) {
+  async approveChapter(agent, options = {}, signal) {
     await this.assertInitialized(agent)
+    throwIfAborted(signal)
     const number = Number(options.number ?? options.chapter ?? options.chapterNumber)
     const { chapter } = await this.findOutlineChapter(agent, number)
     if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
@@ -11356,7 +11491,7 @@ ${sections.join('\n')}
     }
     this.reportStage('summary', '生成本章摘要')
     // 摘要生成（模型调用）在事务外，写库与状态更新进一个事务。
-    const summary = await this.summarizeChapter(agent, { number, text: draft, deferWrite: true }).catch(() => null)
+    const summary = await this.summarizeChapter(agent, { number, text: draft, deferWrite: true }, signal).catch(() => null)
     if (summary) {
       meta.summary = summary.summary
       meta.summaryAt = summary.generatedAt

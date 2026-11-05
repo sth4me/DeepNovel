@@ -72,8 +72,8 @@ assert.ok(rhythmText.includes('不要重复调用'), '工具内部联动不应�
 const guard = sections.find((section) => section.name === 'deepnovel:outline-repair-guard')
 assert.ok(guard, '应有 outline-repair-guard 段')
 const guardText = guard.text()
-assert.ok(guardText.includes('action=update'), '应优先 update')
-assert.ok(guardText.includes('1–3 章'), 'update 范围应为 1–3 章')
+assert.ok(guardText.includes('action=update'), '应允许 update 修正明确错误')
+assert.ok(guardText.includes('不要用 update 替生成模型设计新剧情'), 'update 不应替生成模型构思剧情')
 assert.ok(guardText.includes('≥3 章'), '成规模才 regenerate')
 assert.ok(guardText.includes('不要自动 repair/regenerate'), 'audit 后不自动修复')
 assert.ok(guardText.includes('先说明影响范围'), '重规划要说明影响')
@@ -88,7 +88,8 @@ const fieldProps = outlineTool.parameters.properties.fields.properties
 for (const key of ['title', 'synopsis', 'change', 'storyQuestion', 'promise', 'beats', 'wordBudget']) {
   assert.ok(fieldProps[key], `fields 应支持 ${key}`)
 }
-assert.ok(outlineTool.description.includes('action=update 首选'), '描述应写明 update 首选')
+assert.ok(outlineTool.description.includes('只用于用户明确指定的局部修改'), '描述应限定 update 的用途')
+assert.ok(outlineTool.description.includes('不要替它设计剧情方案'), '描述应禁止助手替生成模型设计剧情')
 assert.ok(outlineTool.description.includes('成规模'), '描述应说明成规模才 regenerate')
 
 // ---------- 4) update 调用参数：真实改单章不改动其它章 ----------
@@ -103,6 +104,13 @@ assert.equal(chaptersAfter.find((item) => Number(item.number) === 1).status, 'ca
 // chapterId 定位
 const byId = await outlineTool.execute({ action: 'update', chapterId: 'ch-002', fields: { title: '新标题' } }, { agent: project, signal: null })
 assert.equal(byId.title, '新标题')
+// 章纲 extra 字段可局部修补，不需要 shell/直接改库
+const byExtra = await outlineTool.execute({ action: 'update', number: 1, fields: { agency: { choice: '当众扣下三样', cost: '得罪霍崇山' }, device: '座次' } }, { agent: project, signal: null })
+assert.equal(byExtra.agency?.choice, '当众扣下三样')
+assert.equal(byExtra.device, '座次')
+const unknownField = await outlineTool.execute({ action: 'update', number: 1, fields: { nope: 1 } }, { agent: project, signal: null })
+assert.equal(unknownField.ok, false)
+assert.ok(String(unknownField.error).includes('不支持字段'), '未知字段应明确报错而不是静默丢弃')
 
 // ---------- 5) 缺参报错（可读错误，不崩） ----------
 const noTarget = await outlineTool.execute({ action: 'update', fields: { title: 'x' } }, { agent: project, signal: null })

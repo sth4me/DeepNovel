@@ -139,6 +139,8 @@
 
 - 大纲修复版本化：`scripts/test-outline-repairs.mjs`——improved（问题数下降且无新增）自动应用并写回 outline/audit、存 `status:'applied'` 版本；regressed / mixed / audit-unavailable 保持当前 outline 与 audit 一致、修复结果存 `status:'candidate'` 版本（含 outlineBefore/After、auditBefore/After、diff、summary、issuesBefore/After、newIssues）；`apply-revision` / `discard-revision` 按 revisionId 应用或丢弃；版本目录 `story/plot/revisions/` 与 index 保留最近 20 个；`novel_outline` enum 含 revisions/revision/apply-revision/discard-revision；10157 文案含 applied 语义（true 列修复章与 X→Y；false 说明候选 versionId、X→Y、新增 N，让用户选 apply/discard/按 diff update，不立刻重复 repair）；客户端 toast 区分「已自动应用」与「已保存为候选」且无回滚文案；`scripts/test-outline-repair-audit.mjs` 覆盖回滚/成功 audit 一致性；全套 61 项测试通过。
 
+- 中断与 CRUD：`scripts/test-cancel-signal.mjs` 验证 abort 后 `callModel` 在毫秒级以 `NOVEL_WRITER_CANCELLED` 退出、`novel_diagnose`/`novel_repair` 透传 `exec.signal`、用户中断=放弃计划与工作范围提示；`scripts/test-tool-crud.mjs` 验证构思 `update/delete`、文风 `update/delete`、章纲只删章纲并重排、素材 save/update/delete，以及 `novel_outline` / `novel_cast` / `novel_material` 的新动作声明；全套 65 项测试通过（`test-api.mjs` 需项目路径参数，单独运行）。
+
 ## 错误处理
 
 - 空输出且 `max-tokens` 自动加倍预算重试。

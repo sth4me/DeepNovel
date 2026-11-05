@@ -8,24 +8,41 @@
 |---|---|
 | `novel_status` | 项目初始化状态与各阶段产物 |
 | `novel_init` | 初始化当前目录：创建 `story/` 目录骨架与项目数据库（`story/project.db`）；已初始化时只返回现状，不覆盖数据 |
-| `novel_premise` | 构思：生成候选、确认候选、读取状态 |
-| `novel_style` | 文风：模板列表、套用模板、保存自定义模板、确认契约、读取状态；`profile-build`（最近定稿统计风格指纹，只统计不改文）/ `profile-get`（读取已存指纹） |
-| `novel_outline` | 章纲：`update`（**首选**——改指定 1–3 章的 title / synopsis / change / storyQuestion / promise / beats / wordBudget / `time`，`chapterId` 或 `number` 二选一，只动局部；改完自动清掉该章旧审核问题并返回 `resolvedIssues`）；`volume-plan`（进入新卷前返回 2–3 个卷目标候选，不写盘）/ `volume-select`（按 `index` 选候选或 `overrides` 修订卷目标后写盘，记录 `whyNow` / `goalRevisedAt`）/ `volume-end`（标记卷收束章：`volumeId?` / `chapterNumber?`，缺省卷末章；全卷仅一章 `volumeEnd`，置 `pendingNextVolume`）；`generate` / `regenerate`（仅连续 ≥3 章崩坏 / 整卷崩 / 用户明确要求，先说明影响范围）；`commit` / `status` / `move` / `audit` / `repair`（生成候选修复版本：`applied` / `status` / `versionId` / `diff` / `summary` / `audit` / `candidateAudit`；改进且无新增问题自动应用，否则保留候选不覆盖当前大纲）；`revisions` / `revision`（`revisionId`，看 diff 与前后 audit）/ `apply-revision` / `discard-revision`（`revisionId`，应用或丢弃候选版本）；`dismiss`（忽略问题：`ids` / `chapter` / `all=true`，写入 `dismissed`，重审不会复活）；每章可带 `change` / `storyQuestion` / `promise` / `beats` / `time` / `castUsed` / `newNamed` / `agency` / `device`；生成结果带 `castViolations`；`audit` 返回一致性 `issues`（≤30）与结构 `structureIssues`（≤10，超出截断），问题有稳定 id；**audit 后不自动 repair / regenerate**，等用户确认 |
+| `novel_premise` | 构思：生成候选、确认候选、`update`（改标题/构思/主角/题材/篇幅）、`delete`（清空构思）、读取状态 |
+| `novel_style` | 文风：模板列表、套用模板、保存自定义模板、`update`（局部更新契约字段）、`delete`（清空契约）、`delete-template`、确认契约、读取状态；`profile-build`（最近定稿统计风格指纹，只统计不改文）/ `profile-get`（读取已存指纹） |
+| `novel_outline` | 章纲：`generate`（内容由生成模型依据上下文决定；`instruction` 只写必须遵守/禁止/用户明确事实，不写「本章应该发生什么」）/ `regenerate`（仅连续 ≥3 章崩坏 / 整卷崩 / 用户明确要求）；`update`（只用于用户明确指定的局部修改或修正事实/时间线错误；支持 title / synopsis / change / storyQuestion / promise / beats / wordBudget / `time` / `agency` / `device` / `castUsed` / `newNamed`，未知字段报错）；`delete`（只删章纲，有正文需 `force`，无正文时默认重排章号）；`volume-plan`（进入新卷前返回 2–3 个卷目标候选，不写盘）/ `volume-select`（按 `index` 选候选或 `overrides` 修订卷目标后写盘，记录 `whyNow` / `goalRevisedAt`）/ `volume-end`（标记卷收束章）/ `volume-update` / `volume-delete`；`commit` / `status` / `move` / `audit` / `repair`（生成候选修复版本：`applied` / `status` / `versionId` / `diff` / `summary` / `audit` / `candidateAudit`；改进且无新增问题自动应用，否则保留候选不覆盖当前大纲）；`revisions` / `revision`（`revisionId`，看 diff 与前后 audit）/ `apply-revision` / `discard-revision`；`dismiss`（忽略问题：`ids` / `chapter` / `all=true`，写入 `dismissed`，重审不会复活）；生成结果带 `castViolations`；`audit` 返回一致性 `issues`（≤30）与结构 `structureIssues`（≤10，超出截断），问题有稳定 id；**audit 后不自动 repair / regenerate**，等用户确认 |
 | `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系；`commit` 确认设定后**必须停**，等用户明确要求再生成章纲 |
 | `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `revision-learn`（分析草稿→定稿差异、提炼写作偏好，只返回建议、不自动写入）/ `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
-| `novel_cast` | 按卷选角：`list`（某卷阵容与龙套）/ `plan`（从角色池为本卷选角：核心阵容 ≤6、具名龙套 ≤3、新增命名角色 ≤2）/ `update`（调整核心阵容，名称必须在角色池、超上限报错）；角色池是 `bible`，不是本卷阵容；龙套可命名但不得承担关键转折 |
+| `novel_cast` | 按卷选角：`list` / `plan`（核心阵容 ≤6、具名龙套 ≤3、新增命名角色 ≤2）/ `update`（调整阵容与 `extras`，名称必须在角色池）/ `delete`（清空本卷阵容与龙套）；角色池是 `bible`，不是本卷阵容 |
+| `novel_material` | 素材库：`list` / `save`（新增或按 id 更新 title/kind/content/tags/source）/ `delete`；素材是参考，不会自动成为本书设定 |
 | `novel_state` | 人物状态：`get`（某章结束时处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点）/ `update`（按该章正文提取并写盘；写下一章前先 get，写完 update） |
 | `novel_issues` | 待处理问题清单：`list`（`limit` 默认 20）；聚合大纲结构/一致性、字数不足、人物状态未更新、选角泄漏；每项含章节号/类型/说明/建议动作（replan / repair / audit / expand / update-state；大纲问题另含 `dismiss` 忽略）；只提示，不改任何内容；结构问题优先建议用 `novel_outline action=update` 改 1–3 章，成规模（连续 ≥3 章 / 整卷）才 generate / regenerate |
 | `novel_facts` | 事实/术语库：`list` / `save` / `delete`；kind 术语/硬事实/安全/称呼，可全局或按章（`chapter`），`must` 表示生成时必须遵守 |
 | `novel_constraints` | 只读约束检查：`check`（`number` / `instruction`）返回 hardRules（≤12）、conflicts（含裁决与理由）、warnings；不生成正文 |
 | `novel_diagnose` | 只读诊断某章：事实/术语违规、逻辑问题（因果/时间/空间/信息差/动机/能力/设定）、连续性（error 硬 / warn 软）、文风与 AI 味（软）、故事性（全软，`story`：变化/读者问题/承诺/因果/刻意感/`endingHook`）与风格偏离（`styleDrift`，scope=all）；返回 issues（hard 全量、soft ≤10）、scores/stats 与 `suggestedAction`（repair / revise / ignore / null） |
-| `novel_repair` | 定向修复：`auto` 只修 hard（最小 diff、复检、未降低则回滚，≤2 轮；soft 只提示）；`prescribe` 只返回处方（`autoFixable` / `risk`），不改正文；结构问题（角色超载/桥段重复/主角被动/承诺未推进/调性漂移）不在这里修，改用 `novel_outline` 按 replan 重规划 |
+| `novel_repair` | 定向修复：`auto` 只修 hard（最小 diff、复检；改进且无新增问题自动应用，否则保留候选版本，≤2 轮；soft 只提示）；`prescribe` 只返回处方（`autoFixable` / `risk`），不改正文；结构问题改用 `novel_outline` 按 replan 重规划 |
 | `novel_craft` | 兼容入口：写作技法卡片列表、按任务读取、推荐（新方案用 skill 工具按需加载 `craft-*`） |
 | `novel_query` | 只读查询项目数据：14 个 `kind`（见下方「查询面」） |
 
 ## 交互节奏（一次一步）
 
-每轮只做用户明确要求的那一步，完成后停下汇报结果并给出下一步选项；不要自动进入下一阶段（构思→设定→大纲→正文→审校→修订→定稿）。只有用户明确要求「连续做完 / 批量」，或工具链式必须（如先 `read` 再 `patch`）时才继续。任何确认 / commit（构思、文风、设定、章纲、定稿）完成后必须停，不得顺手生成下一步。工具内部的自动联动（如 draft 自动更新人物状态、audit 自动清理过期项）不要重复调用或再汇报成新动作。不确定用户是否要继续时先问，不要替用户决定。
+每轮只做用户明确要求的那一步，完成后停下汇报结果并给出下一步选项；不要自动进入下一阶段（构思→设定→大纲→正文→审校→修订→定稿）。只有用户明确要求「连续做完 / 批量」，或工具链式必须（如先 `read` 再 `patch`）时才继续。任何确认 / commit（构思、文风、设定、章纲、定稿）完成后必须停，不得顺手生成下一步。工具内部的自动联动（如 draft 自动更新人物状态、audit 自动清理过期项）不要重复调用或再汇报成新动作。生成内容由生成工具依据上下文决定，助手不要自己先想好剧情 / 方案再让工具照写。不确定用户是否要继续时先问，不要替用户决定。
+
+## 生成职责边界
+
+大纲与正文的**具体内容**（发生什么、桥段、事件顺序、人物怎么选）由生成工具依据项目上下文与约束自行决定。助手只提供三类输入：
+
+1. 项目上下文（先用 `novel_query` / `novel_outline action=status` / `novel_chapter action=read` 查清）；
+2. 必须遵守与禁止的约束（含插件默认约束：本卷阵容、时间线、桥段不重复、结构问题、项目写作要求等）；
+3. 用户本轮的明确要求。
+
+助手不要替生成模型设计剧情方案、桥段、事件顺序或人物动机，也不要把这些写成 `instruction` 让工具照写。`novel_outline action=update` 只用于用户明确指定的修改或修正已知事实 / 时间线错误，不用于主动构思剧情；`generate` / `draft` 的 `instruction` 只写「必须遵守 / 禁止 / 用户明确指定的事实」，不写「本章应该发生什么」。
+
+## 中断与取消
+
+DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修复、大纲生成/审核、正文草稿/修订/扩写/去 AI 味、构思候选、卷规划等长任务都会在入口、每轮和模型流中检查取消。`callModel` 在等待模型 chunk 时与 abort 竞速，即使提供方不响应也会立即以 `NOVEL_WRITER_CANCELLED` 退出。任务坞里的助手任务也可以直接「取消」，会中止对应插件锁控制器。
+
+用户主动停止 = 放弃当前计划：不要诊断、补跑或继续上一轮任务；只有模型/服务端输出被中断时才按小步 patch 恢复。
 
 ## 约束优先级
 

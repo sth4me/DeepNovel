@@ -191,6 +191,11 @@ export class NovelStore {
     return this.readPremise()
   }
 
+  deletePremise() {
+    this.run('DELETE FROM premise WHERE id = 1')
+    return true
+  }
+
   /* ------------------------------ 文风 ------------------------------ */
 
   readStyleContract() {
@@ -227,6 +232,11 @@ export class NovelStore {
       source.updatedAt ?? timestamp,
     )
     return this.readStyleContract()
+  }
+
+  deleteStyleContract() {
+    this.run('DELETE FROM style_contract WHERE id = 1')
+    return true
   }
 
   listStyleTemplates() {

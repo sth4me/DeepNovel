@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.1.23
+
+- **中断/取消补齐**：`novel_diagnose` / `novel_repair` 之前没有把 `exec.signal` 传进服务，DSH 停止对它们无效；现在透传并加检查点。`callModel` 改为手动迭代 + 与 abort 竞速，provider 不响应也会立即以 `NOVEL_WRITER_CANCELLED` 退出，不再等整段生成；定稿摘要、约束语义预检也接入取消。任务坞的助手任务可直接取消（0.1.22 已接通锁控制器，本轮补齐工具侧信号）。
+- **助手职责与边界**：新增「生成职责边界」与「工作范围边界」提示——大纲/正文内容由生成工具依据上下文决定，助手只给上下文、必须遵守/禁止、用户明确要求；不替生成模型设计剧情；用户主动停止=放弃当前计划，不诊断/补跑；问句只回答不调工具；只通过 `novel_*` 读写项目数据，禁止访问 DSH/插件/数据库，web 保留查资料。
+- **update / delete 补齐**：`novel_premise` 增加 `update`（标题/构思/主角/题材/篇幅）与 `delete`；`novel_style` 增加 `update` / `delete` / `delete-template`；`novel_outline` 的 `update` 支持 `agency` / `device` / `castUsed` / `newNamed`，未知字段明确报错，并新增 `delete`（只删章纲，有正文需 `force`）、`volume-update`、`volume-delete`；`novel_cast` 增加 `delete` 与 `extras` 更新；新增 `novel_material`（list/save/delete）。这样修章纲字段不再需要 shell 或直接改数据库。
+- **测试与文档**：新增 `test-cancel-signal`（abort 立即退出、信号透传）、`test-tool-crud`（构思/文风/章纲/素材 update/delete）、`test-assistant-generation-boundary`；同步调整 `test-assistant-rhythm`；AI-ASSISTANT 文档补工具动作与中断说明。
+
 ## 0.1.22
 
 - **任务坞不再遮挡 AI 对话按钮**：任务坞从视口右下角移到写作台左下角（`.nw-app` 内绝对定位），默认收起为小条、展开向上生长；窄屏改为左侧底部 `bottom:76px` 并限制高度，避开宿主右下角 AI 浮钮。此前只调层级、位置未动，所以仍然遮挡。
