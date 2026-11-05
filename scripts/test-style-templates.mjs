@@ -3,11 +3,12 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { STYLE_TEMPLATES, buildChapterUserPrompt, formatStyleFields, findStyleTemplate, listStyleTemplates } from '../templates.js'
+import { STYLE_AUDIT_SYSTEM_PROMPT, STYLE_CONTRACT_SYSTEM_PROMPT, STYLE_TEMPLATES, buildChapterUserPrompt, formatStyleFields, findStyleTemplate, listStyleTemplates } from '../templates.js'
 
 const REQUIRED_TEXT_FIELDS = ['voice', 'diction', 'imagery', 'sensoryFocus', 'dialogueStyle', 'pacing', 'notes']
 const REQUIRED_LIST_FIELDS = ['must', 'never', 'adjust', 'bannedWords', 'bannedPatterns', 'genreFit', 'avoidGenre']
 const REQUIRED_SCALAR_FIELDS = ['pov', 'tense', 'chapterWords', 'sentenceLength', 'paragraphLength', 'dialogueRatio', 'metaphorDensity', 'chapterTitleStyle']
+const REQUIRED_DIMENSION_FIELDS = ['narrative', 'syntax', 'dialogue', 'description', 'emotion', 'diction', 'pacing']
 
 assert.ok(STYLE_TEMPLATES.length >= 8, '至少 8 个内置模板')
 
@@ -39,6 +40,27 @@ for (const template of STYLE_TEMPLATES) {
   assert.ok(template.fields.must.length >= 3, `${template.id} must 至少 3 条`)
   assert.ok(template.fields.never.length >= 3, `${template.id} never 至少 3 条`)
   assert.ok(template.fields.genreFit.length >= 2, `${template.id} genreFit 至少 2 项`)
+  for (const key of REQUIRED_DIMENSION_FIELDS) {
+    const value = template.fields[key]
+    assert.ok(typeof value === 'string' && value.length >= 12, `${template.id} 维度字段 ${key} 太短或缺失`)
+  }
+  const shape = template.fields.chapterShape
+  assert.ok(shape && typeof shape === 'object', `${template.id} 缺少 chapterShape`)
+  for (const key of ['opening', 'middle', 'ending']) {
+    assert.ok(typeof shape[key] === 'string' && shape[key].trim().length >= 6, `${template.id} chapterShape.${key} 太短`)
+  }
+  const anchors = template.fields.anchors
+  assert.ok(Array.isArray(anchors) && anchors.length === 2, `${template.id} anchors 应为 2 段`)
+  for (const anchor of anchors) {
+    assert.ok(typeof anchor === 'string' && anchor.length >= 80 && anchor.length <= 130, `${template.id} 锚点长度应为 80–130 字，实际 ${anchor.length}`)
+  }
+  assert.equal(anchors[0] === anchors[1], false, `${template.id} 两段锚点不能相同`)
+  const selfCheck = template.fields.selfCheck
+  assert.ok(Array.isArray(selfCheck) && selfCheck.length === 5, `${template.id} selfCheck 应为 5 条`)
+  for (const item of selfCheck) assert.ok(typeof item === 'string' && item.trim().length >= 6, `${template.id} selfCheck 有空项`)
+  const forbidden = template.fields.forbidden
+  assert.ok(Array.isArray(forbidden) && forbidden.length >= 3 && forbidden.length <= 5, `${template.id} forbidden 应为 3–5 条`)
+  for (const item of forbidden) assert.ok(typeof item === 'string' && item.trim().length >= 4, `${template.id} forbidden 有空项`)
 }
 
 // 每类字段都能渲染成可读文本
@@ -52,6 +74,19 @@ assert.ok(rendered.includes('【按场景调节】'), '渲染包含按场景调�
 assert.ok(rendered.includes('【禁用词】'), '渲染包含禁用词')
 assert.ok(rendered.includes('【额外要求】'), '渲染包含额外要求')
 assert.ok(!rendered.includes('{'), '渲染结果不应是 JSON')
+for (const template of STYLE_TEMPLATES) {
+  const output = formatStyleFields(template.fields)
+  for (const label of ['【叙述视角】', '【句法节奏】', '【对白】', '【描写与感官】', '【情绪呈现】', '【章节形态】', '【风格锚点', '【自检】']) {
+    assert.ok(output.includes(label), `${template.id} 渲染缺少 ${label}`)
+  }
+  assert.ok(output.includes(template.fields.anchors[0].slice(0, 12)), `${template.id} 渲染应包含第一段锚点`)
+  assert.ok(output.includes(template.fields.anchors[1].slice(0, 12)), `${template.id} 渲染应包含第二段锚点`)
+  assert.ok(output.includes(template.fields.selfCheck[0].slice(0, 8)), `${template.id} 渲染应包含自检条目`)
+}
+const renderedFast = formatStyleFields(fast.fields)
+assert.ok(renderedFast.includes('【章节形态】'), 'fast-web 章节形态可渲染')
+assert.ok(renderedFast.includes('章首：'), '章节形态应含章首')
+assert.ok(renderedFast.includes('章尾：'), '章节形态应含章尾')
 
 // 单独展示 notes 时可用 skipNotes 避免重复
 const noNotes = formatStyleFields(fast.fields, { skipNotes: true })
@@ -89,6 +124,9 @@ assert.ok(chapterPrompt.includes('【必须贯彻】'), '章节提示词包含�
 assert.ok(chapterPrompt.includes('【绝对禁止】'), '章节提示词包含绝对禁止')
 assert.ok(chapterPrompt.includes('【文风示例'), '章节提示词包含文风示例')
 assert.ok(!chapterPrompt.includes('"must":'), '文风契约不应是 JSON')
+assert.ok(chapterPrompt.includes('【风格锚点'), '章节提示词应包含风格锚点')
+assert.ok(chapterPrompt.includes(fast.fields.anchors[0].slice(0, 16)), '章节提示词应包含锚点示例内容')
+assert.ok(chapterPrompt.includes('【自检】'), '章节提示词应包含自检清单')
 
 // service.updateStyleFields 接受新字段（旧契约 + 新字段合并）
 const home = await mkdtemp(join(tmpdir(), 'deepnovel-style-home-'))
@@ -138,6 +176,35 @@ assert.equal(updated.fields.voice, '冷静直白')
 assert.deepEqual(updated.fields.must, ['开场 200 字内出现冲突'])
 assert.deepEqual(updated.fields.genreFit, ['都市'])
 assert.equal(updated.fields.pov, 'third-limited', '旧字段应保留')
+const updatedDimensions = await service.updateStyleFields(project, {
+  narrative: '第三人称限知，叙述距离贴',
+  syntax: '短句为主',
+  dialogue: '对白占 40%',
+  description: '视觉优先',
+  emotion: '用动作呈现',
+  chapterShape: { opening: '动作开场', middle: '目标受挫', ending: '动作收束' },
+  anchors: ['原创示例甲，写在雨夜的巷口。', '原创示例乙，写在清晨的站台。'],
+  selfCheck: ['是否有短句推进', '是否没有直述情绪', '对白是否承担冲突', '章尾是否停在动作上', '比喻是否来自日常物'],
+  forbidden: ['连续大段心理描写', '章末总结升华', '用巧合解决冲突'],
+})
+assert.equal(updatedDimensions.fields.narrative, '第三人称限知，叙述距离贴', '新字段 narrative 应可写')
+assert.deepEqual(updatedDimensions.fields.chapterShape, { opening: '动作开场', middle: '目标受挫', ending: '动作收束' })
+assert.equal(updatedDimensions.fields.anchors.length, 2)
+assert.equal(updatedDimensions.fields.selfCheck.length, 5)
+
+const contractPrompt = STYLE_CONTRACT_SYSTEM_PROMPT
+for (const keyword of ['narrative', 'syntax', 'dialogue', 'description', 'emotion', 'diction', 'pacing', 'chapterShape', 'anchors', 'selfCheck', 'forbidden']) {
+  assert.ok(contractPrompt.includes(keyword), `文风契约生成提示词应包含维度 ${keyword}`)
+}
+assert.ok(contractPrompt.includes('80–120'), '生成提示词应给出锚点长度要求')
+assert.ok(contractPrompt.includes('可执行'), '生成提示词应要求可执行字段')
+
+const auditPrompt = STYLE_AUDIT_SYSTEM_PROMPT
+assert.ok(auditPrompt.includes('dimensions'), '审校提示词应输出 dimensions')
+for (const label of ['叙述视角', '句法节奏', '对白', '描写与感官', '情绪呈现', '用词', '节奏', '章节形态']) {
+  assert.ok(auditPrompt.includes(label), `审校提示词应包含维度 ${label}`)
+}
+assert.ok(auditPrompt.includes('改进建议') || auditPrompt.includes('advice'), '审校提示词应要求每维给改进建议')
 
 
 console.log(`style template tests passed (${STYLE_TEMPLATES.length} templates)`)

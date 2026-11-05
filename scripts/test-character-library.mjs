@@ -123,7 +123,7 @@ const savedEntry = afterSave.prompts.find((item) => item.key === 'draft')
 assert.equal(savedEntry.customized, true)
 assert.equal(savedEntry.baseRevision, 1)
 assert.equal(savedEntry.defaultUpdated, false)
-assert.equal(await service.systemFor(project, 'draft', '内置默认'), '自定义正文 system')
+assert.ok((await service.systemFor(project, 'draft', '内置默认')).endsWith('自定义正文 system'), 'systemFor 应返回自定义覆盖（前置 doctrine）')
 
 // 模拟「基于旧版本的覆盖」→ defaultUpdated=true（通过 service 写覆盖存储）
 const writeOverrides = async (overrides) => {
@@ -139,11 +139,11 @@ const defaultText = (await service.promptCatalog(project)).prompts.find((item) =
 const raw2 = await service.readSystemOverrides(project)
 raw2.draft = { text: defaultText, baseHash: 'whatever', baseRevision: 0 }
 await writeOverrides(raw2)
-assert.equal(await service.systemFor(project, 'draft', defaultText), defaultText)
+assert.ok((await service.systemFor(project, 'draft', defaultText)).endsWith(defaultText), '应自动跟进当前默认')
 
 // 旧版纯字符串格式仍可读
 await service.writeJson(project, 'story/prompts/system.json', { draft: '旧格式覆盖' })
-assert.equal(await service.systemFor(project, 'draft', defaultText), '旧格式覆盖')
+assert.ok((await service.systemFor(project, 'draft', defaultText)).endsWith('旧格式覆盖'))
 const legacyEntry = (await service.promptCatalog(project)).prompts.find((item) => item.key === 'draft')
 assert.equal(legacyEntry.customized, true)
 

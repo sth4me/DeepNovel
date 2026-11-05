@@ -101,7 +101,7 @@ assert.deepEqual(loaded.metrics, built.metrics)
 // ---------- 4) draft prompt 含风格指纹块（在文风契约之后） ----------
 let draftPrompt = ''
 service.callModel = async (agent, options) => {
-  draftPrompt = options.messages?.[0]?.content?.[0]?.text ?? ''
+  if (options.task === 'draft') draftPrompt = options.messages?.[0]?.content?.[0]?.text ?? ''
   return { text: '他推门进去。屋里没人。他坐下。', usage: null, model: null, durationMs: 0 }
 }
 const wrap = (parsed) => ({ parsed, first: { text: '{}', model: null, durationMs: 0 }, runId: 'run-test', usage: null })

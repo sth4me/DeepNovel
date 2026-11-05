@@ -8,6 +8,15 @@
 - 「保存为模板」写入 `style_templates` 表（含示例段落）；下次可在模板列表套用。
 - 模板可**导出**为 JSON（复制剪贴板）或**导入** JSON 为新的自定义模板。
 - 自定义模板可删除；内置模板不可删除。
+- 内置模板升级为专业档案：`narrative`（叙述视角）/ `syntax`（句法节奏）/ `dialogue`（对白）/ `description`（描写与感官）/ `emotion`（情绪呈现）/ `chapterShape{opening,middle,ending}`（章节形态）/ `anchors`（2 段原创锚点，进章节 prompt）/ `selfCheck` / `forbidden`；旧字段（视角/时态/字数等）仍可改。
+
+## 角色与选角
+
+角色是**角色池**（bible），不是本卷阵容：
+
+- 本卷可具名角色 = 核心阵容（≤6，承担主线/关键转折）+ 具名龙套（≤3，可命名、需登记、可反复出现但不得承担关键转折）；名单外无名路人一律身份指代（不限量）；每卷新增具名角色 ≤2 且必须登记。阵容/龙套存 `volume.cast` / `volume.extras`，用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`）。默认上限 `CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 }`，当前不可在项目页配置（未来可开放）。
+- 大纲/正文只用本卷可具名角色；未登场角色不出现；正文不给路人取名（用身份指代），未登记命名角色会报 hard 一致性问题。
+- 写下一章前用 `novel_state action=get` 读上一章人物状态（处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点），写完 `action=update` 更新；状态只记录正文实际发生的事。
 
 ## 自动化
 
@@ -19,6 +28,7 @@
 - AI 风格通过线（0–100）
 - 连续写章默认数量
 - 全书目标字数
+- 模型输出上限（`automation.maxTokens`；默认不设置 = 用提供商/模型最大值）
 
 ## 上下文预算
 

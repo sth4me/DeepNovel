@@ -15,7 +15,8 @@
  * 语义预检（可选）失败时降级为仅结构化检测，不阻塞生成。
  */
 
-export const CONSTRAINT_PRIORITY = ['explicit', 'facts', 'bible', 'outline', 'style', 'requirements', 'notes']
+// 优先级（从高到低）：本轮明确要求 > 硬事实 > 项目写作要求（requirements）> 设定 > 章纲 > 文风 > 笔记。
+export const CONSTRAINT_PRIORITY = ['explicit', 'facts', 'requirements', 'bible', 'outline', 'style', 'notes']
 
 const LEVEL_LABELS = {
   explicit: '本轮指令',

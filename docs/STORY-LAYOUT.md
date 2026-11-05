@@ -82,7 +82,7 @@ $DSH_HOME/novel-writer/library/
 
 ## 设定（`bible_entries` 表）
 
-条目按分类存 `bible_entries`（角色、地点、规则、势力、物品），确认状态与更新时间在 `bible_meta`。角色条目字段：`id / name / role / description / traits / goal`。
+条目按分类存 `bible_entries`（角色、地点、规则、势力、物品），确认状态与更新时间在 `bible_meta`。角色条目字段：`id / name / role / description / traits / goal`，另有 `meta_json` 存角色生命周期：`status`（未登场 / 活跃 / 退场）、`firstChapter`、`importance`（主角/重要配角/配角/龙套）。bible 是**角色池**，本卷阵容在 `volume.cast`。
 
 ## 人物关系（`relations` / `relation_positions` / `relations_meta` 表）
 
@@ -119,9 +119,11 @@ $DSH_HOME/novel-writer/library/
 
 `volumes` 存卷；`outline_chapters` 每个章纲节点包含：
 
-`id / number / status / title / synopsis / wordBudget / change / storyQuestion / promise / beats / inputs / generatedAt / confirmedAt`。
+`id / number / status / title / synopsis / wordBudget / change / storyQuestion / promise / beats / time / inputs / generatedAt / confirmedAt`。
 
-`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。大纲整体的状态与更新时间在 `outline_meta`。
+`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。`time` 是**隐藏时间锚点**（可选）：`{ day（相对本卷开场第几天，0 起或 null）, part（晨/日/暮/夜）, spanDays（0–30）, mode（linear/flashback/parallel） }`——`linear` 章 `day` 递增、同日 `part` 按晨→日→暮→夜，`flashback`/`parallel` 不参与线性顺序；`time` 只存章纲 JSON，不写进 `synopsis`、不写日期代号/时间码。大纲整体的状态与更新时间在 `outline_meta`。
+
+`volumes` 另有本卷**角色三层**（存在 `extra_json`）：核心阵容 `cast`（`[{name, roleInVolume, fromChapter, importance}]`，≤6，承担主线/关键转折）、具名龙套 `extras`（`[{name, roleInVolume, fromChapter, note}]`，≤3，可反复出现但不得承担关键转折）、`castRationale`；名单外无名路人一律身份指代（数量不限）。本卷可具名角色 = 阵容 + 龙套。选角用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`），角色必须来自 bible 角色池；每卷新增具名角色 ≤2 且必须登记。
 
 ## 章节（`chapters/NNN/` + `chapter_*` 表）
 
@@ -135,7 +137,7 @@ $DSH_HOME/novel-writer/library/
 
 ## 状态（`chapter_state` / `state_meta` 表）
 
-`state_meta` 是已定稿章节索引；`chapter_state` 保存本章 outline/meta/summary/cast/time/place/hook。
+`state_meta` 是已定稿章节索引；`chapter_state` 存本章结束时的人物状态快照：`scene{location,time}` + `characters[{name, situation, desire, fear, knowledge{knows,unknown}, relationships, items, injuries, unresolved, nextHook}]` + `summary`（整体 JSON，写盘时阵容外角色会被剔除并 warning）。
 
 ## 素材（`materials` 表）
 

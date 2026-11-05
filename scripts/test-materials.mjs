@@ -50,7 +50,7 @@ legacyDb.prepare('INSERT INTO chapter_meta (number, json, status) VALUES (1, ?, 
 legacyDb.exec('PRAGMA user_version = 2')
 legacyDb.close()
 const legacyStore = await service.storeFor(legacyProject)
-assert.equal(legacyStore.schemaVersion(), 4, '旧库应升级到 v4')
+assert.equal(legacyStore.schemaVersion(), 5, '旧库应升级到 v4'.replace('v4', 'v5'))
 assert.equal(legacyStore.readProject().title, '旧项目', '旧项目数据应保留')
 assert.equal(legacyStore.readChapterMeta(1).title, '旧章', '旧章节数据应保留')
 const legacyMaterial = legacyStore.saveMaterial({ content: '升级后写入的素材' })

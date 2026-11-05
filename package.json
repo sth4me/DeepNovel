@@ -1,6 +1,6 @@
 {
   "name": "@sth4me/deepnovel",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "type": "module",
   "description": "DSH 长篇小说写作插件：主面板写作台、固定流程、设定/章节上下文、质检修复与按任务模型配置。",
@@ -38,7 +38,8 @@
     "locale/*.json",
     "icon.svg",
     "constraints.js",
-    "style-profile.js"
+    "style-profile.js",
+    "writing-doctrine.js"
   ],
   "dsh": {
     "bundle": {

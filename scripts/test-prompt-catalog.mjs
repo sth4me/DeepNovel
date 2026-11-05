@@ -58,7 +58,7 @@ assert.equal(typeof stored.premise.baseHash, 'string')
 const overrides = await service.readSystemOverrides(project)
 assert.equal(overrides.premise.text, '自定义构思提示词')
 assert.equal(overrides.premise.baseRevision, 1)
-assert.equal(await service.systemFor(project, 'premise', premise.default), '自定义构思提示词')
+assert.ok((await service.systemFor(project, 'premise', premise.default)).endsWith('自定义构思提示词'), 'systemFor 应返回自定义覆盖（前置 doctrine）')
 
 // 3) 保存内容与当前默认完全一致时删除覆盖
 await service.saveSystemPrompt(project, { key: 'premise', content: premise.default })
@@ -77,7 +77,7 @@ assert.equal(legacy.premise.baseHash, null)
 assert.equal(legacy.premise.baseRevision, null)
 const legacyCatalog = await service.promptCatalog(project)
 assert.equal(legacyCatalog.prompts.find((item) => item.key === 'premise').content, '旧版覆盖内容')
-assert.equal(await service.systemFor(project, 'premise', premise.default), '旧版覆盖内容')
+assert.ok((await service.systemFor(project, 'premise', premise.default)).endsWith('旧版覆盖内容'))
 
 // 6) 用户覆盖基于旧默认（baseRevision 落后）→ defaultUpdated=true
 await service.writeJson(project, 'story/prompts/system.json', {
@@ -95,7 +95,7 @@ await service.writeJson(project, 'story/prompts/system.json', {
   version: 2,
   overrides: { premise: { text: oldDefault, baseHash: service.hashInputs(oldDefault).slice(0, 16), baseRevision: 1 } },
 })
-assert.equal(await service.systemFor(project, 'premise', premise.default), premise.default)
+assert.ok((await service.systemFor(project, 'premise', premise.default)).endsWith(premise.default), '应自动跟进当前默认')
 
 // 8) 导出带 version 2，导入兼容 v1/v2
 await service.saveSystemPrompt(project, { key: 'premise', content: '自定义构思提示词' })

@@ -954,6 +954,9 @@ export function apply(ctx) {
       health: await service.buildHealthReport(target, snapshot).catch((error) => ({ issues: [], error: String(error?.message ?? error) })),
       dataLayer: await service.dataStatus(target).catch(() => null),
       activeLocks: status.initialized ? listActiveLocks(activeRuns) : [],
+      issues: status.initialized
+        ? await service.issuesSummary(target).catch(() => ({ count: 0, items: [], generatedAt: null }))
+        : { count: 0, items: [], generatedAt: null },
     }
     if (!status.initialized) return data
     const recentRuns = await service.recentRuns(target, 6).catch(() => [])
@@ -1045,6 +1048,22 @@ export function apply(ctx) {
         return service.buildStyleProfile(agent, { count: params.count })
       case 'style-profile-get':
         return { profile: await service.getStyleProfile(agent) }
+      case 'issues-list':
+        return service.issuesSummary(agent, { limit: params.limit })
+      case 'cast-list':
+        return service.listVolumeCast(agent, { volumeId: params.volumeId })
+      case 'cast-plan':
+        return service.planVolumeCast(agent, {
+          fromChapter: params.fromChapter,
+          toChapter: params.toChapter,
+          volumeId: params.volumeId,
+          limit: params.limit,
+          allowNew: params.allowNew,
+          allowExtras: params.allowExtras,
+          instruction: params.instruction,
+        }, signal)
+      case 'cast-update':
+        return service.updateVolumeCast(agent, { volumeId: params.volumeId, cast: params.cast })
       case 'style-samples-save':
         return service.saveStyleSamples(agent, params.samples)
       case 'system-overrides-save':
@@ -1170,6 +1189,8 @@ export function apply(ctx) {
           { fromChapter: params.fromChapter, toChapter: params.toChapter },
           signal,
         )
+      case 'outline-dismiss':
+        return service.dismissOutlineIssues(agent, { ids: params.ids, chapter: params.chapter, all: params.all })
       case 'outline-repair': {
         let issues = Array.isArray(params.issues) ? params.issues : null
         if (!issues) {
@@ -1256,6 +1277,24 @@ export function apply(ctx) {
         })
       case 'volume-plan':
         return service.planVolume(agent, { volumeId: params.volumeId, instruction: params.instruction }, signal)
+      case 'volume-select':
+        return service.selectVolumePlan(agent, {
+          volumeId: params.volumeId,
+          index: params.index,
+          candidates: params.candidates,
+          overrides: params.overrides,
+          instruction: params.instruction,
+        }, signal)
+      case 'outline-volume-end':
+        return service.markVolumeEnd(agent, { volumeId: params.volumeId, chapterNumber: params.chapterNumber })
+      case 'outline-revisions':
+        return service.listOutlineRevisions(agent, { limit: params.limit })
+      case 'outline-revision-get':
+        return service.getOutlineRevision(agent, { id: params.revisionId ?? params.id })
+      case 'outline-revision-apply':
+        return service.applyOutlineRevision(agent, { id: params.revisionId ?? params.id })
+      case 'outline-revision-discard':
+        return service.discardOutlineRevision(agent, { id: params.revisionId ?? params.id })
       case 'volume-delete':
         return service.deleteOutlineVolume(agent, { volumeId: params.volumeId })
       case 'chapter-move':
@@ -1297,6 +1336,10 @@ export function apply(ctx) {
           instruction: params.instruction,
           dryRun: params.dryRun,
         }, signal)
+      case 'chapter-state':
+        return service.chapterState(agent, params.number)
+      case 'chapter-state-update':
+        return service.updateChapterState(agent, { number: params.number }, signal)
       case 'chapter-review':
         return service.chapterReview(agent, { number: params.number }, signal)
       case 'chapter-diagnose':

@@ -2090,6 +2090,90 @@ window.__ModuleLoader__.load({
         setTimeout(() => load().catch(() => {}), 400)
       }
 
+      const runIssueAction = (issueAction) => {
+        const action = String(issueAction?.id ?? '')
+        const params = issueAction?.params ?? {}
+        if (action === 'repair') return run('outline-repair', {}, { toast: '已修复大纲问题' })
+        if (action === 'audit') return run('outline-audit', {}, { toast: '已重新审核' })
+        if (action === 'replan') return run('outline-generate', { ...params, regenerate: true }, { toast: '已按范围重生成章纲' })
+        if (action === 'expand') return run('chapter-draft', { number: params.number }, { toast: `已重新生成第 ${params.number} 章` })
+        if (action === 'update-state') return run('chapter-state-update', { number: params.number }, { toast: `已更新第 ${params.number} 章人物状态` })
+        if (action === 'dismiss') return run('outline-dismiss', { ...params }, { toast: '已忽略这些问题，重审不会再出现' })
+        return null
+      }
+
+      const showIssuesModal = () => {
+        const items = Array.isArray(state?.issues?.items) ? state.issues.items : []
+        const host = document.createElement('div')
+        const backdrop = document.createElement('div')
+        backdrop.className = 'nw-modal-backdrop'
+        const modal = document.createElement('div')
+        modal.className = 'nw-modal'
+        modal.setAttribute('role', 'dialog')
+        modal.setAttribute('aria-modal', 'true')
+        const head = document.createElement('div')
+        head.className = 'nw-row'
+        head.style.justifyContent = 'space-between'
+        const title = document.createElement('div')
+        title.className = 'nw-eyebrow'
+        title.style.margin = '0'
+        title.textContent = `待处理（${state?.issues?.count ?? items.length}）`
+        const close = document.createElement('button')
+        close.type = 'button'
+        close.className = 'nw-btn ghost'
+        close.textContent = '关闭'
+        head.append(title, close)
+        const list = document.createElement('div')
+        list.style.display = 'grid'
+        list.style.gap = '6px'
+        for (const issue of items) {
+          const row = document.createElement('div')
+          row.className = 'nw-row'
+          row.style.gap = '8px'
+          row.style.alignItems = 'center'
+          const text = document.createElement('span')
+          text.className = 'nw-muted'
+          text.style.flex = '1'
+          text.style.minWidth = '0'
+          text.textContent = `${issue.chapter ? `第${issue.chapter}章 · ` : ''}${issue.type}${issue.message ? `：${issue.message}` : ''}`
+          row.append(text)
+          const action = issue.actions?.[0]
+          if (action) {
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.className = 'nw-btn'
+            button.textContent = action.label
+            button.addEventListener('click', () => {
+              host.remove()
+              runIssueAction(action)
+            })
+            row.append(button)
+          }
+          const dismissAction = issue.actions?.find((item) => item.id === 'dismiss')
+          if (dismissAction) {
+            const skip = document.createElement('button')
+            skip.type = 'button'
+            skip.className = 'nw-btn ghost'
+            skip.textContent = '忽略'
+            skip.addEventListener('click', () => {
+              host.remove()
+              runIssueAction(dismissAction)
+            })
+            row.append(skip)
+          }
+          list.append(row)
+        }
+        const cleanup = () => host.remove()
+        close.addEventListener('click', cleanup)
+        backdrop.addEventListener('click', (event) => {
+          if (event.target === backdrop) cleanup()
+        })
+        modal.append(head, list)
+        backdrop.append(modal)
+        host.append(backdrop)
+        document.body.append(host)
+      }
+
       const cancelTask = async (resource) => {
         if (!root || !resource) return false
         try {
@@ -2283,6 +2367,8 @@ window.__ModuleLoader__.load({
                           focusChapter,
                           mode: tab,
                           setTab,
+                          runIssueAction,
+                          showIssuesModal,
                           openChapter: (number) => { setFocusChapter(number); setTab('chapters') },
                           openOutline: (number) => { setFocusChapter(number); setTab('outline') },
                           onSelectChapter: setFocusChapter,
@@ -2768,27 +2854,6 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('bible-generate', { scope: 'characters' })), title: lockMsg('bible-generate', { scope: 'characters' }) ?? undefined, onClick: () => run('bible-generate', { scope: 'characters', instruction: instruction || undefined }, { toast: '角色已生成' }) }, '只生成角色'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('bible-generate', { scope: 'world' })), title: lockMsg('bible-generate', { scope: 'world' }) ?? undefined, onClick: () => run('bible-generate', { scope: 'world', instruction: instruction || undefined }, { toast: '世界设定已生成' }) }, '只生成世界'),
             h('input', { className: 'nw-input', style: { flex: '1 1 240px', minWidth: '200px' }, value: instruction, placeholder: '生成要求（可留空）', disabled: busy, onChange: (event) => setInstruction(event.target.value) }),
-            state.project?.writingNotes
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn ghost',
-                  onClick: () => setInstruction((prev) => (prev.trim() ? `${prev}\n${state.project.writingNotes}` : state.project.writingNotes)),
-                }, '插入项目要求')
-              : null,
-            instruction.trim()
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn ghost',
-                  onClick: async () => {
-                    try {
-                      await navigator.clipboard.writeText(instruction)
-                      setToast?.('生成要求已复制')
-                    } catch {
-                      setToast?.('复制失败')
-                    }
-                  },
-                }, '复制要求')
-              : null,
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || bible.characters.length === 0 || Boolean(lockMsg('bible-commit', {})), title: lockMsg('bible-commit', {}) ?? undefined, onClick: () => run('bible-commit', {}, { next: 'outline', toast: '设定已确认，下一步：大纲' }) }, '确认设定'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setImportOpen(true) }, '导入角色卡'),
             bible.status === 'confirmed' ? h('span', { className: 'nw-badge ok' }, '已确认') : null,
@@ -3578,7 +3643,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter }) {
+    function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const isOutline = mode === 'outline'
       return h('div', null,
         h('div', { className: 'nw-workspace-switch' },
@@ -3597,17 +3662,21 @@ window.__ModuleLoader__.load({
           ? h(OutlineWorkbench, {
               state, run, busy, setToast, focusChapter,
               onSelectChapter,
+              runIssueAction,
+              showIssuesModal,
               onOpenChapter: (number) => openChapter?.(number),
             })
           : h(ChaptersWorkbench, {
               state, root, run, busy, setToast, focusChapter,
               onSelectChapter,
+              runIssueAction,
+              showIssuesModal,
               onOpenOutline: (number) => openOutline?.(number),
             }),
       )
     }
 
-    function OutlineWorkbench({ state, run, busy, setToast, focusChapter, onOpenChapter, onSelectChapter }) {
+    function OutlineWorkbench({ state, run, busy, setToast, focusChapter, onOpenChapter, onSelectChapter, runIssueAction, showIssuesModal }) {
       const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const volumes = state.outline?.volumes ?? []
       const allChapters = flattenOutline(state.outline)
@@ -3672,16 +3741,42 @@ window.__ModuleLoader__.load({
         } else {
           setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章`)
         }
+        if (result.cast?.warning) setToast?.(result.cast.warning)
         const auto = state.project?.automation ?? {}
         if (auto.autoAudit === false) return
         try {
           setToast?.('章纲已生成，后台审查中…')
-          await run('outline-audit', { fromChapter: result.fromChapter, toChapter: result.toChapter }, { silent: true, background: true, throwOnError: true })
-          if (auto.autoRepairOutline !== false) {
-            setToast?.('章纲审查完成，后台修复中…')
-            await run('outline-repair', {}, { silent: true, background: true, throwOnError: true })
-            await run('outline-audit', { fromChapter: result.fromChapter, toChapter: result.toChapter }, { silent: true, background: true, throwOnError: true })
-            setToast?.('章纲审查与修复完成')
+          const audit = await run('outline-audit', { fromChapter: result.fromChapter, toChapter: result.toChapter }, { silent: true, background: true, throwOnError: true })
+          const auditIssues = Array.isArray(audit?.issues) ? audit.issues : []
+          const structureCount = Array.isArray(audit?.structureIssues) ? audit.structureIssues.length : 0
+          if (structureCount > 0 && auto.autoRepairOutline !== false) {
+            setToast?.(`检测到 ${structureCount} 条结构问题，建议重规划（不会自动修复）`)
+          }
+          if (auto.autoRepairOutline !== false && auditIssues.length > 0) {
+            setToast?.('章纲审查完成，尝试修复…')
+            // repair 内部已复检并自带回滚；这里最多跑一轮，不收敛就停止，不再自动 continue。
+            const repair = await run('outline-repair', {}, { silent: true, background: true, throwOnError: true })
+            const remaining = Number.isFinite(repair?.issuesAfter) ? repair.issuesAfter : (Number.isFinite(repair?.issuesBefore) ? repair.issuesBefore : auditIssues.length)
+            const exhausted = Array.isArray(repair?.exhausted) ? repair.exhausted : []
+            const replan = Array.isArray(repair?.replan) ? repair.replan : []
+            if (repair?.reason === 'structure-only' || (replan.length > 0 && !repair?.repaired?.length)) {
+              const ranges = replan.map((item) => item.from == null ? '全局/跨卷' : `第 ${item.from}–${item.to} 章`).join('、')
+              setToast?.(`结构问题不自动修复；建议重规划：${ranges || '请查看审核面板'}`)
+            }
+            const staleCount = Number(repair?.staleCount ?? audit?.staleCount ?? 0)
+            if (staleCount > 0 || repair?.reason === 'stale-audit') {
+              setToast?.(`已清理 ${staleCount} 条指向已删除章节的旧审核问题`)
+            } else if (repair?.applied === false && repair?.versionId) {
+              const added = Array.isArray(repair?.newIssues) ? repair.newIssues.length : 0
+              setToast?.(`修复已保存为候选（问题 ${repair.issuesBefore ?? '?'}→${repair.issuesAfter ?? '?'}，新增 ${added} 条）；可在助手查看 diff 后应用或丢弃`)
+            } else if (repair?.applied === true) {
+              const fixed = Array.isArray(repair?.repaired) ? repair.repaired.length : 0
+              setToast?.(`修复已自动应用（${fixed} 章，问题 ${repair.issuesBefore ?? '?'}→${repair.issuesAfter ?? '?'}）`)
+            } else if (exhausted.length > 0) {
+              setToast?.(`修复已停止（${remaining} 条待人工处理）`)
+            } else {
+              setToast?.('章纲审查与修复完成')
+            }
           } else {
             setToast?.('章纲审查完成')
           }
@@ -3860,6 +3955,27 @@ window.__ModuleLoader__.load({
           desc: '左边选章，右边直接改；生成与重生成只影响选中的范围，确认后进入章节写作。',
           hints: ['生成后 3–6 章', '左侧选章，右侧编辑', '逐章确认或全部确认'],
         }),
+        (state?.issues?.items?.length ?? 0) > 0
+          ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '10px 12px', display: 'grid', gap: '6px' } },
+              h('div', { className: 'nw-row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+                h('span', { className: 'nw-eyebrow', style: { margin: 0 } }, `待处理（${state.issues.count ?? state.issues.items.length}）`),
+                h('span', { className: 'nw-muted', style: { flex: 1 } }, '只做提示；结构问题不会自动处理'),
+                (state.issues.count ?? state.issues.items.length) > 3
+                  ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: showIssuesModal }, '查看全部')
+                  : null,
+              ),
+              state.issues.items.slice(0, 3).map((issue) => {
+                const action = issue.actions?.[0]
+                return h('div', { key: issue.id, className: 'nw-row', style: { gap: '8px', alignItems: 'center' } },
+                  h('span', { className: 'nw-muted', style: { flex: 1, minWidth: 0 } }, `${issue.chapter ? `第${issue.chapter}章 · ` : ''}${issue.type}${issue.message ? `：${issue.message}` : ''}`),
+                  action ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => runIssueAction(action) }, action.label) : null,
+                  issue.actions?.some((item) => item.id === 'dismiss')
+                    ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => runIssueAction(issue.actions.find((item) => item.id === 'dismiss')) }, '忽略')
+                    : null,
+                )
+              }),
+            )
+          : null,
         h('div', { className: 'nw-card' },
           h('div', { className: 'nw-row', style: { flexWrap: 'wrap' } },
             h('div', { className: 'nw-eyebrow' }, '分卷'),
@@ -3923,6 +4039,13 @@ window.__ModuleLoader__.load({
               },
             }, '删除尾部章节'),
           ),
+          activeVolume
+            ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
+                Array.isArray(activeVolume.cast) && activeVolume.cast.length > 0
+                  ? `本卷阵容 ${activeVolume.cast.length}/6 · 龙套 ${Array.isArray(activeVolume.extras) ? activeVolume.extras.length : 0}/3：${activeVolume.cast.map((item) => item.name).join('、')}${Array.isArray(activeVolume.extras) && activeVolume.extras.length > 0 ? `（龙套：${activeVolume.extras.map((item) => item.name).join('、')}）` : ''}`
+                  : '未选角，生成时自动规划（阵容 ≤6 · 具名龙套 ≤3）',
+              )
+            : null,
           activeVolume
             ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
                 `地图：${activeVolume.map || '未设置'} · 战力天花板：${activeVolume.powerCeiling || '未设置'} · 离卷：${activeVolume.exitCriteria || '未设置'}`,
@@ -4012,27 +4135,6 @@ window.__ModuleLoader__.load({
               },
             }, regenOpen ? '收起批量重生成' : '批量重生成'),
             h('input', { className: 'nw-input', style: { flex: '1 1 260px', minWidth: '220px' }, value: instruction, placeholder: '生成/重生成要求（会写进章纲）', onChange: (event) => setInstruction(event.target.value), disabled: busy }),
-            state.project?.writingNotes
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn ghost',
-                  onClick: () => setInstruction((prev) => (prev.trim() ? `${prev}\n${state.project.writingNotes}` : state.project.writingNotes)),
-                }, '插入项目要求')
-              : null,
-            instruction.trim()
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn ghost',
-                  onClick: async () => {
-                    try {
-                      await navigator.clipboard.writeText(instruction)
-                      setToast?.('生成要求已复制')
-                    } catch {
-                      setToast?.('复制失败')
-                    }
-                  },
-                }, '复制要求')
-              : null,
             h('div', { className: 'nw-viewtoggle' },
               [['cards', '卡片'], ['table', '表格'], ['graph', '图谱'], ['edit', '编辑']].map(([id, label]) =>
                 h('button', { key: id, type: 'button', className: `nw-viewtoggle-btn${view === id ? ' active' : ''}`, onClick: () => setView(id) }, label),
@@ -4200,7 +4302,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter }) {
+    function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const allChapters = state.chapters ?? []
       const volumes = state.volumes ?? []
@@ -4816,6 +4918,16 @@ window.__ModuleLoader__.load({
           desc: '左边选章，右边阅读与操作；审校、修订与定稿都在本页完成。',
           hints: ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
         }),
+        (() => {
+          const current = (state?.issues?.items ?? []).filter((issue) => Number(issue.chapter) === Number(selected) && (issue.source === 'chapter' || issue.source === 'state'))
+          if (current.length === 0) return null
+          const issue = current[0]
+          const action = issue.actions?.[0]
+          return h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+            h('span', { className: 'nw-muted', style: { flex: 1, minWidth: 0 } }, `${issue.type}：${issue.message}`),
+            action ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => runIssueAction(action) }, action.label) : null,
+          )
+        })(),
         chapters.length === 0
           ? h(EmptyState, { title: '还没有可写的章节', desc: '先在大纲里生成并确认章纲。' })
           : h('div', { className: 'nw-workbench', ref: workbenchRef },
@@ -6727,6 +6839,7 @@ window.__ModuleLoader__.load({
       const [title, setTitle] = useState(state.project?.title ?? '')
       const [writingNotes, setWritingNotes] = useState(state.project?.writingNotes ?? '')
       const [writingTasks, setWritingTasks] = useState(state.project?.writingNotesTasks ?? [])
+      const [notesDirty, setNotesDirty] = useState(false)
       const [learnOpen, setLearnOpen] = useState(false)
       const [learnScope, setLearnScope] = useState('3')
       const [learnNumber, setLearnNumber] = useState('')
@@ -6787,6 +6900,7 @@ window.__ModuleLoader__.load({
           const nextNotes = base ? `${base}\n${addition}` : addition
           await run('project-update', { fields: { writingNotes: nextNotes, writingNotesTasks: writingTasks } }, { silent: true, throwOnError: true })
           setWritingNotes(nextNotes)
+          setNotesDirty(false)
           setToast?.(`已追加 ${picked.length} 条写作偏好`)
           setLearnOpen(false)
           setLearnResult(null)
@@ -7280,41 +7394,94 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-card' },
           h('div', { className: 'nw-row' },
             h('h3', { className: 'nw-h3' }, '写作要求（共享）'),
+            notesDirty ? h('span', { className: 'nw-badge', style: { marginLeft: '8px' } }, '未保存') : null,
             h('div', { className: 'nw-actions', style: { margin: 0 } },
               h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || learnBusy, onClick: openLearn }, '从修订学习'),
             ),
           ),
-          h('p', { className: 'nw-muted' }, '写在这里的要求可以在设定/大纲/章节的生成要求里用「插入项目要求」引用。'),
+          h('p', { className: 'nw-muted' }, '这里的要求会自动注入设定/大纲/正文生成，不需要复制到生成框；修改后点保存（未保存时显示提示，失焦会自动保存）。'),
           h('div', { className: 'nw-field' },
             h('textarea', {
               className: 'nw-textarea',
               style: { minHeight: '90px' },
               value: writingNotes,
               placeholder: '例：女性角色要立体；避免套路化爽点；控制节奏',
-              onChange: (event) => setWritingNotes(event.target.value),
+              onChange: (event) => {
+                setWritingNotes(event.target.value)
+                setNotesDirty(true)
+              },
+              onBlur: () => {
+                if (!notesDirty) return
+                void run('project-update', { fields: { writingNotes, writingNotesTasks: writingTasks } }, { toast: '写作要求已保存' })
+                  .then(() => setNotesDirty(false))
+                  .catch(() => setToast?.('写作要求保存失败'))
+              },
             }),
           ),
           h('div', { className: 'nw-actions' },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('project-update', { fields: { writingNotes, writingNotesTasks: writingTasks } }, { toast: '写作要求已保存' }) }, '保存写作要求'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn primary',
+              disabled: busy,
+              onClick: () => {
+                void run('project-update', { fields: { writingNotes, writingNotesTasks: writingTasks } }, { toast: '写作要求已保存' })
+                setNotesDirty(false)
+              },
+            }, '保存写作要求'),
           ),
           h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
-            [['bible', '设定'], ['outline', '大纲'], ['draft', '草稿'], ['revise', '修订']].map(([stage, label]) =>
+            [['bible', '设定'], ['outline', '大纲'], ['draft', '草稿'], ['revise', '修订（含修复/扩写/去AI味）']].map(([stage, label]) =>
               h('label', { key: stage, style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' } },
                 h('input', {
                   type: 'checkbox',
                   checked: writingTasks.includes(stage),
-                  onChange: (event) => setWritingTasks((prev) => (event.target.checked ? [...prev, stage] : prev.filter((item) => item !== stage))),
+                  onChange: (event) => {
+                    const nextTasks = event.target.checked ? [...writingTasks, stage] : writingTasks.filter((item) => item !== stage)
+                    setWritingTasks(nextTasks)
+                    void run('project-update', { fields: { writingNotes, writingNotesTasks: nextTasks } }, { silent: true })
+                      .then(() => setNotesDirty(false))
+                      .catch(() => setToast?.('写作要求保存失败'))
+                  },
                 }),
                 label,
               ),
             ),
           ),
           h('div', { className: 'nw-muted', style: { marginTop: '4px' } },
-            '不勾选 = 全部阶段生效；勾选后只在这些阶段生效。'),
+            '不勾选 = 全部阶段生效；勾选后只在这些阶段生效（保存后下一次生成生效）。'),
           h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
-            h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setWritingTasks([]) }, '全部阶段'),
-            h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setWritingTasks(['draft', 'revise']) }, '仅正文'),
-            h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setWritingTasks(['outline', 'draft', 'revise']) }, '大纲+正文'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn ghost',
+              onClick: () => {
+                setWritingTasks([])
+                void run('project-update', { fields: { writingNotes, writingNotesTasks: [] } }, { silent: true })
+                  .then(() => setNotesDirty(false))
+                  .catch(() => setToast?.('写作要求保存失败'))
+              },
+            }, '全部阶段'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn ghost',
+              onClick: () => {
+                const nextTasks = ['draft', 'revise']
+                setWritingTasks(nextTasks)
+                void run('project-update', { fields: { writingNotes, writingNotesTasks: nextTasks } }, { silent: true })
+                  .then(() => setNotesDirty(false))
+                  .catch(() => setToast?.('写作要求保存失败'))
+              },
+            }, '仅正文'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn ghost',
+              onClick: () => {
+                const nextTasks = ['outline', 'draft', 'revise']
+                setWritingTasks(nextTasks)
+                void run('project-update', { fields: { writingNotes, writingNotesTasks: nextTasks } }, { silent: true })
+                  .then(() => setNotesDirty(false))
+                  .catch(() => setToast?.('写作要求保存失败'))
+              },
+            }, '大纲+正文'),
           ),
           h('div', { className: 'nw-muted', style: { marginTop: '4px' } },
             '已生效于：设定生成、大纲生成、章节草稿、章节修订（保存后下一次生成生效）'),

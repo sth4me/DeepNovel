@@ -120,6 +120,25 @@
 
 - 故事性 / 风格指纹：章纲 `change`/`storyQuestion`/`promise`/`beats` 可生成与保留（可选、可留空）；OUTLINE 提示词允许安静章节、不硬造冲突/钩子；`storyAudit`（group review 可覆盖）判定 changeHappened/questionProgress/promiseProgress/causalChain/contrived/issues；`diagnoseChapter` story 全 soft（source story）、`scope: all|logic|story`、`logicOnly` 不跑、`styleDrift` 仅 `scope=all`（soft、source styleProfile）；`repair` 不自动改 story（prescribe `autoFixable:false` / `risk:high`）；风格指纹纯规则统计 6 项指标、`compareStyleProfile` 偏差 low/medium/high（>35% medium、>60% high；对话绝对差 >0.15/0.25）、`buildStyleProfile` 最近 10 定稿写 `story/style/profile.json`、draft/revise/fix 在文风契约后注入【风格指纹】；project-action `style-profile-build`/`style-profile-get` 与 `novel_style` profile-build/profile-get。
 
+- 写作工程化：写作类 system 前置 `WRITING_DOCTRINE` + `CAST_RULES`（doctrine 注入），助手系统提示词含「写作基础原则」；`planVolumeCast` 阵容 ≤6（+ 具名龙套 ≤3）、每卷新增命名角色 ≤2 且登记，写 `volume.cast` / `volume.extras`，未登记命名角色报 hard（advice：改身份指代或先 `novel_cast` 登记）；draft 注入上一章 `chapter_state` + 本卷阵容，写完自动 `updateChapterState`（阵容外角色剔除并 warning），`chapter-state` / `chapter-state-update` 与 `novel_state`；大纲审核 `structureIssues` 只给 `replan`（`repairOutlineIssues` 返回 `reason:'structure-only'`），`diagnoseChapter` 返回 `suggestedAction`，结构问题不进章节 repair；黄金三章与 `endingHook`（第 1 章弱钩子报 soft）；字数目标（style.chapterWords/chapter.wordBudget，默认 3000）、下限 80%、不足自动扩写最多 2 次（不改情节/不新增命名角色），返回 `wordCount` / `wordTarget` / `expanded` / `wordCountWarning`；默认不传 `maxTokens`（仅显式参数或 `automation.maxTokens` 限制，无 budgetCap/不加倍重试），大纲审核按 ≤12 章分块。
+- 角色纪律：正文只允许本卷阵容具名角色；路人/次要人物用身份指代；未登记命名角色 → hard 一致性问题（advice「改身份指代，或先用 novel_cast 登记」）。
+
+- 角色三层与质量检查：`CAST_LIMITS` 6/3/2；`planVolumeCast` 返回 cast / extras / newCharacters 并写 `volume.cast` / `volume.extras`（龙套须在池内、不与阵容重名、超 3 人截断并 warning）；`updateVolumeCast` 校验池内/重名/上限；`checkOutlineCastLeaks` 确定性校验 `castUsed` / `newNamed`（空格/大小写归一），仅在「顶层 `newNamed` 泄漏且无章级违规」时重试一次，违规写 `structureIssues`（未登记角色）并进 replan，不自动重生成；`castViolations` 随生成返回；OUTLINE_AUDIT 输出主角被动（连续 ≥3 章、给范围）与桥段重复（无升级）结构问题；client 大纲页显示「阵容 N/6 · 龙套 M/3」与结构问题面板。
+
+- 问题交互：`issuesSummary` 纯本地聚合（不调模型）outline-audit 的 issues / structureIssues（经 buildStructureReplan 归并）/ staleCount、章节字数 <80%、chapter_state 缺失；item 含 id/source/severity/chapter/type/message/actions；动作 replan（带 fromChapter/toChapter）/ repair / audit / expand / update-state；每类上限 8（结构 replan 最多 3）、severity+章号排序、`limit` 默认 20 上限 100，返回 `{ count, items, generatedAt }`；出口 `project-state.issues`、`issues-list`、助手 `novel_issues`（只读）；客户端大纲页「待处理（N）」卡（≤3 条 + 查看全部弹窗 + 主按钮动作）与章节页当前章内联提示；助手在 outline/diagnose/repair/chapter 返回后 1–3 行摘要提醒。
+
+- 大纲问题清理：稳定 id（`level|number|type|message` 哈希，fingerprint）；`normalizeOutlineAudit` 补 id / 去重 / 过滤 `dismissed` / 截断（`issues` ≤30、`structureIssues` ≤10，`truncated` 标记）；`dismissOutlineIssues` 支持 `ids` / `chapter` / `all=true`，写入 `dismissed`（≤200）、返回 `{ removed, dismissedTotal }`，无定位报错；`update` 写盘后自动 dismiss 该章旧问题并返回 `resolvedIssues`；audit 重审不复活已忽略项；`novel_outline action=dismiss`（enum 含 dismiss）与 `novel_issues` 大纲问题 actions 含 `dismiss`；客户端待处理卡 / 弹窗「忽略」→ `outline-dismiss` 后刷新；`scripts/test-outline-dismiss.mjs` 覆盖 id / 去重 / 截断 / 三种定位 / 重审不复活 / update 自动清理 / action 与 enum、客户端静态断言；全套 54 项测试通过。
+
+- 卷目标 / 叙事格式：`scripts/test-volume-goal.mjs` 与 `scripts/test-outline-prompt.mjs` 更新——`planVolume` 注入上一卷末 3 章 `chapter_state`、末章结尾与摘要、未解冲突、角色池，返回 2–3 个候选（`goal` / `whyNow` / `exitCriteria` 必填，含 cost/risk/targetChapters/powerCeiling）且**不写盘**；`selectVolumePlan` 支持 `index` / `overrides`（goal / exitCriteria / whyNow / map / title / targetChapters / powerCeiling）写盘并记录 `whyNow` / `goalRevisedAt`；新卷生成时目标为空自动暂用候选 1 并返回 `volumeGoalWarning`（兜底不静默）；OUTLINE / VOLUME_PLAN 提示词含通用叙事格式规则（synopsis 叙事句、禁场记式/编号式/标签式、时间场景融进叙事），OUTLINE_AUDIT 报「非叙事标记 / 场记式开头」；全套 55 项测试通过。
+
+- 章纲时间锚点：`normalizeChapterTime` 合法/非法（`day` 0–3650 或 null、`part` 四值、`spanDays` 0–30、`mode` 三值；非法整体丢弃为 null）；`update` 的 `fields.time`（`null` 删除锚点、非法报错）；大纲生成 prompt 注入最近 8 章时间线、上一章 `time` 锚点、硬事实/期限换算（`parseDeadlineDay` → day）；OUTLINE / OUTLINE_AUDIT 提示词含时间锚点规则与「时间线冲突」判定（linear 章 day 递增、同日 part 顺序、flashback/parallel 不参与、synopsis 与 time 矛盾；`time` 只写 JSON 不进 synopsis）；audit 输入带各章 `time` 锚点；`scripts/test-chapter-time.mjs` 覆盖 prompt 注入 / normalize / update / audit 规则 / 工具字段；全套 56 项测试通过。
+
+- 卷收束 / 阵容轮换：`markVolumeEnd`（`volume-end`，volumeId? / chapterNumber? 缺省卷末章）保证**全卷仅一章** `volumeEnd`（清掉其它标记）并置 `pendingNextVolume`；生成时 `volumeEnded` 与 `volumeEndOverdue`（无收束且章数 ≥ targetChapters+2 → warning）；`planVolumeCast` 注入上一卷阵容与 `unusedPool`，要求至少 1 个不同角色（优先 unusedPool，其次 newCharacters ≤2，否则 `noNewCastReason`），返回 `newFaces` / `noNewCastReason` / `castWarning`，与上一卷完全相同且无新面孔 → 「阵容未更新」warning；OUTLINE_AUDIT 的 structureIssues 含「阵容未更新」；`novel_outline` enum 含 volume-end；`scripts/test-volume-growth.mjs` 覆盖 volumeEnd 规则 / overdue / mark 唯一 / 轮换 warning / newFaces / audit 类型 / action 与 enum；全套 57 项测试通过。
+
+- 项目写作要求：`scripts/test-writing-notes.mjs` / `test-writing-notes-tasks.mjs` / `test-constraints.mjs` 断言——`CONSTRAINT_PRIORITY = ['explicit','facts','requirements','bible','outline','style','notes']`；写作要求统一块（`WRITING_NOTES_TITLE` + 冲突规则）在所有生成 prompt 前置且只出现一次；requirements 高于 style/bible/outline、低于 explicit/facts；阶段映射 `fix`/`expand`/`deslop`/`qa-fix`/`autofix` → `revise`（只勾草稿时扩写/修复不命中；不勾选 = 全部阶段）；expand prompt 注入写作要求 + 硬约束；客户端写作要求卡无「插入项目要求 / 复制要求」按钮、含自动注入文案与「未保存」徽标、勾选/取消即时保存；全套 59 项测试通过。
+
+- 大纲修复版本化：`scripts/test-outline-repairs.mjs`——improved（问题数下降且无新增）自动应用并写回 outline/audit、存 `status:'applied'` 版本；regressed / mixed / audit-unavailable 保持当前 outline 与 audit 一致、修复结果存 `status:'candidate'` 版本（含 outlineBefore/After、auditBefore/After、diff、summary、issuesBefore/After、newIssues）；`apply-revision` / `discard-revision` 按 revisionId 应用或丢弃；版本目录 `story/plot/revisions/` 与 index 保留最近 20 个；`novel_outline` enum 含 revisions/revision/apply-revision/discard-revision；10157 文案含 applied 语义（true 列修复章与 X→Y；false 说明候选 versionId、X→Y、新增 N，让用户选 apply/discard/按 diff update，不立刻重复 repair）；客户端 toast 区分「已自动应用」与「已保存为候选」且无回滚文案；`scripts/test-outline-repair-audit.mjs` 覆盖回滚/成功 audit 一致性；全套 61 项测试通过。
+
 ## 错误处理
 
 - 空输出且 `max-tokens` 自动加倍预算重试。
@@ -153,4 +172,7 @@ node scripts/test-health.mjs
 node scripts/test-relations.mjs
 node scripts/test-context-relations.mjs
 node scripts/test-foreshadow.mjs
+node scripts/test-writing-notes.mjs
+node scripts/test-writing-notes-tasks.mjs
+node scripts/test-constraints.mjs
 ```

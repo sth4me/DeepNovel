@@ -64,6 +64,14 @@ function lockActionFor(toolName, args = {}) {
     if (args?.action === 'prescribe') return null
     return 'chapter-repair'
   }
+  if (toolName === 'novel_state') {
+    if (!args?.action || args.action === 'get') return null
+    return 'chapter-state-update'
+  }
+  if (toolName === 'novel_cast') {
+    if (!args?.action || args.action === 'list') return null
+    return 'outline-cast'
+  }
   if (toolName === 'novel_facts') {
     if (!args?.action || args.action === 'list') return null
     return `fact-${args.action}`
@@ -133,6 +141,27 @@ export function apply(ctx) {
   })
 
   ctx.systemPrompt.section({
+    name: 'deepnovel:character-state',
+    order: 10121,
+    text: () =>
+      '状态驱动写作：写下一章前先用 novel_state action=get 查上一章人物状态（处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点），据此推进；章节写完后用 action=update 更新状态。状态只记录正文实际发生的事，未出场角色保持原状态；不要用状态去改正文。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:interaction-rhythm',
+    order: 10090,
+    text: () =>
+      '交互节奏（一次一步，硬规则）：每轮只做用户明确要求的那一步，完成后停下汇报结果并给出下一步选项；不要自动进入下一阶段（构思→设定→大纲→正文→审校→修订→定稿）。只有用户明确要求“连续做完/批量”，或工具链式必须（如先读再改）时才继续。任何确认/commit（构思、文风、设定、章纲、定稿）完成后必须停，不得顺手生成下一步。工具内部的自动联动（如 draft 自动更新人物状态、audit 自动清理过期项）不要重复调用或再汇报成新动作。不确定用户是否要继续时先问，不要替用户决定。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:writing-doctrine',
+    order: 10120,
+    text: () =>
+      '写作基础原则：本轮用户要求优先；系统注入的上下文是方法与长期约束、不是事实；技能是方法不是设定；素材是参考不是设定；发现冲突先指出再最小改动，不静默推翻。故事走向由角色性格与当前局势驱动，不写死结构。角色是世界池：本卷可具名角色 = 核心阵容（≤6）+ 具名龙套（≤3）；龙套不得承担关键转折；名单外路人一律身份指代；不新增未登记的命名角色（每卷新增 ≤2 且必须登记）；未登场角色不出现。写大纲或正文前先确认本卷阵容（novel_cast action=list/plan/update），不要临时加未登记角色。负向约束：不为凑爽点硬造冲突，不重复同一目标/场景两次以上，不偏离类型调性，不靠巧合/降智，不把结构问题当文字修，只写正式内容。新卷流程：先 novel_outline action=volume-plan 确认本卷目标 → novel_cast action=plan 确认阵容（与上一卷有差异、优先引入未使用角色池的新面孔）→ 再生成章纲；目标达成时用 novel_outline action=volume-end 标记收束，不要无限续写。',
+  })
+
+  ctx.systemPrompt.section({
     name: 'deepnovel:data-maintenance',
     order: 10140,
     text: () =>
@@ -171,6 +200,13 @@ export function apply(ctx) {
     order: 10156,
     text: () =>
       '文风偏差只诊断、不自动改；风格指纹是参考，文风契约优先。偏差大时建议用 novel_chapter action=revise 带上具体指标要求（如“句长压到 15 字以内”），不要整章重写；需要指纹用 novel_style action=profile-build（只统计不改文）。',
+  })
+
+  ctx.systemPrompt.section({
+    name: 'deepnovel:outline-repair-guard',
+    order: 10157,
+    text: () =>
+      '大纲审核后最多修 1–2 轮；repair 返回 applied=false（候选未应用）或 exhausted 时停止，让用户选择 apply-revision / discard-revision / 按 diff 用 update 改，不要反复调用 outline repair。大纲局部问题优先用 novel_outline action=update 改 1–3 章（标题/梗概/change/storyQuestion/promise/beats），不要动辄 generate/regenerate；只有连续 ≥3 章的结构问题、整卷崩坏或用户明确要求时才用 generate/regenerate，先说明影响范围，必要时先问用户。audit 返回问题后不要自动 repair/regenerate，先把问题按范围列给用户，并给 1–3 个可选处理（update 指定章 / 重规划某范围 / 忽略）。结构问题（角色超载/桥段重复/主角被动/承诺未推进/调性漂移）优先 update 或重规划建议，不要 repair。update 修改章节后旧问题已自动清掉（resolvedIssues），不要立刻再 audit；不打算修的问题用 novel_outline action=dismiss 按 ids/chapter 忽略，之后重审不会复活；audit 只按用户要求跑一次，不要自动连环重审。进入新卷前先调用 novel_outline action=volume-plan 给 2–3 个候选卷目标（基于上一卷末人物状态与未解冲突），让用户选定（volume-select）后再 generate；不要直接生成新卷章纲、也不要静默替用户决定目标。时间线冲突用 action=update 改 time 或 synopsis，不要写日期代号，也不要在正文/回复里展示 time；目标已达成时用 novel_outline action=volume-end 收束本章，不要继续原地续写；下一卷先 volume-plan 目标、再 cast-plan 阵容（引入新面孔）。repair 返回后先看 applied：true 表示已自动应用（列出修复的章节与问题数 X→Y）；false 表示只生成候选版本、当前大纲未被覆盖，需说明候选 versionId、问题 X→Y、新增 N 条，让用户选择 apply-revision / discard-revision / 按 diff 用 update 改，不要立刻重复 repair；问题汇报：每次 novel_outline / novel_diagnose / novel_repair / novel_chapter 返回后，如果结果含 issues/structureIssues/replan/warning，先在回复开头用 1–3 行摘要列出（章节号 · 类型 · 建议动作），再继续；需要完整清单调用 novel_issues（只提示，不自动处理结构问题）。'
   })
 
   ctx.systemPrompt.section({
@@ -308,17 +344,44 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'novel_outline',
     description:
-      '章纲工具。action=generate 按已确认构思生成指定范围的章纲；action=regenerate 重新生成指定范围（可带指令）；action=commit 确认章纲；action=status 读取章纲与状态；action=move 把某章章纲移到指定卷（用于修正卷归属）。',
+      '章纲工具。action=update 首选：改指定 1–3 章的标题/梗概/change/storyQuestion/promise/beats，只动局部；action=volume-plan 进入新卷前先给 2–3 个候选卷目标（基于上一卷末人物状态/未解冲突推导，不写盘）；action=volume-select 选定候选或修订卷目标（写盘，记录 whyNow/修订时间）；action=volume-end 标记卷收束章（volumeEnd 全卷唯一，缺省卷末章；用于目标达成后收束，不要无限续写）；action=revisions/revision 列出/查看大纲修复版本（含 diff 与前后 audit）；action=apply-revision/discard-revision 应用或丢弃候选版本；action=generate 按已确认构思生成指定范围的章纲（成规模或用户明确要求才用）；action=regenerate 重新生成指定范围（仅当连续 ≥3 章崩坏/整卷崩/用户明确要求）；action=commit 确认章纲；action=status 读取章纲与状态；action=move 把某章章纲移到指定卷；action=audit 审核章纲；action=repair 修复一致性问题（最多 1 轮；生成候选版本，仅「问题数下降且无新增问题」时自动应用，否则保留候选供 apply-revision/discard-revision）。结构问题不要 repair：优先用 action=update 改局部，成规模才 generate/regenerate 并说明影响范围。时间线冲突用 action=update 改 time 或 synopsis，不要写日期代号，也不要在回复/正文里展示 time 字段。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['generate', 'regenerate', 'commit', 'status', 'move'] },
+        action: { type: 'string', enum: ['update', 'generate', 'regenerate', 'commit', 'status', 'move', 'audit', 'repair', 'dismiss', 'volume-plan', 'volume-select', 'volume-end', 'revisions', 'revision', 'apply-revision', 'discard-revision'] },
         fromChapter: { type: 'number', description: '起始章号' },
         toChapter: { type: 'number', description: '结束章号' },
         count: { type: 'number', description: '生成章数（未指定 toChapter 时使用，1~12）' },
         number: { type: 'number', description: 'move 时要移动的章号' },
-        volumeId: { type: 'string', description: 'move 时的目标卷 id（如 vol-2）' },
+        volumeId: { type: 'string', description: 'move/volume-end 时的目标卷 id（缺省为最新卷）' },
+        chapterNumber: { type: 'number', description: 'volume-end 时标记哪一章为收束章（缺省为卷末章）' },
+        revisionId: { type: 'string', description: 'revision/apply-revision/discard-revision 时的大纲修复版本 id（来自 repair 返回的 versionId 或 revisions 列表）' },
         instruction: { type: 'string', description: '额外结构要求，如"压缩成两章""反派提前登场"' },
+        index: { type: 'number', description: 'volume-select 时选第几个候选（从 0 开始，默认 0）' },
+        overrides: { type: 'object', description: 'volume-select 时修订卷目标字段：goal/exitCriteria/whyNow/map/title/targetChapters/powerCeiling' },
+        candidates: { type: 'array', description: 'volume-select 时可传入 volume-plan 返回的 candidates（省略则重新规划）', items: { type: 'object' } },
+        chapterId: { type: 'string', description: 'update 时的章纲 id（与 number 二选一）' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'dismiss 时要忽略的问题 id 列表（来自 novel_issues 的 actions.dismiss.params.ids）' },
+        chapter: { type: 'number', description: 'dismiss 时按章号忽略该章全部问题' },
+        all: { type: 'boolean', description: 'dismiss 时忽略全部大纲问题' },
+        fields: {
+          type: 'object',
+          description: 'update 时要改的字段（至少一项）：title/synopsis/change/storyQuestion/promise/beats/wordBudget/time（时间锚点，只存章纲不写进 synopsis）',
+          properties: {
+            title: { type: 'string' },
+            synopsis: { type: 'string' },
+            change: { type: 'string' },
+            storyQuestion: { type: 'string' },
+            promise: { type: 'string' },
+            beats: { type: 'array', items: { type: 'object' } },
+            wordBudget: { type: 'number' },
+            time: {
+              type: 'object',
+              description: '时间锚点：{day（相对本卷开场 0 起）, part（晨/日/暮/夜）, spanDays（0–30）, mode（linear|flashback|parallel）}；只存章纲，不写进 synopsis',
+            },
+          },
+          additionalProperties: false,
+        },
       },
       required: ['action'],
       additionalProperties: false,
@@ -334,6 +397,86 @@ export function apply(ctx) {
       }
       if (args?.action === 'status') {
         return service.readJson(exec.agent, 'story/plot/outline.json')
+      }
+                        if (args?.action === 'revisions') {
+        return service.listOutlineRevisions(exec.agent, {})
+      }
+      if (args?.action === 'revision' || args?.action === 'apply-revision' || args?.action === 'discard-revision') {
+        if (!String(args?.revisionId ?? '').trim()) {
+          throw new Error(`${args.action} 需要 revisionId（来自 repair 返回的 versionId 或 revisions 列表）`)
+        }
+        if (args.action === 'revision') return service.getOutlineRevision(exec.agent, { id: args.revisionId })
+        if (args.action === 'apply-revision') return service.applyOutlineRevision(exec.agent, { id: args.revisionId })
+        return service.discardOutlineRevision(exec.agent, { id: args.revisionId })
+      }
+      if (args?.action === 'volume-end') {
+        return service.markVolumeEnd(exec.agent, {
+          volumeId: args?.volumeId,
+          chapterNumber: args?.chapterNumber,
+        })
+      }
+      if (args?.action === 'volume-plan') {
+        return service.planVolume(exec.agent, {
+          volumeId: args?.volumeId,
+          instruction: args?.instruction,
+        }, exec.signal)
+      }
+      if (args?.action === 'volume-select') {
+        const hasOverride = args?.overrides && typeof args.overrides === 'object'
+        if (args?.index === undefined && !hasOverride) {
+          throw new Error('volume-select 需要 index（选候选）或 overrides（修订卷目标）')
+        }
+        return service.selectVolumePlan(exec.agent, {
+          volumeId: args?.volumeId,
+          index: args?.index,
+          candidates: args?.candidates,
+          overrides: hasOverride ? args.overrides : undefined,
+        }, exec.signal)
+      }
+      if (args?.action === 'update') {
+        const fields = args?.fields && typeof args.fields === 'object' ? args.fields : {}
+        if (!args?.chapterId && args?.number === undefined) {
+          throw new Error('update 需要 chapterId 或 number 定位章节')
+        }
+        if (Object.keys(fields).length === 0) {
+          throw new Error('update 需要 fields（title/synopsis/change/storyQuestion/promise/beats/wordBudget 至少一项）')
+        }
+        return service.updateOutlineChapter(exec.agent, {
+          chapterId: args?.chapterId,
+          number: args?.number,
+          fields,
+        })
+      }
+      if (args?.action === 'dismiss') {
+        const hasIds = Array.isArray(args?.ids) && args.ids.length > 0
+        const hasChapter = Number.isFinite(Number(args?.chapter)) && Number(args.chapter) > 0
+        if (!hasIds && !hasChapter && args?.all !== true) {
+          throw new Error('dismiss 需要 ids、chapter 或 all=true 至少一种定位')
+        }
+        return service.dismissOutlineIssues(exec.agent, {
+          ids: args?.ids,
+          chapter: args?.chapter,
+          all: args?.all === true,
+        })
+      }
+      if (args?.action === 'audit') {
+        return service.auditOutline(exec.agent, { fromChapter: args?.fromChapter, toChapter: args?.toChapter }, exec.signal)
+      }
+      if (args?.action === 'repair') {
+        const audit = await service.readJson(exec.agent, 'story/plot/outline-audit.json').catch(() => null)
+        const issues = Array.isArray(args?.issues) ? args.issues : (audit?.issues ?? [])
+        const result = await service.repairOutlineIssues(exec.agent, { issues, instruction: args?.instruction }, exec.signal)
+        return {
+          repaired: result.repaired ?? [],
+          issuesBefore: result.issuesBefore ?? null,
+          issuesAfter: result.issuesAfter ?? null,
+          rolledBack: Boolean(result.rolledBack),
+          exhausted: result.exhausted ?? [],
+          replan: result.replan ?? [],
+          reason: result.reason ?? null,
+          audit: result.audit ?? null,
+          lastRepair: result.lastRepair ?? null,
+        }
       }
       if (args?.action === 'move') {
         return service.moveOutlineChapter(exec.agent, {
@@ -357,9 +500,79 @@ export function apply(ctx) {
   })
 
   registerTool(ctx, {
+    name: 'novel_issues',
+    description: '列出当前待处理问题（大纲结构/一致性问题与重规划范围、章节字数不足、人物状态未更新、选角泄漏等）。返回统一 items（含章节号/类型/说明/建议动作）。只做提示，不自动修改任何内容；结构问题优先建议用 novel_outline action=update 改 1–3 章，成规模（连续 ≥3 章/整卷）才建议 generate/regenerate。',
+    parameters: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: '最多返回多少条（默认 20）' },
+      },
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      return service.issuesSummary(exec.agent, { limit: args?.limit })
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'novel_cast',
+    description: '按卷选角。角色是角色池（bible），不是演员表：本卷可具名角色 = 核心阵容（≤6，承担主线/关键转折）+ 具名龙套（≤3，可命名、需登记、不得承担关键转折）；名单外路人一律身份指代；每卷新增具名角色 ≤2 且必须登记。action=list 读某卷阵容与龙套；action=plan 让模型从角色池为本卷选角（可带 fromChapter/toChapter/instruction/allowExtras）；action=update 人工调整阵容与龙套（名称必须在角色池、不重复、超上限报错）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'plan', 'update'] },
+        volumeId: { type: 'string', description: '目标卷 id（list/plan/update）' },
+        fromChapter: { type: 'number', description: 'plan 的起始章号' },
+        toChapter: { type: 'number', description: 'plan 的结束章号' },
+        limit: { type: 'number', description: 'plan 的阵容上限（默认 6）' },
+        allowNew: { type: 'number', description: 'plan 允许新增的命名角色数（默认 2）' },
+        allowExtras: { type: 'number', description: 'plan 允许的具名龙套数（默认 3）' },
+        instruction: { type: 'string', description: 'plan 的额外选角要求' },
+        cast: {
+          type: 'array',
+          description: 'update 时的阵容：[{name, roleInVolume, fromChapter, importance}]',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              roleInVolume: { type: 'string' },
+              fromChapter: { type: 'number' },
+              importance: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      if (args?.action === 'plan') {
+        return service.planVolumeCast(exec.agent, {
+          volumeId: args?.volumeId,
+          fromChapter: args?.fromChapter,
+          toChapter: args?.toChapter,
+          limit: args?.limit,
+          allowNew: args?.allowNew,
+          allowExtras: args?.allowExtras,
+          instruction: args?.instruction,
+        }, exec.signal)
+      }
+      if (args?.action === 'update') {
+        return service.updateVolumeCast(exec.agent, { volumeId: args?.volumeId, cast: args?.cast })
+      }
+      return service.listVolumeCast(exec.agent, { volumeId: args?.volumeId })
+    },
+  })
+
+  registerTool(ctx, {
     name: 'novel_bible',
     description:
-      '设定工具。action=list 读取角色/地点/规则/势力/物品；generate 生成设定；update 新增或修改条目；delete 删除条目；commit 确认设定（确认后才能生成章纲/正文）；relations 读人物关系与站位；relations-save 保存关系与站位（会按角色名校验）；power 读境界/战力体系；power-save 保存力量体系。',
+      '设定工具。action=list 读取角色/地点/规则/势力/物品；generate 生成设定；update 新增或修改条目；delete 删除条目；commit 确认设定（确认后才能生成章纲/正文）。commit 完成后必须停，等用户明确要求再生成章纲，不要自动推进。relations 读人物关系与站位；relations-save 保存关系与站位（会按角色名校验）；power 读境界/战力体系；power-save 保存力量体系。',
     parameters: {
       type: 'object',
       properties: {
@@ -408,6 +621,28 @@ export function apply(ctx) {
       if (args?.action === 'power') return service.readPower(exec.agent)
       if (args?.action === 'power-save') return service.savePower(exec.agent, { power: args?.power })
       throw new Error(`未知设定操作：${args?.action}`)
+    },
+  })
+
+  registerTool(ctx, {
+    name: 'novel_state',
+    description: '人物状态（跨章连续性）：action=get 读某章结束时的人物状态（处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点）；action=update 根据该章正文重新提取并写盘。写下一章前先 get 上一章状态，章节结束后 update；状态只记录正文实际发生的事，不要用它改正文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'update'] },
+        number: { type: 'number', description: '章节号' },
+      },
+      required: ['action', 'number'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      if (args?.action === 'update') {
+        return service.updateChapterState(exec.agent, { number: args?.number }, exec.signal)
+      }
+      return { state: await service.chapterState(exec.agent, args?.number) }
     },
   })
 
@@ -663,6 +898,7 @@ export function apply(ctx) {
         scores: result.scores,
         stats: result.stats,
         story: result.story ?? null,
+        suggestedAction: result.suggestedAction ?? null,
         issues: [
           ...result.issues.filter((issue) => issue.level === 'hard'),
           ...result.issues.filter((issue) => issue.level === 'soft').slice(0, 10),

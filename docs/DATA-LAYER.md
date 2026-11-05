@@ -35,13 +35,13 @@ story/
 | `premise` | 构思候选与已确认构思、`chosenHash` |
 | `style_contract` | 文风契约字段、示例段落、`fieldsHash` |
 | `style_templates` | 自定义文风模板 |
-| `bible_meta` / `bible_entries` | 设定索引与条目（角色/地点/规则/势力/物品） |
+| `bible_meta` / `bible_entries` | 设定索引与条目（角色/地点/规则/势力/物品）；`bible_entries.meta_json` 存角色生命周期 `{status, firstChapter, importance}`（schema v5） |
 | `relations` / `relation_positions` / `relations_meta` | 人物关系、关系图布局、关系状态 |
 | `power` | 能力体系（整体存 JSON） |
-| `volumes` / `outline_chapters` / `outline_meta` | 多卷、章纲节点、大纲状态 |
+| `volumes` / `outline_chapters` / `outline_meta` | 多卷、章纲节点、大纲状态；`volumes.extra_json` 存本卷角色三层：核心阵容 `cast`（`name / roleInVolume / fromChapter / importance`，≤6）、具名龙套 `extras`（`name / roleInVolume / fromChapter / note`，≤3）与 `castRationale`；默认上限 `CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 }` |
 | `chapter_meta` | 章节状态、字数、正文存在性（`has_draft` / `has_final`）、inputs、最近 run、`finalStale` 等 |
 | `chapter_qa` | 规则质检、AI 风格审稿、连续性检查结果 |
-| `chapter_state` | 本章状态快照（outline/meta/summary/cast/time/place/hook） |
+| `chapter_state` | 本章结束时的人物状态快照：`scene` + `characters[{situation, desire, fear, knowledge, relationships, items, injuries, unresolved, nextHook}]` + `summary`（整体 JSON） |
 | `chapter_summary` | 自动连续性摘要 |
 | `state_meta` | 状态索引更新时间 |
 | `stats_events` / `stats_meta` | 写作事件统计 |
@@ -58,7 +58,7 @@ story/
 - `fts_bible`：设定名称与描述
 - `fts_summaries`：摘要、人物、事件
 
-schema 版本记录在 `PRAGMA user_version`（当前为 4）。打开旧库时按版本自动升级：v2 给 `chapter_meta` 补 `has_draft` / `has_final`（正文存在性入库）；v3 新增 `materials`（素材库）；v4 新增 `facts`（约束事实包）；建表与版本更新在同一个事务里完成，旧数据原样保留。
+schema 版本记录在 `PRAGMA user_version`（当前为 5）。打开旧库时按版本自动升级：v2 给 `chapter_meta` 补 `has_draft` / `has_final`（正文存在性入库）；v3 新增 `materials`（素材库）；v4 新增 `facts`（约束事实包）；v5 给 `bible_entries` 补 `meta_json`（角色生命周期：status / firstChapter / importance）；建表与版本更新在同一个事务里完成，旧数据原样保留。
 
 ## 旧项目迁移
 

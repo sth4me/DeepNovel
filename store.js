@@ -296,6 +296,7 @@ export class NovelStore {
       if (row.traits_json !== null) entry.traits = jsonGet(row.traits_json, [])
       if (row.goal !== null) entry.goal = row.goal
       if (row.notes !== null) entry.notes = row.notes
+      if (row.meta_json !== null && row.meta_json !== undefined) entry.meta = jsonGet(row.meta_json, {})
       data[row.category].push(entry)
     }
     return data
@@ -315,8 +316,8 @@ export class NovelStore {
           const id = String(entry.id ?? `${category}-${index + 1}`)
           this.run(
             `INSERT OR REPLACE INTO bible_entries
-              (id, category, name, role, description, traits_json, goal, notes, sort_order, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (id, category, name, role, description, traits_json, goal, notes, sort_order, meta_json, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             id,
             category,
             String(entry.name ?? ''),
@@ -326,6 +327,7 @@ export class NovelStore {
             bind(entry.goal ?? null),
             bind(entry.notes ?? null),
             order,
+            jsonSet(entry.meta && typeof entry.meta === 'object' ? entry.meta : {}),
             timestamp,
           )
           order += 1

@@ -14,6 +14,9 @@ const { buildChapterUserPrompt } = await import('../templates.js')
 const { NovelWriterService } = await import('../service.js')
 const { DatabaseSync } = await import('node:sqlite')
 
+// ---------- 0) 优先级顺序：explicit > facts > requirements > bible > outline > style > notes ----------
+assert.deepEqual(constraintsEngine.CONSTRAINT_PRIORITY, ['explicit', 'facts', 'requirements', 'bible', 'outline', 'style', 'notes'])
+
 // ---------- 1) 优先级：explicit > requirements，且冲突记录 ----------
 const priorityResult = constraintsEngine.resolveChapterConstraints({
   instruction: '本章用第一人称写',
@@ -125,7 +128,7 @@ const fsCtx = {
 const service = new NovelWriterService({ fs: fsCtx, sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access' }) } })
 
 const legacyStore = await service.storeFor(legacyProject)
-assert.equal(legacyStore.schemaVersion(), 4, 'v3 旧库应升级到 v4')
+assert.equal(legacyStore.schemaVersion(), 5, 'v3 旧库应升级到 v4'.replace('v4', 'v5'))
 assert.equal(legacyStore.readProject().title, '旧项目', '旧项目数据不丢')
 assert.equal(legacyStore.listMaterials().length, 1, '旧 materials 数据不丢')
 const legacyFact = legacyStore.saveFact({ kind: '术语', key: '林昭', value: '小林' })
@@ -229,7 +232,7 @@ await service.writeJson(project, 'story/plot/outline.json', {
 let draftPrompt = null
 service.callJsonModel = async () => ({ parsed: { conflicts: [] } })
 service.callModel = async (agent, options) => {
-  draftPrompt = options.messages?.[0]?.content?.[0]?.text ?? null
+  if (options.task === 'draft') draftPrompt = options.messages?.[0]?.content?.[0]?.text ?? null
   return { text: '他推门进去，屋里没人。他把包袱放下，手指在桌沿敲了两下。'.repeat(20), usage: null, model: null, durationMs: 0 }
 }
 const draftResult = await service.draftChapter(project, { number: 1, instruction: '本章用第一人称' })

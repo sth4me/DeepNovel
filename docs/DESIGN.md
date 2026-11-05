@@ -78,11 +78,83 @@
 - **写入**：结果在弹窗里勾选后，才用 `project-update` 追加到 `writingNotes`；不自动改写正文。
 - **助手**：`novel_chapter action=revision-learn` 只返回建议，不写入。
 
+## 写作工程化
+
+把写作流程从「每次生成各自拼提示词」改造成「基础原则 + 按卷选角 + 状态驱动 + 结构分流 + 文风档案 + 字数与钩子 + 角色纪律 + token 策略」的工程化链路。
+
+### 基础原则（doctrine）
+
+`writing-doctrine.js` 统一提供 `WRITING_DOCTRINE` / `CAST_RULES` / `composeWritingSystem`：用户本轮要求优先；注入的上下文是方法与长期约束、**不是事实**；技能是方法不是设定；发现冲突先指出、再最小改动，不静默推翻已确认内容。写作类 system（premise / bible / outline / draft / revise / fix 等）统一前置 doctrine；助手系统提示词另有「写作基础原则」段（order 10120）。
+
+- 建设链路：人物（处境/欲望/恐惧/缺陷/秘密/底线/行动逻辑/关系张力）→ 核心承诺与书脊 → 动态阶段（不写死走向，由冲突/选择/信息差派生）→ 小节目录 → 正文 → 角色状态。
+- 负向约束：不为凑爽点/钩子硬造冲突反转；不重复同一目标/场景两次以上；不偏离类型调性；不靠巧合/降智/外部意外解决；不把结构问题当文字修；只写正式内容。
+
+### 角色池与按卷选角
+
+`bible_entries.meta_json`（schema v5）存角色生命周期：`status`（未登场 / 活跃 / 退场）、`firstChapter`、`importance`。bible 是**角色池**，不是本卷阵容。
+
+- `planVolumeCast`：本卷**可具名角色 = 核心阵容 + 具名龙套**——核心阵容 `cast` ≤6 人（承担主线冲突与关键转折）；具名龙套 `extras` ≤3 人（需登记、可反复出现，但**不得承担关键转折**）；名单外无名背景不限（一律身份指代）；每卷新增具名角色 ≤2 且必须登记。`CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 }`（当前固定，未在项目页开放配置）。`cast-plan` 生成阵容与龙套，`cast-list` 读取，`cast-update` 调整核心阵容；结果写 `volume.cast`（`name` / `roleInVolume` / `fromChapter` / `importance`）与 `volume.extras`（`name` / `roleInVolume` / `fromChapter` / `note`），助手 `novel_cast`。
+- 大纲/正文只用本卷可具名角色；未登场角色不出现；正文不给路人取名（用身份指代）；未登记的命名角色 → hard 一致性问题（advice：改身份指代或先 `novel_cast` 登记）。
+- **新卷阵容轮换**：`planVolumeCast` 计算上一卷阵容（`previousCastNames` = 上卷 cast + extras）与全卷未使用角色池（`unusedPool`），要求本卷阵容与上一卷**至少有 1 个不同角色**——优先 `unusedPool`，其次 `newCharacters`（≤2）；确属同一批人时由模型写 `noNewCastReason`。返回 `newFaces` / `noNewCastReason` / `castWarning`；与上一卷完全相同且无新面孔 → 「阵容未更新」warning；`OUTLINE_AUDIT` 的 `structureIssues` 也有「阵容未更新」类型。
+
+### 状态驱动
+
+`CHARACTER_STATE`（`scene` + `characters[{situation, desire, fear, knowledge, relationships, items, injuries, unresolved, nextHook}]` + `summary`）存 `chapter_state` 表（JSON 列）。
+
+- draft 注入上一章状态 + 本卷阵容 + 状态驱动说明（允许偏离章纲 change、以角色选择推进）。
+- 写完自动 `updateChapterState`（只记录实际发生；阵容外角色剔除并 warning）；`chapter-state` / `chapter-state-update`，助手 `novel_state`。
+
+### 结构问题分流
+
+`OUTLINE_AUDIT` 输出两类：`issues`（一致性）与 `structureIssues`（角色超载 / 桥段重复 / 主角被动 / 承诺未推进 / 调性漂移 / 因果薄弱 / 黄金三章）。
+
+- 结构问题**只建议重规划**（`replan`，1–3 个范围），不进 outline repair；`repairOutlineIssues` 遇到仅结构问题时返回 `reason:'structure-only'` + `replan`。
+- `diagnoseChapter` 返回 `suggestedAction`：有 hard → `repair`；仅 story 软问题 → `revise`；其余 `ignore`；无问题为 `null`。
+- 章节 repair 仍只修一致性问题（熔断/回滚/尝试上限/过期清理）。
+- **选角泄漏（确定性校验）**：生成后校验 `castUsed` / `newNamed` 是否都在本卷可具名名单内（空格/大小写归一）；**不自动重生成**。只有「顶层 `newNamed` 泄漏且无任何章级违规」时重试一次；仍有违规 → 写入 `structureIssues`（未登记角色）并进 `replan`；`castViolations` 随生成结果返回。
+- **主角主动性（弧段级）**：每 2–4 章至少一次有代价/风险的主动选择；连续 3 章以上被推着走 → `structureIssues`（主角被动，number 用连续区间起始章、message 写范围）。
+- **重复诊断（无升级才算）**：同一推进手段（夜探/交涉/交易等）连续使用，第二次必须带来新信息/新代价/新阻力；连续两章同手段且无升级 → `structureIssues`（桥段重复，给范围）。纯标签相同不算；不计数、不自动重试。
+- **局部修改优先**：单章或局部问题用 `novel_outline action=update` 改 1–3 章（title / synopsis / change / storyQuestion / promise / beats / wordBudget）；只有连续 ≥3 章崩坏、整卷崩或用户明确要求才 generate / regenerate，且先说明影响范围；`audit` 后不自动 repair / regenerate，等用户确认。
+- **一次一步**：助手每轮只做用户明确要求的那一步，完成后停下汇报并给下一步选项；任何确认 / commit 后必须停，工具内部联动不重复调用（详见 [AI-ASSISTANT.md](AI-ASSISTANT.md)「交互节奏」）。
+
+### 卷目标状态驱动
+
+- **输入**：上一卷末 3 章的 `chapter_state`（场景 / 人物状态 / 未解冲突）、末章正文结尾（≤600 字）与摘要、角色池（前卷阵容 + 本卷阵容 + 活跃角色）。
+- `planVolume` 生成 2–3 个差异明显的候选（`goal` 是当前局势下必须解决的开放问题；`whyNow` 由上一卷末处境/欲望/未解冲突推出；`cost` / `risk` 具体；`exitCriteria` 可判断），**不写盘**。
+- `selectVolumePlan` 按 `index` 选候选或 `overrides` 修订（goal / exitCriteria / whyNow / map / title / targetChapters / powerCeiling）后写盘，记录 `whyNow` / `goalRevisedAt`。
+- 生成新卷章纲时若目标 / 舞台为空：自动规划并暂用候选 1，返回 `volumeGoalCandidates` + `volumeGoalWarning`（仅兜底，不是静默决定）；用户可用 `volume-select` 改选。
+- 审核的「主线停滞 / 支线挤占」只诊断，不改目标；改目标必须显式 `volume-select`。
+- **卷收束**：`markVolumeEnd`（`novel_outline action=volume-end`，`volumeId?` / `chapterNumber?`，缺省卷末章）设置且**仅设置一章** `volumeEnd`（清掉其它章标记），置 `pendingNextVolume`；本卷目标达成 / 离卷条件满足时应收束，不无限续写。生成大纲时若本卷已 ≥`targetChapters + 2` 章仍未标记收束，返回 `volumeEndOverdue` + warning（用 `volume-end` 收束，或扩卷 / 调整目标）。
+
+### 通用叙事格式规则
+
+- 概述 / 章纲类输出（`synopsis`）必须是叙事句；不得用场记式 / 编号式 / 标签式标记表示时间或场景（字母+数字代号、`DayN`、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）。
+- 时间与场景要融进叙事（次日 / 三日后 / 入夜等）；审核对违规报 `issues` type「非叙事标记」或「场记式开头」（一致性 warn），advice 改为把时间/场景写进叙事句。
+
+### 字数与黄金三章
+
+- draft 目标 = `style.chapterWords` 或 `chapter.wordBudget`（默认 3000），下限 80%；不足自动扩写（最多 2 次，`expandChapterText` 不改情节 / 不新增命名角色），返回 `wordCount` / `wordTarget` / `expanded` / `wordCountWarning`。
+- 大纲审核含黄金三章：ch1 给出主角欲望或麻烦并以具体钩子收尾；ch2 冲突/承诺升级；ch3 出现一次小胜利或阶段兑现（纯铺垫、送信传话不算）。
+- 故事审校含 `endingHook`（type：动作/决定/信息/问题/留白/无；strength 0–1；newQuestion）；第 1 章弱钩子或强度 <0.3 报 soft。
+
+### 角色纪律
+
+正文只能使用本卷阵容内的具名角色；路人/次要人物一律不给名、用身份指代；需要固定配角先登记；未登记命名角色 → hard 一致性问题，advice「改身份指代或先 novel_cast 登记」。
+
+### 文风模板档案
+
+9 个内置模板升级为专业档案：`narrative` / `syntax` / `dialogue` / `description` / `emotion` / `chapterShape{opening,middle,ending}` / `anchors`（2 段原创锚点）/ `selfCheck` / `forbidden`；`formatStyleFields` 渲染新维度，锚点进入章节 prompt；`STYLE_CONTRACT` / `STYLE_AUDIT` 同步新维度。
+
+### token 策略
+
+默认不向模型传 `maxTokens`（用提供商/模型最大值）；只有显式参数或项目 `automation.maxTokens` 可限制；不设 budgetCap、不做预算加倍重试；大纲审核按 ≤12 章分块（质量/超时原因，与预算无关）。
+
 ## 约束引擎
 
 生成正文前把各层要求按优先级裁决成一份「硬约束」，同一份内容在提示词开头完整给出、结尾再复述一次，避免提示词自相矛盾。
 
-- **优先级**（高→低）：`explicit`（本轮对话 / 显式指令）> `facts`（硬事实 / 术语 / 安全 / 称呼）> `bible`（设定）> `outline`（本章章纲）> `style`（文风契约）> `requirements`（写作要求）> `notes`（作者备注）。
+- **优先级**（高→低）：`explicit`（本轮对话 / 显式指令）> `facts`（硬事实 / 术语 / 安全 / 称呼）> **`requirements`（项目写作要求）** > `bible`（设定）> `outline`（本章章纲）> `style`（文风契约）> `notes`（作者备注）。项目写作要求自动注入生成提示词（统一 `WRITING_NOTES_TITLE` 前置 + 冲突规则），不需要用户复制/插入；阶段勾选（设定 / 大纲 / 草稿 / 修订）在 `writingNotesFor(project, stage)` 过滤，`fix` / `expand` / `deslop` / `qa-fix` / `autofix` 映射到 `revise`，不勾选 = 全部阶段生效。
+- **HARD_RULES 缺口**：`constraints.hardRules` 目前只收结构化来源（显式指令里的视角/时态/句长/对话比例线索、facts 的硬事实/安全/称呼、术语 canonical、章纲 synopsis 的「本章必须发生」）；写作要求/备注/风格描述属内容型要求，整段注入提示词文本并按优先级裁决，但**不会转成逐条 hardRules**——因此写作要求里的具体禁令靠「统一注入块 + requirements 层级」生效，而不是结构化硬规则。
 - **结构化冲突**：视角 / 时态 / 句长 / 对话比例与文风契约冲突；术语 / 称呼写法；章纲要求人物死亡但设定记录存活；章纲要求回收但伏笔台账已完成。前两类按优先级自动裁决（记录 conflicts）；后两类不静默覆盖，生成照做并用 warning 提示同步更新设定 / 台账。
 - **可选语义预检**：LLM 检查规则间矛盾（失败降级为仅结构化检测，不阻塞生成）。
 - **硬约束**：≤12 条；`renderConstraints` 开头完整 + 结尾紧凑复述（内容一致、不新增规则；保留全量上下文，不瘦身）。
@@ -100,6 +172,18 @@
   - soft 问题只返回 `softHints`（AI 味/文风建议 `chapter-deslop`），不自动修改。
 - **入口**：project-action `chapter-diagnose` / `chapter-repair`；助手 `novel_diagnose`（只读）/ `novel_repair`（auto / prescribe）；锁 `chapter:<n>`；提示词 `logicAudit` / `fixIssues`（group review）可覆盖。
 - **原则**：逻辑/连续性/事实优先；软指标（文风分、AI 味）按阈值放行，不为满分反复修。
+
+## 问题聚合与处理闭环
+
+大纲与章节的「待处理问题」聚合为一个本地视图，客户端在项目状态里拿到，助手用 `novel_issues` 读取；只提示、不自动处理。
+
+- **来源（纯本地计算，不调模型）**：`outline-audit.json` 的 `issues`（一致性问题/软提示）、`structureIssues`（经 `buildStructureReplan` 归并为 replan 范围）、`staleCount`（过期清理提示）；章节字数低于目标 80%；`chapter_state` 缺失/为空。
+- **统一 item**：`id` / `source` / `severity`（error/warn/info）/ `chapter` / `type` / `message`（≤300 字）/ `actions`。
+- **问题生命周期**：每条问题有稳定 id（`level|number|type|message` 哈希，即 fingerprint）；`update` 改章节后自动消解该章旧问题（返回 `resolvedIssues`）；`dismiss` 按 `ids` / `chapter` / `all=true` 移除并记入 `dismissed`（≤200，重审同 id 不复活）；审核输出 `issues` ≤30 / `structureIssues` ≤10，超出截断并标记 `truncated`；`novel_issues` 的大纲问题 actions 含 `dismiss`。
+- **actions**：`replan`（带 `fromChapter` / `toChapter`，预填批量重生成范围）、`repair`（outline repair）、`audit`（重新审核）、`expand`（重新生成该章正文）、`update-state`（重算人物状态）、`dismiss`（忽略问题，`ids` / `chapter` / `all`）。
+- **修复版本化**：`repairOutlineIssues` 先快照 `outlineBefore` / `auditBefore`，修复后复检并按结果分类——**improved**（问题数下降且无新增）：自动应用，写回 outline 与合并后的 audit，存 `status:'applied'` / `autoApplied:true` 版本；**regressed / mixed / audit-unavailable**：当前 outline 与 audit 恢复为修复前一致状态，修复结果存为 `status:'candidate'` 候选版本（含 `outlineBefore` / `outlineAfter` / `auditBefore` / `auditAfter` / `diff` / `summary` / `issuesBefore` / `issuesAfter` / `newIssues` / `fixedIssues`）。版本存 `story/plot/revisions/<id>.json` + `index.json`（保留最近 20 个），`diff` 记录章节/字段改动，`apply-revision` 把 `outlineAfter` 与 `auditAfter` 写回当前并标 applied，`discard-revision` 标 discarded。`outlineGenerate` 自动修复后 `finalAudit = repair.audit`，不被修复前旧 audit 覆盖。
+- **排序与上限**：severity（error→warn→info）再按章号；每类上限 8 条（字数/状态各 8；结构 replan 由 `buildStructureReplan` 最多 3 条）；`limit` 默认 20、上限 100，返回 `{ count, items, generatedAt }`。
+- **出口**：`project-state.issues`（客户端「待处理」卡片与章节内联提示）、`issues-list`（项目动作，带 `limit`）、助手 `novel_issues`（只读清单，不自动修改）。
 
 ## 故事性（诊断式）
 

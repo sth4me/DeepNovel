@@ -7,7 +7,7 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 const activeTransactions = new WeakSet()
 
@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS bible_entries (
   goal TEXT,
   notes TEXT,
   sort_order INTEGER,
+  meta_json TEXT DEFAULT '{}',
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bible_category ON bible_entries(category, sort_order);
@@ -275,6 +276,7 @@ export function openDatabase(dbPath) {
  * v2：chapter_meta 增加 has_draft / has_final（正文存在性入库，避免每次递归扫目录）。
  * v3：新增 materials（素材库：参考片段/资料/桥段/引用）。
  * v4：新增 facts（章节约束事实包：术语/硬事实/安全/称呼，全局或按章）。
+ * v5：bible_entries 增加 meta_json（角色生命周期：status/firstChapter/importance）。
  * 升级在一个事务内完成（ALTER TABLE + 置版本），旧库数据原样保留。
  */
 export function ensureSchema(db) {
@@ -287,6 +289,10 @@ export function ensureSchema(db) {
       const columns = new Set(db.prepare("PRAGMA table_info('chapter_meta')").all().map((item) => item.name))
       if (!columns.has('has_draft')) db.exec('ALTER TABLE chapter_meta ADD COLUMN has_draft INTEGER DEFAULT 0')
       if (!columns.has('has_final')) db.exec('ALTER TABLE chapter_meta ADD COLUMN has_final INTEGER DEFAULT 0')
+    }
+    if (current < 5) {
+      const bibleColumns = new Set(db.prepare("PRAGMA table_info('bible_entries')").all().map((item) => item.name))
+      if (!bibleColumns.has('meta_json')) db.exec("ALTER TABLE bible_entries ADD COLUMN meta_json TEXT DEFAULT '{}'")
     }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   })
