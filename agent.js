@@ -94,8 +94,14 @@ const registerTool = (ctx, tool) => ctx.tools.register({
     try {
       const lockAction = lockActionFor(tool.name, args)
       locks = getNovelLocks()
+      let projectRoot = null
+      try {
+        projectRoot = await ctx.workingDirectory?.ensure?.(exec.agent) ?? null
+      } catch {
+        projectRoot = null
+      }
       if (lockAction && locks?.acquire) {
-        handle = locks.acquire(agentLockOwner(exec), lockAction, args ?? {})
+        handle = locks.acquire(agentLockOwner(exec), lockAction, args ?? {}, projectRoot)
         if (handle?.busy) {
           return {
             ok: false,
@@ -105,7 +111,11 @@ const registerTool = (ctx, tool) => ctx.tools.register({
           }
         }
       }
-      return await tool.execute(args, exec)
+      // 用户点「取消」时中止的是锁自带的 controller；必须与 DSH 的 exec.signal 合并，
+      // 否则服务端收不到停止信号，只能等任务自然结束。
+      const signals = [exec?.signal, handle?.controller?.signal].filter(Boolean)
+      const signal = signals.length > 1 && typeof AbortSignal.any === 'function' ? AbortSignal.any(signals) : signals[0]
+      return await tool.execute(args, signal ? { ...exec, signal } : exec)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { ok: false, tool: tool.name, error: message, hint: hintsForTool(tool.name, message) }

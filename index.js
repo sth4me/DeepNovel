@@ -41,7 +41,7 @@ function resolveActionResource(action, params) {
   return runResource(action, params)
 }
 
-export function acquireRun(activeRuns, owner, action, params) {
+export function acquireRun(activeRuns, owner, action, params, projectRoot = null) {
   sweepStaleRuns(activeRuns)
   const resource = resolveActionResource(action, params)
   if (!resource) return { resource: null, controller: new AbortController(), acquired: false }
@@ -58,8 +58,30 @@ export function acquireRun(activeRuns, owner, action, params) {
   }
   const controller = new AbortController()
   controller.startedAt = Date.now()
+  controller.projectRoot = projectRoot ?? null
   locks.set(resource, controller)
   return { resource, controller, acquired: true }
+}
+
+/** 按项目（可选资源）中止所有 owner 的运行，供 project-cancel 同时取消 UI 与助手任务。 */
+export function cancelRunsForProject(activeRuns, projectRoot, resource = null) {
+  let count = 0
+  for (const [owner, locks] of activeRuns) {
+    if (!locks) continue
+    for (const [key, controller] of locks) {
+      if (resource && key !== resource) continue
+      const controllerRoot = controller?.projectRoot ?? null
+      const sameProject = owner === projectRoot || controllerRoot === projectRoot
+      if (!sameProject) continue
+      try {
+        controller.abort()
+        count += 1
+      } catch {
+        // ignore abort failures
+      }
+    }
+  }
+  return count
 }
 
 export function releaseRun(activeRuns, owner, handle) {
@@ -79,7 +101,7 @@ export function listActiveLocks(activeRuns) {
   for (const [owner, entries] of activeRuns) {
     if (!entries) continue
     for (const [resource, controller] of entries) {
-      locks.push({ owner, resource, startedAt: controller?.startedAt ?? null })
+      locks.push({ owner, resource, projectRoot: controller?.projectRoot ?? null, startedAt: controller?.startedAt ?? null })
     }
   }
   return locks
@@ -420,7 +442,7 @@ export function apply(ctx) {
   const activeRuns = new Map()
   // 把 host 锁注册给 runtime：助手工具执行写动作时先 acquire，UI 与助手共用同一份锁。
   setNovelLocks({
-    acquire: (owner, action, params) => acquireRun(activeRuns, owner, action, params),
+    acquire: (owner, action, params, projectRoot) => acquireRun(activeRuns, owner, action, params, projectRoot),
     release: (owner, handle) => releaseRun(activeRuns, owner, handle),
     listActive: () => listActiveLocks(activeRuns),
   })
@@ -1586,7 +1608,7 @@ export function apply(ctx) {
           logRoot = root
           actionName = body.action
           const params = body.params && typeof body.params === 'object' ? body.params : {}
-          const run = acquireRun(activeRuns, root, body.action, params)
+          const run = acquireRun(activeRuns, root, body.action, params, root)
           await logAction(root, {
             action: body.action,
             resource: run.resource,
@@ -1625,16 +1647,8 @@ export function apply(ctx) {
           if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
           const body = await readRequestBody(req)
           const root = validProjectRoot(body.projectRoot)
-          const locks = root ? activeRuns.get(root) : undefined
           const resource = typeof body.resource === 'string' ? body.resource : null
-          let count = 0
-          if (locks) {
-            for (const [key, controller] of locks) {
-              if (resource && key !== resource) continue
-              controller.abort()
-              count += 1
-            }
-          }
+          const count = root ? cancelRunsForProject(activeRuns, root, resource) : 0
           jsonResponse(res, 200, { ok: true, data: { cancelled: count > 0, count } })
         } catch (error) {
           jsonResponse(res, 500, { ok: false, error: { message: errorText(error) } })
@@ -1681,7 +1695,7 @@ export function apply(ctx) {
           const body = await readRequestBody(req)
           root = validProjectRoot(body.projectRoot)
           if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
-          run = acquireRun(activeRuns, root, 'premise-candidates', {})
+          run = acquireRun(activeRuns, root, 'premise-candidates', {}, root)
           if (run.busy) {
             return jsonResponse(res, 409, {
               ok: false,
@@ -1810,7 +1824,8 @@ export function apply(ctx) {
             return jsonResponse(res, 404, { ok: false, error: { message: 'session not found', code: 'NO_LIVE_SESSION' } })
           }
           const params = body.params && typeof body.params === 'object' ? body.params : {}
-          const run = acquireRun(activeRuns, agent.id, body.action, params)
+          const agentRoot = await ctx.workingDirectory.ensure(agent).catch(() => null)
+          const run = acquireRun(activeRuns, agent.id, body.action, params, agentRoot)
           if (run.busy) {
             return jsonResponse(res, 409, {
               ok: false,

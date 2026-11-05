@@ -242,7 +242,11 @@ window.__ModuleLoader__.load({
 .nw-selbar-title{font-size:11.5px;font-weight:650;line-height:1.4}
 .nw-sel-float{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:8px;padding:8px 10px 8px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 34px rgba(0,0,0,.28);max-width:calc(100vw - 32px)}
 .nw-sel-float-info{font-size:11.5px;font-weight:600;white-space:nowrap}
-.nw-task-dock{position:fixed;right:22px;bottom:22px;z-index:58;width:278px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 14px 34px rgba(0,0,0,.3);backdrop-filter:blur(10px)}
+.nw-task-dock{position:absolute;left:16px;bottom:16px;z-index:58;width:278px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 14px 34px rgba(0,0,0,.3);backdrop-filter:blur(10px)}
+.nw-task-dock.collapsed{width:auto;max-width:240px;padding:6px 8px 6px 10px}
+.nw-task-dock.collapsed .nw-task-head{gap:4px}
+.nw-task-dock.collapsed .nw-task-title{font-size:11px}
+.nw-task-dock.collapsed .nw-task-head .nw-btn{min-height:22px;padding:2px 7px;font-size:10px}
 .nw-task-head{display:flex;align-items:center;gap:6px}
 .nw-task-title{flex:1;font-size:11.5px;font-weight:700;color:var(--dsw-alias-label-primary)}
 .nw-task-list{display:flex;flex-direction:column;gap:6px}
@@ -255,7 +259,7 @@ window.__ModuleLoader__.load({
 .nw-task-bar{height:2px;margin-top:5px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-border-l1)}
 .nw-task-bar span{display:block;width:35%;height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary);animation:nw-task-slide 1.4s ease-in-out infinite}
 @keyframes nw-task-slide{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
-@media (max-width:700px){.nw-task-dock{left:10px;right:10px;bottom:10px;width:auto}.nw-sel-float{bottom:96px}}
+@media (max-width:700px){.nw-task-dock{left:10px;right:auto;bottom:76px;width:auto;max-width:calc(100vw - 20px);max-height:40vh;overflow:auto}.nw-sel-float{bottom:96px}}
 .nw-editor{max-width:760px;margin:0 auto;width:100%}
 .nw-editor-textarea{width:100%;min-height:55vh;resize:vertical;font-family:"Iowan Old Style","Palatino Linotype","Songti SC","STSong",Georgia,serif;font-size:14px;line-height:1.9;color:var(--dsw-alias-label-primary);background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 78%,var(--dsw-alias-bg-layer-1));border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:14px 16px;outline:none}
 .nw-editor-textarea:focus{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
@@ -1715,7 +1719,7 @@ window.__ModuleLoader__.load({
       }, [])
       const [elapsed, setElapsed] = useState(0)
       const [clock, setClock] = useState(Date.now())
-      const [taskOpen, setTaskOpen] = useState(true)
+      const [taskOpen, setTaskOpen] = useState(false)
       const [runStages, setRunStages] = useState({})
       const [liveLocks, setLiveLocks] = useState([])
       const [recentTasks, setRecentTasks] = useState([])
@@ -2546,7 +2550,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-task-head' },
               h('div', { className: 'nw-task-title' }, `运行中 ${taskEntries.length}${otherLocks.length ? ` · 助手 ${otherLocks.length}` : ''}${queuedEntries.length ? ` · 排队 ${queuedEntries.length}` : ''}`),
               h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setTaskOpen((value) => !value) }, taskOpen ? '收起' : '展开'),
-              taskEntries.length || queuedEntries.length
+              taskEntries.length || queuedEntries.length || otherLocks.length
                 ? h('button', { type: 'button', className: 'nw-btn danger', onClick: cancel }, '全部取消')
                 : null,
             ),
@@ -2583,11 +2587,14 @@ window.__ModuleLoader__.load({
                     const parsedStart = Number.isFinite(Number(lock.startedAt))
                       ? Number(lock.startedAt)
                       : (Date.parse(String(lock.startedAt ?? '')) || clock)
-                    return h('div', { key: `lock-${lock.owner ?? ''}-${lock.resource}`, className: 'nw-task-row', title: '由写作助手发起，可在 AI 页停止' },
+                    return h('div', { key: `lock-${lock.owner ?? ''}-${lock.resource}`, className: 'nw-task-row', title: '由写作助手发起' },
                       h('span', { className: 'nw-spinner' }),
                       h('div', { className: 'nw-task-main' },
                         h('div', { className: 'nw-task-label' }, `${lockOwnerLabel(lock.owner)} · ${lockResourceLabel(lock.resource)}`),
-                        h('div', { className: 'nw-muted' }, `占用中 · ${Math.max(0, Math.floor((clock - parsedStart) / 1000))}s · 由写作助手发起，可在 AI 页停止`),
+                        h('div', { className: 'nw-muted' }, `占用中 · ${Math.max(0, Math.floor((clock - parsedStart) / 1000))}s · 助手任务`),
+                      ),
+                      h('div', { className: 'nw-task-actions' },
+                        h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => cancelTask(lock.resource) }, '取消'),
                       ),
                     )
                   }),
