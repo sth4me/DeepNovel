@@ -9861,7 +9861,7 @@ ${sections.join('\n')}
     return { results, nextChapter: number, paused }
   }
 
-  async buildRevisionPlan(agent, options = {}) {
+  async buildRevisionPlan(agent, options = {}, signal) {
     await this.assertInitialized(agent)
     const number = Number(options.number ?? options.chapter ?? options.chapterNumber)
     const detail = await this.chapterDetail(agent, number)
@@ -9963,11 +9963,11 @@ ${sections.join('\n')}
   }
 
   async previewRevision(agent, options = {}, signal) {
-    const plan = await this.buildRevisionPlan(agent, options)
+    const plan = await this.buildRevisionPlan(agent, options, signal)
     this.reportStage('preview', '生成重写预览')
     const call = await this.callModel(agent, {
       task: 'revise',
-      number,
+      number: plan.number,
       system: plan.system,
       messages: plan.messages,
       signal,
@@ -9994,7 +9994,7 @@ ${sections.join('\n')}
   }
 
   async reviseChapter(agent, options = {}, signal) {
-    const plan = await this.buildRevisionPlan(agent, options)
+    const plan = await this.buildRevisionPlan(agent, options, signal)
     const {
       number,
       detail,

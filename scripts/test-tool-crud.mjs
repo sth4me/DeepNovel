@@ -71,6 +71,12 @@ const numbers = outline.volumes[0].chapters.map((chapter) => chapter.number)
 assert.deepEqual(numbers, [1, 2], '删除后后续章号应前移')
 assert.equal(outline.volumes[0].chapters[1].title, '三')
 
+// 修订预览：buildRevisionPlan 必须能拿到 signal（曾因未定义 signal 报错）
+await service.writeTextFile(project, 'story/chapters/001/draft.md', '第一段原文。\n\n第二段原文。')
+service.callModel = async () => ({ text: '第一段改直白。\n\n第二段改直白。', usage: null, model: null, durationMs: 0 })
+const preview = await service.previewRevision(project, { number: 1, instruction: '改直白' })
+assert.ok(preview.nextText.includes('改直白'), '修订预览应返回改写文本')
+
 // 素材 save/list/update/delete
 const material = await service.materialSave(project, { title: '参考', kind: '片段', content: '雨夜，刀光。', tags: ['雨', '刀'] })
 assert.ok(material.id)

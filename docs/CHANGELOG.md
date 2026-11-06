@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.1.24
+
+- **修复修订/预览的 signal 未定义**：`buildRevisionPlan` 之前没有接收 `signal` 参数，但内部已使用它，导致 `revise` / 预览报 `signal is not defined`；现在 `buildRevisionPlan(agent, options, signal)`，`reviseChapter` / `previewRevision` 调用时透传。顺带修复预览中误用未定义 `number`（应为 `plan.number`）。
+- **回归测试**：`test-tool-crud` 增加修订预览调用（走 `buildRevisionPlan`），确保这类未定义变量能被捕获。
+
 ## 0.1.23
 
 - **中断/取消补齐**：`novel_diagnose` / `novel_repair` 之前没有把 `exec.signal` 传进服务，DSH 停止对它们无效；现在透传并加检查点。`callModel` 改为手动迭代 + 与 abort 竞速，provider 不响应也会立即以 `NOVEL_WRITER_CANCELLED` 退出，不再等整段生成；定稿摘要、约束语义预检也接入取消。任务坞的助手任务可直接取消（0.1.22 已接通锁控制器，本轮补齐工具侧信号）。
