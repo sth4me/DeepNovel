@@ -225,6 +225,12 @@ assert.equal(emptyOutline.volumes[0].id, 'vol-1')
 assert.equal(emptyOutline.volumes[0].title, '第1卷')
 assert.equal(emptyOutline.volumes[0].targetChapters, 10, 'targetChapters 应取 toChapter-fromChapter+1')
 assert.equal(emptyOutline.volumes[0].cast.length, 6, '阵容应写入新卷')
+// 生成章纲前必须确认卷目标（模拟用户填写）
+const withGoal = await readOutline()
+withGoal.volumes[0].goal = '本卷目标：让角色1在新地图站住脚'
+withGoal.volumes[0].exitCriteria = '新地图站稳'
+withGoal.volumes[0].targetChapters = 10
+await service.writeJson(project, 'story/plot/outline.json', withGoal)
 generatePayload = {
   chapters: [{ number: 1, title: '第1章', synopsis: '角色1登场，展开事件。', wordBudget: 3000, castUsed: ['角色1'], agency: { choice: '主角主动交涉', cost: '被跟踪' }, device: '救人' }],
   castUsed: ['角色1'],

@@ -186,7 +186,7 @@ assert.equal(planCalls, 1, '新卷空目标应调用一次卷规划')
 assert.equal(Array.isArray(generated.volumeGoalCandidates), true)
 assert.equal(generated.volumeGoalCandidates.length, 2)
 assert.equal(generated.volumeGoalAutoSelected, true, '应标记自动选')
-assert.ok(generated.volumeGoalWarning && generated.volumeGoalWarning.includes('暂用候选 1'), '应有明确 warning（不静默）')
+assert.ok(generated.volumeGoalWarning && generated.volumeGoalWarning.includes('候选 1'), '应有明确 warning（不静默）')
 const outlineGenerated = await readOutline()
 assert.equal(outlineGenerated.volumes[1].goal, candidatesPayload.candidates[0].goal, '自动选定候选1并写盘')
 

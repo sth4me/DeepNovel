@@ -1731,6 +1731,8 @@ window.__ModuleLoader__.load({
       const [syncState, setSyncState] = useState('idle')
       const syncBusyRef = useRef(false)
       const lastAutoSyncToastRef = useRef(0)
+      // 防止迟到的 project-state 响应覆盖更新的状态（保存后旧响应晚到会显示回旧值）。
+      const loadSeqRef = useRef(0)
       const [runDetail, setRunDetail] = useState(null)
       const [runFilter, setRunFilter] = useState('all')
       const [tab, setTabState] = useState(() => readStoredTab() ?? 'project')
@@ -1811,7 +1813,10 @@ window.__ModuleLoader__.load({
 
       const load = async (target = root) => {
         if (!target) return null
+        const seq = ++loadSeqRef.current
         const data = await fetchProjectState(target)
+        // 只接受最后一次发起的请求结果，避免旧快照覆盖新数据。
+        if (seq !== loadSeqRef.current) return data
         setState(data)
         return data
       }
@@ -2808,6 +2813,7 @@ window.__ModuleLoader__.load({
         }),
         h('div', { className: 'nw-actions' },
           h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: save }, '保存能力体系'),
+          h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '根据已确认构思与设定重新建立层级和角色当前层级', onClick: () => run('power-generate', {}, { toast: '能力体系已重新生成' }) }, '重新生成能力体系'),
         ),
       )
     }
@@ -3843,7 +3849,7 @@ window.__ModuleLoader__.load({
       }, [volumeId, chapters.length, chapters.map((item) => item.number).join(',')])
       const createVolume = () => {
         if (busy) return
-        setVolumeDraft({ mode: 'create', title: `第 ${volumes.length + 1} 卷`, map: '', goal: '', powerCeiling: '', exitCriteria: '' })
+        setVolumeDraft({ mode: 'create', title: `第 ${volumes.length + 1} 卷`, map: '', goal: '', powerCeiling: '', exitCriteria: '', targetChapters: 12 })
       }
       const editVolumePlan = () => {
         if (!activeVolume || busy) return
@@ -3855,6 +3861,7 @@ window.__ModuleLoader__.load({
           goal: activeVolume.goal ?? '',
           powerCeiling: activeVolume.powerCeiling ?? '',
           exitCriteria: activeVolume.exitCriteria ?? '',
+          targetChapters: Number(activeVolume.targetChapters) || 12,
         })
       }
       const submitVolume = async () => {
@@ -3866,6 +3873,7 @@ window.__ModuleLoader__.load({
           goal: volumeDraft.goal ?? '',
           powerCeiling: volumeDraft.powerCeiling ?? '',
           exitCriteria: volumeDraft.exitCriteria ?? '',
+          targetChapters: Number(volumeDraft.targetChapters) || 12,
         }
         if (volumeDraft.mode === 'edit') {
           await run('volume-update', { volumeId: volumeDraft.id, ...fields }, { toast: '卷计划已保存' })
@@ -3998,7 +4006,20 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-actions', style: { marginTop: '8px' } },
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: createVolume }, '+ 新建卷'),
             activeVolume ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: editVolumePlan }, '卷设置') : null,
-            activeVolume ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => run('volume-plan', { volumeId: activeVolume.id }, { toast: '已生成卷舞台设定' }) }, '生成卷设定') : null,
+            activeVolume ? h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              title: '根据构思开局/上一卷末态自动生成卷目标（候选 1），可在卷设置里修改或再次点击重生成',
+              onClick: async () => {
+                const planned = await run('volume-plan', { volumeId: activeVolume.id }, { silent: true })
+                if (!planned?.candidates?.length) {
+                  setToast('卷目标生成失败，可稍后重试或手动填写')
+                  return
+                }
+                await run('volume-select', { volumeId: activeVolume.id, index: 0, candidates: planned.candidates }, { toast: `已生成卷目标：${planned.candidates[0].goal}` })
+              },
+            }, '生成卷设定') : null,
             activeVolume ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: deleteVolume }, '删除卷') : null,
             activeVolume && chapters.length
               ? h('button', {
@@ -4055,7 +4076,7 @@ window.__ModuleLoader__.load({
             : null,
           activeVolume
             ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
-                `地图：${activeVolume.map || '未设置'} · 战力天花板：${activeVolume.powerCeiling || '未设置'} · 离卷：${activeVolume.exitCriteria || '未设置'}`,
+                `目标：${activeVolume.goal || '未设置'} · 目标章数：${Number(activeVolume.targetChapters) > 0 ? activeVolume.targetChapters : '未设置'} · 地图：${activeVolume.map || '未设置'} · 战力天花板：${activeVolume.powerCeiling || '未设置'} · 离卷：${activeVolume.exitCriteria || '未设置'}`,
               )
             : null,
           volumeDraft
@@ -4095,6 +4116,10 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'nw-field' },
                   h('label', { className: 'nw-label' }, '离卷条件'),
                   h('input', { className: 'nw-input', value: volumeDraft.exitCriteria ?? '', disabled: busy, placeholder: '本地主线收束 + 主角压过本地天花板后离开', onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, exitCriteria: event.target.value } : prev) }),
+                ),
+                h('div', { className: 'nw-field' },
+                  h('label', { className: 'nw-label' }, '目标章数'),
+                  h('input', { className: 'nw-input', type: 'number', min: '1', value: volumeDraft.targetChapters ?? 12, disabled: busy, onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, targetChapters: Number(event.target.value) || 12 } : prev) }),
                 ),
               )
             : null,
@@ -8505,9 +8530,29 @@ window.__ModuleLoader__.load({
       const [importOpen, setImportOpen] = useState(false)
       const [importText, setImportText] = useState('')
       const [sampleText, setSampleText] = useState(Array.isArray(contract.samples) ? contract.samples.join('\n\n') : '')
-      useEffect(() => { setFields(contract.fields ?? {}) }, [contract.updatedAt])
+      const fieldsRef = useRef(fields)
+      fieldsRef.current = fields
+      const sampleRef = useRef(sampleText)
+      sampleRef.current = sampleText
+      const [externalUpdate, setExternalUpdate] = useState(false)
       useEffect(() => {
-        setSampleText(Array.isArray(contract.samples) ? contract.samples.join('\n\n') : '')
+        // 用户正在编辑时不接受外部覆盖；只提示，保存后再对齐。
+        if (JSON.stringify(fieldsRef.current ?? {}) !== JSON.stringify(contract.fields ?? {})) {
+          setExternalUpdate(true)
+          return
+        }
+        setFields(contract.fields ?? {})
+        if (JSON.stringify(sampleRef.current ?? '') === JSON.stringify(Array.isArray(contract.samples) ? contract.samples.join('\n\n') : '')) {
+          setExternalUpdate(false)
+        }
+      }, [contract.updatedAt])
+      useEffect(() => {
+        const nextSamples = Array.isArray(contract.samples) ? contract.samples.join('\n\n') : ''
+        if (sampleRef.current !== nextSamples && JSON.stringify(fieldsRef.current ?? {}) !== JSON.stringify(contract.fields ?? {})) {
+          setExternalUpdate(true)
+          return
+        }
+        setSampleText(nextSamples)
       }, [contract.updatedAt])
       const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }))
       const textValue = (key) => (typeof fields[key] === 'string' ? fields[key] : '')
@@ -8702,6 +8747,7 @@ window.__ModuleLoader__.load({
             } }, '保存为模板'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setImportOpen(true) }, '导入模板'),
             dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
+            externalUpdate ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '文风已在别处更新，你的未保存修改已保留') : null,
           ),
         ),
         h('h3', { className: 'nw-eyebrow', style: { margin: '6px 2px 10px' } }, '模板库'),

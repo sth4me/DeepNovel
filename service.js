@@ -69,6 +69,8 @@ import {
   CHAPTER_REVIEW_SYSTEM_PROMPT,
   CAST_PLAN_SYSTEM_PROMPT,
   CHARACTER_STATE_SYSTEM_PROMPT,
+  POWER_SYSTEM_PROMPT,
+  POWER_UPDATE_SYSTEM_PROMPT,
   EXPAND_SYSTEM_PROMPT,
   renderWritingNotesBlock,
   FIX_ISSUES_SYSTEM_PROMPT,
@@ -293,9 +295,10 @@ const WRITING_DOCTRINE_KEYS = new Set([
   'draft', 'revise', 'fix',
 ])
 
-/** 章纲时间锚点归一化：{day, part, spanDays, mode}；非法整体丢弃为 null。 */
+/** 章纲时间锚点归一化：{day, part, endDay?, endPart?, spanDays, mode}；非法整体丢弃为 null。 */
 function normalizeChapterTime(raw) {
   if (!raw || typeof raw !== 'object') return null
+  const PART_ORDER = { 晨: 0, 日: 1, 暮: 2, 夜: 3 }
   const rawDay = raw.day
   const day = rawDay === null || rawDay === undefined || rawDay === '' ? null : Number(rawDay)
   if (day !== null && (!Number.isFinite(day) || day < 0 || day > 3650)) return null
@@ -304,7 +307,20 @@ function normalizeChapterTime(raw) {
   const spanDays = Number.isFinite(rawSpan) && rawSpan >= 0 && rawSpan <= 30 ? Math.round(rawSpan) : 0
   const mode = ['linear', 'flashback', 'parallel'].includes(raw.mode) ? raw.mode : 'linear'
   if (day === null && !part) return null
-  return { day, part, spanDays, mode }
+  const rawEndDay = raw.endDay
+  const endDay = rawEndDay === null || rawEndDay === undefined || rawEndDay === '' ? null : Number(rawEndDay)
+  const endPart = ['晨', '日', '暮', '夜'].includes(raw.endPart) ? raw.endPart : null
+  if (endDay !== null && (!Number.isFinite(endDay) || endDay < 0 || endDay > 3650)) return null
+  if (endDay !== null && endDay < day) return null
+  if (endDay !== null && endDay === day && endPart && part && PART_ORDER[endPart] < PART_ORDER[part]) return null
+  return {
+    day,
+    part,
+    spanDays,
+    mode,
+    ...(endDay !== null ? { endDay } : {}),
+    ...(endPart ? { endPart } : {}),
+  }
 }
 
 /** 从硬事实文本里粗略换算“第 N 天/N 天后/三日后”为 day（相对本卷开场）。 */
@@ -3169,6 +3185,78 @@ export class NovelWriterService {
     return power
   }
 
+  /** 根据构思/设定自动建立能力体系（只在尚未自定义时调用）。 */
+  async generatePower(agent, options = {}, signal) {
+    await this.assertInitialized(agent)
+    const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
+    if (premise?.status !== 'confirmed' || !premise.chosen) throw new Error('请先确认构思，再生成能力体系')
+    const bible = await this.readBible(agent)
+    const style = await this.readJson(agent, 'story/style/contract.json').catch(() => null)
+    const project = await this.readJson(agent, this.marker).catch(() => null)
+    const current = await this.readPower(agent)
+    const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, POWER_SYSTEM_PROMPT)
+    const userText = [
+      `项目：${project?.title ?? ''}`,
+      `已确认构思：${JSON.stringify(premise.chosen, null, 2)}`,
+      `文风契约：${JSON.stringify(style?.fields ?? {}, null, 2)}`,
+      `角色池：${JSON.stringify((bible.characters ?? []).map((item) => ({ name: item.name, role: item.role, description: String(item.description ?? '').slice(0, 200), meta: item.meta })), null, 2)}`,
+      `世界规则/势力/物品：${JSON.stringify({
+        rules: (bible.rules ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
+        factions: (bible.factions ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
+        items: (bible.items ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
+      }, null, 2)}`,
+      `当前体系（如已有可参考，不要照抄默认词）：${JSON.stringify({ name: current.system?.name, summary: current.system?.summary, tiers: current.system?.tiers?.map((tier) => tier.name) })}`,
+      this.writingNotesFor(project, 'bible') ? renderWritingNotesBlock(this.writingNotesFor(project, 'bible')) : '',
+      '只输出 JSON。',
+    ].filter(Boolean).join('\n\n')
+    const generated = await this.callJsonModel(agent, {
+      kind: 'bible.power',
+      task: 'bible',
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+      signal,
+      temperature: 0.4,
+      inputHash: this.hashInputs({ premise: premise.chosenHash, bible: this.hashInputs(bible) }),
+    })
+    const parsed = generated?.parsed && typeof generated.parsed === 'object' ? generated.parsed : null
+    if (!parsed) throw new Error('能力体系解析失败（模型未返回可用 JSON）')
+    const rawTiers = Array.isArray(parsed.system?.tiers) ? parsed.system.tiers : []
+    const tiers = rawTiers
+      .map((tier, index) => ({
+        id: `tier-${index + 1}`,
+        name: String(tier?.name ?? '').trim(),
+        order: index,
+        description: String(tier?.description ?? '').trim(),
+      }))
+      .filter((tier) => tier.name)
+    if (tiers.length < 2) throw new Error('能力体系至少需要 2 个层级')
+    const tierByName = new Map(tiers.map((tier) => [tier.name, tier]))
+    const characters = (Array.isArray(parsed.characters) ? parsed.characters : [])
+      .map((item, index) => {
+        const name = String(item?.name ?? '').trim()
+        if (!name) return null
+        const tier = tierByName.get(String(item?.tierName ?? '').trim())
+        if (!tier) return null
+        return {
+          id: `P#${String(index + 1).padStart(2, '0')}`,
+          name,
+          tierId: tier.id,
+          tierName: tier.name,
+          stage: String(item?.stage ?? '').trim(),
+          current: `${tier.name}${String(item?.stage ?? '').trim()}`.trim(),
+          abilities: Array.isArray(item?.abilities) ? item.abilities.map(String).filter(Boolean).slice(0, 12) : [],
+          notes: String(item?.notes ?? '').trim().slice(0, 300),
+        }
+      })
+      .filter(Boolean)
+    return this.savePower(agent, {
+      status: 'confirmed',
+      system: { name: String(parsed.system?.name ?? '能力体系').trim() || '能力体系', summary: String(parsed.system?.summary ?? '').trim(), tiers },
+      characters,
+      chapterChanges: current.chapterChanges ?? {},
+    })
+  }
+
   async readBible(agent) {
     const raw = await this.readJson(agent, 'story/bible/index.json').catch(() => null)
     const bible = raw && typeof raw === 'object' ? raw : {}
@@ -4037,6 +4125,74 @@ export class NovelWriterService {
     return { number: Number(number), ...state }
   }
 
+  /** 从本章正文提取能力/境界变化，追加到 power.chapterChanges 并更新角色当前层级。 */
+  async updatePowerAfterChapter(agent, number, signal) {
+    await this.assertInitialized(agent)
+    const n = Number(number)
+    if (!Number.isFinite(n) || n < 1) return { updated: false }
+    const detail = await this.chapterDetail(agent, n).catch(() => null)
+    const text = detail?.draft ?? detail?.final ?? ''
+    if (!text) return { updated: false }
+    const power = await this.readPower(agent)
+    if (!power.system?.tiers?.length) return { updated: false }
+    const bible = await this.readBible(agent).catch(() => ({ characters: [] }))
+    const roster = await this.volumeRoster(agent, n).catch(() => ({ cast: null, extras: [] }))
+    const rosterNames = new Set([...(roster.cast ?? []), ...(roster.extras ?? [])].map((item) => String(item.name)))
+    const knownNames = new Set([...bible.characters.map((item) => String(item.name)), ...power.characters.map((item) => String(item.name))])
+    const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, POWER_UPDATE_SYSTEM_PROMPT)
+    const userText = [
+      `第 ${number} 章《${detail.chapter?.title || '未命名'}》`,
+      `现有体系：${JSON.stringify({ name: power.system.name, tiers: power.system.tiers.map((tier) => ({ name: tier.name, order: tier.order, description: tier.description })) })}`,
+      `角色当前层级：${JSON.stringify(power.characters.map((character) => ({ name: character.name, tierName: character.tierName, stage: character.stage, current: character.current, notes: character.notes })))}`,
+      `本章阵容：${JSON.stringify([...rosterNames])}`,
+      `当前正文：\n${text}`,
+      '只输出 JSON。',
+    ].join('\n\n')
+    const generated = await this.callJsonModel(agent, {
+      kind: 'chapter.power',
+      task: 'summary',
+      number: n,
+      system,
+      messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+      signal,
+      temperature: 0.2,
+      inputHash: this.hashInputs({ chapter: detail.chapter?.id ?? n, text: this.hashInputs(text) }),
+    })
+    const parsed = generated?.parsed && typeof generated.parsed === 'object' ? generated.parsed : null
+    if (!parsed) return { updated: false }
+    const tierByName = new Map(power.system.tiers.map((tier) => [tier.name, tier]))
+    const existing = Array.isArray(power.chapterChanges[String(n)]) ? power.chapterChanges[String(n)] : []
+    const changes = []
+    for (const item of Array.isArray(parsed.changes) ? parsed.changes : []) {
+      const character = String(item?.character ?? '').trim()
+      if (!character || (!rosterNames.has(character) && !knownNames.has(character))) continue
+      const from = String(item?.from ?? '').trim()
+      const to = String(item?.to ?? '').trim()
+      const summary = String(item?.summary ?? '').trim()
+      if (!from && !to && !summary) continue
+      const line = `${character}：${[from, to].filter(Boolean).join('→')}${summary ? `（${summary}）` : ''}`.slice(0, 300)
+      if (!existing.includes(line) && !changes.includes(line)) changes.push(line)
+    }
+    const updatedCharacters = []
+    for (const item of Array.isArray(parsed.characters) ? parsed.characters : []) {
+      const name = String(item?.name ?? '').trim()
+      const target = power.characters.find((character) => character.name === name)
+      if (!target) continue
+      if (item.tierName !== undefined) {
+        const tier = tierByName.get(String(item.tierName))
+        if (tier) { target.tierId = tier.id; target.tierName = tier.name }
+      }
+      if (item.stage !== undefined) target.stage = String(item.stage).trim().slice(0, 40)
+      if (item.notes !== undefined) target.notes = String(item.notes).trim().slice(0, 300)
+      target.current = `${target.tierName}${target.stage}`.trim()
+      updatedCharacters.push(target.name)
+    }
+    if (changes.length === 0 && updatedCharacters.length === 0) return { updated: false }
+    power.chapterChanges[String(n)] = [...existing, ...changes].slice(0, 20)
+    await this.savePower(agent, power)
+    return { updated: true, changes, characters: updatedCharacters }
+  }
+
   /**
    * 从本章正文提取人物状态并写盘（只记录实际发生；阵容外角色剔除并 warning）。
    * 返回 { state, warning }。
@@ -4639,6 +4795,14 @@ export class NovelWriterService {
       throw new Error('世界设定结果里缺少地点或规则，请重试或补充要求')
     }
     await this.writeJson(agent, 'story/bible/index.json', bible)
+    // 能力体系随设定自动建立：只在尚未自定义时生成，不覆盖用户已编辑的体系。
+    if (scope !== 'characters') {
+      const powerBefore = await this.readPower(agent).catch(() => null)
+      const powerEmpty = !powerBefore || ((powerBefore.characters ?? []).length === 0 && Object.keys(powerBefore.chapterChanges ?? {}).length === 0)
+      if (powerEmpty) {
+        await this.generatePower(agent, {}, signal).catch(() => null)
+      }
+    }
     return bible
   }
 
@@ -5632,7 +5796,11 @@ export class NovelWriterService {
     if (bible.status !== 'confirmed') {
       throw new Error('固定流程要求先确认角色/世界设定，再生成章纲')
     }
-    const power = await this.readPower(agent)
+    let power = await this.readPower(agent)
+    // 符合条件的项目在首次生成章纲前自动建立能力体系，避免能力页一直空白。
+    if ((power.characters ?? []).length === 0 && Object.keys(power.chapterChanges ?? {}).length === 0) {
+      power = await this.generatePower(agent, {}, signal).catch(() => power)
+    }
 
     const project = await this.readJson(agent, this.marker)
     const outline = (await this.readJson(agent, 'story/plot/outline.json')) ?? {
@@ -5691,11 +5859,14 @@ export class NovelWriterService {
     let volumeGoalCandidates = null
     let volumeGoalAutoSelected = false
     let volumeGoalWarning = null
-    if (!String(volume.goal ?? '').trim() || !String(volume.map ?? '').trim()) {
-      const goalWasEmpty = !String(volume.goal ?? '').trim()
+    const needsGoal = !String(volume.goal ?? '').trim()
+    const needsTarget = !(Number(volume.targetChapters) > 0)
+    if (needsGoal) {
+      const goalWasEmpty = true
       const planned = await this.planVolume(agent, {
         volumeId: volume.id,
         instruction: options.instruction,
+        volume,
       }, signal).catch((error) => {
         volumeGoalWarning = `本卷目标/舞台规划失败：${errorText(error)}`
         return null
@@ -5703,19 +5874,31 @@ export class NovelWriterService {
       if (planned?.candidates?.length) {
         volumeGoalCandidates = planned.candidates
         try {
-          const selected = await this.selectVolumePlan(agent, { volumeId: volume.id, index: 0, candidates: planned.candidates }, signal)
+          // 新卷还没落盘时也允许选定：用内存里的 volume，成功生成后再随大纲一起写。
+          const selected = await this.selectVolumePlan(agent, {
+            volumeId: volume.id,
+            index: 0,
+            candidates: planned.candidates,
+            volume,
+            persist: false,
+          }, signal)
           if (selected?.volume) Object.assign(volume, selected.volume)
           if (goalWasEmpty) {
             volumeGoalAutoSelected = true
-            volumeGoalWarning = `本卷目标尚未确认：已暂用候选 1（${selected?.volume?.goal ?? planned.candidates[0].goal}）。如需改选，请调用 novel_outline action=volume-select（volumeId/index 或 overrides）。`
+            volumeGoalWarning = `本卷目标尚未确认：已根据构思开局生成候选 1（${selected?.volume?.goal ?? planned.candidates[0].goal}）。如需修改或重选，请用 novel_outline action=volume-select 或页面卷设置/生成卷设定。`
           }
         } catch (error) {
-          volumeGoalWarning = `本卷目标是自动选择失败：${errorText(error)}（仍按候选 1 的文字生成）`
+          volumeGoalWarning = `本卷目标是自动选择失败：${errorText(error)}`
         }
       }
       if (!String(volume.goal ?? '').trim()) {
-        volumeGoalWarning = volumeGoalWarning ?? '本卷目标为空，且候选生成失败；请补充本卷目标后再生成大纲'
+        throw new Error(`本卷目标未设置，无法生成章纲。请先生成并选择卷目标（novel_outline action=volume-plan → volume-select，或页面「生成卷设定」）${volumeGoalWarning ? `；${volumeGoalWarning}` : ''}`)
       }
+    }
+    if (needsTarget && !(Number(volume.targetChapters) > 0)) {
+      // 用户只缺目标章数时不要重规划覆盖已有目标，给默认参考值即可。
+      volume.targetChapters = 12
+      volumeGoalWarning = volumeGoalWarning ?? '本卷目标章数未设置，暂按 12 章参考（可在卷设置修改）。'
     }
     const existing = Array.isArray(volume.chapters) ? volume.chapters : []
     const allExisting = volumes.flatMap((item) => item.chapters ?? [])
@@ -6257,9 +6440,15 @@ export class NovelWriterService {
     const outline = await this.readJson(agent, 'story/plot/outline.json')
     const volumes = Array.isArray(outline?.volumes) ? outline.volumes : []
     const volumeId = String(options.volumeId ?? '')
-    const index = volumes.findIndex((item) => item.id === volumeId)
-    if (index < 0) throw new Error('找不到要规划的分卷')
-    const volume = volumes[index]
+    let index = volumes.findIndex((item) => item.id === volumeId)
+    let volume = index >= 0 ? volumes[index] : null
+    if (!volume && options.volume && typeof options.volume === 'object' && String(options.volume.id ?? '') === volumeId) {
+      // 新卷尚未落盘时允许用内存里的卷对象规划；不写盘，失败也不会留下空卷。
+      volume = options.volume
+      index = volumes.length
+      volumes.push(volume)
+    }
+    if (!volume) throw new Error('找不到要规划的分卷')
     const previousVolume = index > 0 ? volumes[index - 1] : null
     const previousChapters = (previousVolume?.chapters ?? []).slice().sort((a, b) => Number(a.number) - Number(b.number))
     const premise = await this.readJson(agent, 'story/premise.json').catch(() => null)
@@ -6309,6 +6498,7 @@ export class NovelWriterService {
       language: project.language ?? 'zh',
       premise: premise?.chosen ?? {},
       styleFields: style?.fields ?? {},
+      writingNotes: this.writingNotesFor(project, 'outline'),
       volume,
       previousVolume: previousVolume ? {
         ...previousVolume,
@@ -6365,7 +6555,12 @@ export class NovelWriterService {
     await this.assertInitialized(agent)
     const outline = await this.readJson(agent, 'story/plot/outline.json')
     const volumes = Array.isArray(outline?.volumes) ? outline.volumes : []
-    const volume = volumes.find((item) => item.id === String(options.volumeId ?? ''))
+    let volume = volumes.find((item) => item.id === String(options.volumeId ?? '')) ?? null
+    if (!volume && options.volume && typeof options.volume === 'object' && String(options.volume.id ?? '') === String(options.volumeId ?? '')) {
+      // 新卷尚未落盘：用内存对象承接选定结果，等章节生成成功后再随大纲写盘。
+      volume = options.volume
+      volumes.push(volume)
+    }
     if (!volume) throw new Error('找不到要选定目标的卷')
     let candidates = Array.isArray(options.candidates) ? options.candidates : null
     if (!candidates) {
@@ -6391,7 +6586,7 @@ export class NovelWriterService {
     volume.whyNow = String(merged.whyNow ?? volume.whyNow ?? '').trim().slice(0, 300)
     volume.goalRevisedAt = now()
     outline.updatedAt = now()
-    await this.writeJson(agent, 'story/plot/outline.json', { ...outline, volumes })
+    if (options.persist !== false) await this.writeJson(agent, 'story/plot/outline.json', { ...outline, volumes })
     return { volumeId: volume.id, volume, selected: { ...merged, index: selectedIndex } }
   }
 
@@ -6597,7 +6792,7 @@ export class NovelWriterService {
     }
     if (fields.time !== undefined) {
       const time = fields.time === null ? null : normalizeChapterTime(fields.time)
-      if (fields.time !== null && !time) throw new Error('time 不合法：需 {day:number|null, part:晨|日|暮|夜, spanDays:0–30, mode:linear|flashback|parallel}')
+      if (fields.time !== null && !time) throw new Error('time 不合法：需 {day:number|null, part:晨|日|暮|夜, endDay?:number, endPart?:晨|日|暮|夜, spanDays:0–30, mode:linear|flashback|parallel}；end 不得早于 start')
       if (time) target.time = time
       else delete target.time
     }
@@ -6693,6 +6888,7 @@ export class NovelWriterService {
       map: String(options.map ?? ''),
       powerCeiling: String(options.powerCeiling ?? ''),
       exitCriteria: String(options.exitCriteria ?? ''),
+      targetChapters: clamp(Number(options.targetChapters) || 12, 1, 100),
       chapters: [],
     }
     outline.volumes.push(volume)
@@ -6711,6 +6907,7 @@ export class NovelWriterService {
     if (options.map !== undefined) volume.map = String(options.map)
     if (options.powerCeiling !== undefined) volume.powerCeiling = String(options.powerCeiling)
     if (options.exitCriteria !== undefined) volume.exitCriteria = String(options.exitCriteria)
+    if (options.targetChapters !== undefined) volume.targetChapters = clamp(Number(options.targetChapters) || 12, 1, 100)
     outline.updatedAt = now()
     await this.writeJson(agent, 'story/plot/outline.json', outline)
     return volume
@@ -9712,6 +9909,12 @@ ${sections.join('\n')}
     } catch (error) {
       stateWarning = `人物状态更新失败：${errorText(error)}`
     }
+    let powerWarning = null
+    try {
+      await this.updatePowerAfterChapter(agent, number, signal)
+    } catch (error) {
+      powerWarning = `能力体系更新失败：${errorText(error)}`
+    }
     const qa = await this.qaChapter(agent, { number })
     this.reportStage('qa', '规则质检')
     let autoFix = null
@@ -9749,6 +9952,7 @@ ${sections.join('\n')}
       wordCountWarning,
       state: updatedState,
       stateWarning,
+      powerWarning,
       usage: call.usage,
     }
   }
@@ -10086,6 +10290,12 @@ ${sections.join('\n')}
     } catch (error) {
       reviseStateWarning = `人物状态更新失败：${errorText(error)}`
     }
+    let revisePowerWarning = null
+    try {
+      await this.updatePowerAfterChapter(agent, number, signal)
+    } catch (error) {
+      revisePowerWarning = `能力体系更新失败：${errorText(error)}`
+    }
     await this.clearChapterInstruction(agent, number)
     return {
       runId,
@@ -10096,6 +10306,7 @@ ${sections.join('\n')}
       qa,
       constraints: this.constraintSummary(constraints),
       stateWarning: reviseStateWarning,
+      powerWarning: revisePowerWarning,
       usage: call.usage,
     }
   }

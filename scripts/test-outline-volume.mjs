@@ -51,9 +51,14 @@ await service.writeJson(project, 'story/plot/outline.json', {
 
 const wrap = (parsed) => ({ parsed, first: { text: '{}', model: null, durationMs: 0 }, runId: 'run-test', usage: null })
 let outlinePayload = { chapters: [] }
+const volumeCandidates = [
+  { title: '第 2 卷', map: '新地图', goal: '在新地图站稳脚', whyNow: '卷末钩子逼来', cost: '离开旧人脉', risk: '被本地势力盯上', exitCriteria: '在新地图有立足之地', targetChapters: 10 },
+  { title: '第 2 卷', map: '新地图', goal: '把货送到新地图', whyNow: '旧路断了', cost: '绕远', risk: '货失', exitCriteria: '货到', targetChapters: 8 },
+]
 service.callJsonModel = async (agent, options) => {
   if (options.kind === 'outline.generate' || options.kind === 'outline.regenerate') return wrap(outlinePayload)
   if (options.kind === 'outline.audit') return wrap({ issues: [] })
+  if (options.kind === 'outline.volume-plan') return wrap({ candidates: volumeCandidates })
   return wrap({})
 }
 
@@ -77,12 +82,14 @@ assert.equal(outline1.pendingNextVolume, true, '应在 outline 上记录 pending
 assert.equal(first.pendingNextVolume, true)
 assert.equal(first.nextVolumeId, null, '未创建新卷时 nextVolumeId 应为 null')
 
-// ---------- 2) fromChapter=11 时才创建 vol-2 并挂章节 ----------
+// ---------- 2) fromChapter=11 时才创建 vol-2、自动规划目标并挂章节 ----------
 outlinePayload = { chapters: [{ number: 11, title: '第11章', synopsis: '第11章的剧情梗概。', wordBudget: 3000 }] }
 const second = await service.outlineGenerate(project, { fromChapter: 11, count: 1 })
 const outline2 = await service.readJson(project, 'story/plot/outline.json')
 assert.equal(outline2.volumes.length, 2, '生成第二卷时才创建卷')
 assert.equal(outline2.volumes[1].id, 'vol-2')
+assert.equal(outline2.volumes[1].goal, volumeCandidates[0].goal, '新卷应在内存里完成目标规划后再落盘')
+assert.equal(outline2.volumes[1].targetChapters, 10)
 assert.equal(outline2.volumes[1].chapters.length, 1)
 assert.equal(outline2.volumes[1].chapters[0].number, 11)
 assert.equal(outline2.volumes[0].chapters.length, 10, '第一卷章节应保留')
@@ -94,7 +101,7 @@ const outline3 = await service.readJson(project, 'story/plot/outline.json')
 outline3.volumes[1].chapters[0].volumeEnd = true
 await service.writeJson(project, 'story/plot/outline.json', outline3)
 outlinePayload = { chapters: [] }
-await assert.rejects(() => service.outlineGenerate(project, { fromChapter: 12, count: 1 }), /chapters|未返回/)
+await assert.rejects(() => service.outlineGenerate(project, { fromChapter: 12, count: 1 }), /无法生成章纲|chapters|未返回/)
 const outlineAfterFail = await service.readJson(project, 'story/plot/outline.json')
 assert.equal(outlineAfterFail.volumes.length, 2, '生成失败不应留下空 vol-3')
 assert.equal(outlineAfterFail.volumes.some((volume) => volume.id === 'vol-3'), false)

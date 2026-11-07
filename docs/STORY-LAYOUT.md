@@ -121,7 +121,7 @@ $DSH_HOME/novel-writer/library/
 
 `id / number / status / title / synopsis / wordBudget / change / storyQuestion / promise / beats / time / inputs / generatedAt / confirmedAt`。
 
-`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。`time` 是**隐藏时间锚点**（可选）：`{ day（相对本卷开场第几天，0 起或 null）, part（晨/日/暮/夜）, spanDays（0–30）, mode（linear/flashback/parallel） }`——`linear` 章 `day` 递增、同日 `part` 按晨→日→暮→夜，`flashback`/`parallel` 不参与线性顺序；`time` 只存章纲 JSON，不写进 `synopsis`、不写日期代号/时间码。大纲整体的状态与更新时间在 `outline_meta`。
+`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。`time` 是**隐藏时间锚点**（可选）：`{ day（本章开场，相对本卷开场第几天，0 起或 null）, part（晨/日/暮/夜）, endDay（本章收束，可省略）, endPart（收束时段，可省略）, spanDays（0–30）, mode（linear/flashback/parallel） }`——`time` 是开场，一章可跨时段（如暮→夜）；相邻 `linear` 章 `start` 不得早于上一章 `end`，同场连续戏沿用上一章 `endDay/endPart`，只有明确过夜/赶路/时间跳跃才推进 day；`flashback`/`parallel` 不参与线性顺序；`time` 只存章纲 JSON，不写进 `synopsis`、不写日期代号/时间码。大纲整体的状态与更新时间在 `outline_meta`。
 
 `volumes` 另有本卷**角色三层**（存在 `extra_json`）：核心阵容 `cast`（`[{name, roleInVolume, fromChapter, importance}]`，≤6，承担主线/关键转折）、具名龙套 `extras`（`[{name, roleInVolume, fromChapter, note}]`，≤3，可反复出现但不得承担关键转折）、`castRationale`；名单外无名路人一律身份指代（数量不限）。本卷可具名角色 = 阵容 + 龙套。选角用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`），角色必须来自 bible 角色池；每卷新增具名角色 ≤2 且必须登记。
 

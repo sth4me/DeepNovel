@@ -11,7 +11,7 @@
 | `novel_premise` | 构思：生成候选、确认候选、`update`（改标题/构思/主角/题材/篇幅）、`delete`（清空构思）、读取状态 |
 | `novel_style` | 文风：模板列表、套用模板、保存自定义模板、`update`（局部更新契约字段）、`delete`（清空契约）、`delete-template`、确认契约、读取状态；`profile-build`（最近定稿统计风格指纹，只统计不改文）/ `profile-get`（读取已存指纹） |
 | `novel_outline` | 章纲：`generate`（内容由生成模型依据上下文决定；`instruction` 只写必须遵守/禁止/用户明确事实，不写「本章应该发生什么」）/ `regenerate`（仅连续 ≥3 章崩坏 / 整卷崩 / 用户明确要求）；`update`（只用于用户明确指定的局部修改或修正事实/时间线错误；支持 title / synopsis / change / storyQuestion / promise / beats / wordBudget / `time` / `agency` / `device` / `castUsed` / `newNamed`，未知字段报错）；`delete`（只删章纲，有正文需 `force`，无正文时默认重排章号）；`volume-plan`（进入新卷前返回 2–3 个卷目标候选，不写盘）/ `volume-select`（按 `index` 选候选或 `overrides` 修订卷目标后写盘，记录 `whyNow` / `goalRevisedAt`）/ `volume-end`（标记卷收束章）/ `volume-update` / `volume-delete`；`commit` / `status` / `move` / `audit` / `repair`（生成候选修复版本：`applied` / `status` / `versionId` / `diff` / `summary` / `audit` / `candidateAudit`；改进且无新增问题自动应用，否则保留候选不覆盖当前大纲）；`revisions` / `revision`（`revisionId`，看 diff 与前后 audit）/ `apply-revision` / `discard-revision`；`dismiss`（忽略问题：`ids` / `chapter` / `all=true`，写入 `dismissed`，重审不会复活）；生成结果带 `castViolations`；`audit` 返回一致性 `issues`（≤30）与结构 `structureIssues`（≤10，超出截断），问题有稳定 id；**audit 后不自动 repair / regenerate**，等用户确认 |
-| `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系；`commit` 确认设定后**必须停**，等用户明确要求再生成章纲 |
+| `novel_bible` | 设定：角色/地点/规则/势力/物品的读取、生成、编辑、删除、确认；`relations` / `relations-save` 读写人物关系与站位，`power` / `power-save` 读写境界与战力体系，`power-generate` 根据已确认构思与设定重新生成能力体系；确认前生成设定会自动建立能力体系（已有自定义不覆盖），章节草稿/修订后自动追加本章能力变化；`commit` 确认设定后**必须停**，等用户明确要求再生成章纲 |
 | `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `revision-learn`（分析草稿→定稿差异、提炼写作偏好，只返回建议、不自动写入）/ `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
 | `novel_cast` | 按卷选角：`list` / `plan`（核心阵容 ≤6、具名龙套 ≤3、新增命名角色 ≤2）/ `update`（调整阵容与 `extras`，名称必须在角色池）/ `delete`（清空本卷阵容与龙套）；角色池是 `bible`，不是本卷阵容 |
 | `novel_material` | 素材库：`list` / `save`（新增或按 id 更新 title/kind/content/tags/source）/ `delete`；素材是参考，不会自动成为本书设定 |
@@ -73,10 +73,10 @@ DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修�
 
 ## 卷目标与叙事格式
 
-- **卷目标（状态驱动）**：进入新卷前先 `novel_outline action=volume-plan`（`volumeId`）——返回 2–3 个候选卷目标（`title` / `map` / `goal` / `whyNow` / `cost` / `risk` / `exitCriteria` / `targetChapters` / `powerCeiling`），**不写盘**；候选由上一卷末 3 章的 `chapter_state`、末章正文结尾与摘要、未解冲突、角色池推导。用户选定或修订后 `action=volume-select`（`volumeId` + `index` 或 `overrides`；`overrides` 可改 goal / exitCriteria / whyNow / map / title / targetChapters / powerCeiling）才写盘，并记录 `whyNow` / `goalRevisedAt`。**不要直接生成新卷章纲，也不要静默替用户决定目标**；生成时若卷目标为空，插件会暂用候选 1 并给 warning（仅兜底），助手应提示用户可用 `volume-select` 改选。
+- **卷目标（状态驱动）**：进入新卷前先 `novel_outline action=volume-plan`（`volumeId`）——返回 2–3 个候选卷目标（`title` / `map` / `goal` / `whyNow` / `cost` / `risk` / `exitCriteria` / `targetChapters` / `powerCeiling`），**不写盘**；第一卷的候选由已确认构思的开局事件推导（goal 是开局引出的开放问题，不是复述引子），后续卷由上一卷末 3 章 `chapter_state`、末章正文结尾与摘要、未解冲突、角色池推导。用户选定或修订后 `action=volume-select`（`volumeId` + `index` 或 `overrides`；`overrides` 可改 goal / exitCriteria / whyNow / map / title / targetChapters / powerCeiling）才写盘，并记录 `whyNow` / `goalRevisedAt`。**生成章纲前必须有卷目标、离卷条件与目标章数**；为空时插件会先自动规划并暂用候选 1（给 warning，页面「生成卷设定」可重生成、卷设置可改），若规划失败则拒绝生成，不会空目标硬写。**不要直接生成新卷章纲，也不要静默替用户决定目标**；助手应提示用户可用 `volume-select` 改选。
 - 主线停滞 / 支线挤占只由审核诊断，不改卷目标；要改目标必须 `volume-select`。
 - **通用叙事格式规则**：`synopsis` 必须写成叙事句，不得用场记式 / 编号式 / 标签式标记表示时间或场景（字母+数字代号、`DayN`、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）；时间/场景要融进叙事（次日 / 三日后 / 入夜等）。审核对违规报 `issues` type「非叙事标记」或「场记式开头」（一致性 warn）。
-- **时间锚点（隐藏字段）**：`novel_outline action=update` 的 `fields.time` 可选 `{ day（相对本卷开场第几天，0 起；未知 null）, part（晨 / 日 / 暮 / 夜）, spanDays（0–30）, mode（linear / flashback / parallel） }`；`time` 只存章纲 JSON，**不写进 synopsis，也不在回复/正文里展示**。`linear` 章 `day` 必须递增（同日 `part` 按晨→日→暮→夜）；`flashback` / `parallel` 不参与线性顺序。审核报「时间线冲突」时用 `update` 改 `time` 或 `synopsis`，**不要写日期代号/时间码**；生成大纲会注入最近 8 章时间线、上一章 `time` 锚点与硬事实/期限换算（day）。
+- **时间锚点（隐藏字段）**：`novel_outline action=update` 的 `fields.time` 可选 `{ day（本章开场，相对本卷开场第几天，0 起；未知 null）, part（晨 / 日 / 暮 / 夜）, endDay（本章收束，可省略）, endPart（收束时段，可省略）, spanDays（0–30）, mode（linear / flashback / parallel） }`；`time` 只存章纲 JSON，**不写进 synopsis，也不在回复/正文里展示**。`time` 是开场锚点，一章可跨时段（如暮→夜），不要求 synopsis 全程停在一个 part。相邻 `linear` 章本章 `start` 不得早于上一章 `end`；同场连续戏（没有过夜/休整/赶路）必须沿用上一章 `endDay/endPart`，不得因为换章就 +1 天；只有明确过夜/赶路/时间跳跃才推进 day。`flashback` / `parallel` 不参与线性顺序。审核报「时间线冲突」时用 `update` 改 `time/end` 或 `synopsis`，**不要写日期代号/时间码**；生成大纲会注入最近 8 章时间线、上一章 `time` 锚点与硬事实/期限换算（day）。
 - **卷收束**：本卷目标达成 / 离卷条件满足时用 `novel_outline action=volume-end`（`volumeId?` / `chapterNumber?`，缺省卷末章）标记收束——全卷**只有一个** `volumeEnd` 章，置 `pendingNextVolume`；不要无限续写。生成大纲时若本卷已 ≥`targetChapters + 2` 章仍未标记收束，会返回 `volumeEndOverdue` + warning（用 `volume-end` 收束，或扩卷 / 调整目标）。
 - **新卷流程**：`volume-plan` 定目标 → `cast-plan` 定阵容（与上一卷**有差异**：至少 1 个上一卷没进阵容的角色，优先从未使用角色池 `unusedPool` 选，其次 `newCharacters` ≤2；确属同一批人则写 `noNewCastReason` 说明）→ 再 `generate` 章纲。`planVolumeCast` 返回 `newFaces` / `noNewCastReason` / `castWarning`；阵容与上一卷完全相同且无新面孔时 warning「阵容未更新」，`OUTLINE_AUDIT` 的 `structureIssues` 也有「阵容未更新」类型。
 
@@ -169,7 +169,7 @@ DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修�
 
 ## 关系与能力读写
 
-- `novel_bible action=relations` / `power` 读取；`relations-save` 保存关系与站位，`power-save` 保存境界与战力体系。
+- `novel_bible action=relations` / `power` 读取；`relations-save` 保存关系与站位，`power-save` 保存境界与战力体系；`power-generate` 按当前构思/设定重新生成层级与角色当前层级（会覆盖手改，谨慎）。章节草稿或修订完成后，插件自动从正文提取能力变化写入 `chapterChanges` 并更新角色当前层级；失败只返回 `powerWarning`，不影响正文。
 - 用于助手自查修复：坏关系（引用不存在的角色）、境界 / 战力矛盾（无铺垫跨级、层级倒挂）。
 - 写入校验：关系按角色名校验，未知角色、自环、重复会被丢弃；`positions` 只保留已知角色与数值坐标；power 的 `tiers` 按 order 排序、`chapterChanges` 规范化。
 - 写操作与界面共用同一套资源锁（`bible`）；资源忙时工具直接返回「资源忙」而不执行，避免与界面同时改设定/关系。

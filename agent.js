@@ -244,7 +244,7 @@ export function apply(ctx) {
     name: 'deepnovel:repair-loop',
     order: 10154,
     text: () =>
-      '写完或改完章节后的默认流程：先 novel_diagnose 检查逻辑/连续性/事实/文风；有 hard issues（逻辑、连续性 error、事实/术语）就调 novel_repair action=auto 自动修最小 diff，soft issues（文风/AI 味）只在回复里提示（AI 味可建议 deslop），不要为满分反复修。逻辑/设定冲突优先；repair 会复检，未降低 hard 问题会自动回滚。深度档用 novel_repair action=prescribe 只拿处方、不自动改。',
+      '章节检查只在用户明确要求时进行：用户让你修改正文/改某处时，按指令改完就停，不要自动 novel_diagnose 或 novel_repair，也不要在回复里展开未要求的审稿。项目写作要求里的审稿/修复尺度只约束生成与审稿流程，不是让你每次改完都跑审稿。用户明确说「检查/审稿/看看有没有问题」时，先 novel_diagnose 一次，按 hard/soft 列给用户；hard 先报告，是否 novel_repair 由用户决定（用户说「直接修」才修）；soft 只提示，不反复修。不要为满分连环修复；repair 回滚、未降低问题或没有新依据时停止，不要重复调用。',
   })
 
   ctx.systemPrompt.section({
@@ -395,7 +395,7 @@ export function apply(ctx) {
         renumber: { type: 'boolean', description: 'delete 时是否把后续章号前移（正文存在时不重排，默认 true）' },
         volumeFields: {
           type: 'object',
-          description: 'volume-update 的字段：title/goal/map/powerCeiling/exitCriteria',
+          description: 'volume-update 的字段：title/goal/map/powerCeiling/exitCriteria/targetChapters',
           additionalProperties: true,
         },
         chapterNumber: { type: 'number', description: 'volume-end 时标记哪一章为收束章（缺省为卷末章）' },
@@ -429,7 +429,7 @@ export function apply(ctx) {
             newNamed: { type: 'array', items: { type: 'string' }, description: '本章新增具名角色（需已登记）' },
             time: {
               type: 'object',
-              description: '时间锚点：{day（相对本卷开场 0 起）, part（晨/日/暮/夜）, spanDays（0–30）, mode（linear|flashback|parallel）}；只存章纲，不写进 synopsis',
+              description: '时间锚点：{day（本章开场，相对本卷开场 0 起）, part（晨/日/暮/夜）, endDay（本章收束，可省略）, endPart（收束时段，可省略）, spanDays（0–30）, mode（linear|flashback|parallel）}；time 是开场锚点，允许一章跨时段；只存章纲，不写进 synopsis',
             },
           },
           additionalProperties: false,
@@ -662,7 +662,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'generate', 'update', 'delete', 'commit', 'relations', 'relations-save', 'power', 'power-save'] },
+        action: { type: 'string', enum: ['list', 'generate', 'update', 'delete', 'commit', 'relations', 'relations-save', 'power', 'power-save', 'power-generate'] },
         category: { type: 'string', enum: ['characters', 'locations', 'rules', 'factions', 'items'] },
         id: { type: 'string', description: 'update/delete 时的条目 id' },
         fields: {
@@ -706,6 +706,7 @@ export function apply(ctx) {
       }
       if (args?.action === 'power') return service.readPower(exec.agent)
       if (args?.action === 'power-save') return service.savePower(exec.agent, { power: args?.power })
+      if (args?.action === 'power-generate') return service.generatePower(exec.agent, {}, exec.signal)
       throw new Error(`未知设定操作：${args?.action}`)
     },
   })
@@ -1005,7 +1006,7 @@ export function apply(ctx) {
 
   registerTool(ctx, {
     name: 'novel_diagnose',
-    description: '诊断某章正文：检查事实/术语违规、逻辑问题（因果/时间/空间/信息差/动机/能力/设定）、连续性（error 硬、warn 软）、文风与 AI 味（软）。只读，不修改正文。返回 issues（hard 全量、soft 最多 10）与 scores。写完/改完章节后先调用。',
+    description: '诊断某章正文：检查事实/术语违规、逻辑问题（因果/时间/空间/信息差/动机/能力/设定）、连续性（error 硬、warn 软）、文风与 AI 味（软）。只读，不修改正文。返回 issues（hard 全量、soft 最多 10）与 scores。仅在用户明确要求检查/审稿时调用；助手按用户指令改完章节后不要自动调用。',
     parameters: {
       type: 'object',
       properties: {
@@ -1033,7 +1034,7 @@ export function apply(ctx) {
 
   registerTool(ctx, {
     name: 'novel_repair',
-    description: '定向修复章节：action=auto 自动修 hard 问题（逻辑/连续性 error/事实/术语），只做最小 diff、复检、未降低则回滚，soft 只提示；action=prescribe 只返回处方不修改。不改剧情/人物关系/结局。',
+    description: '定向修复章节：action=auto 自动修 hard 问题（逻辑/连续性 error/事实/术语），只做最小 diff、复检、未降低则回滚，soft 只提示；action=prescribe 只返回处方不修改。不改剧情/人物关系/结局。仅在用户明确要求修复时使用；不要自动触发。',
     parameters: {
       type: 'object',
       properties: {

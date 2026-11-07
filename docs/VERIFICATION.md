@@ -46,7 +46,7 @@
 - 章节操作去重：写作动作与质检修复只保留在固定操作条/「更多」，正文区不重复。
 - 大纲生成要求：生成后 3/6 章、批量重生成、单章重生成都把输入框内容传给 prompt；prompt 将额外要求放在前面并声明优先。
 - 自动大纲修复只改 outline 字段，不自动改正文；修复 prompt 同时带上用户本次额外要求。
-- 能力体系：`story/project.db` 的 `power` 表可读写；章节上下文包含当前角色层级、本章变化、最近三章变化；大纲生成/审校 prompt 包含能力体系并检查无铺垫跨级。
+- 能力体系：`story/project.db` 的 `power` 表可读写；`generateBible` 在未自定义时自动生成体系并写盘（已有人物/变化不覆盖）；章节草稿/修订后 `updatePowerAfterChapter` 从正文提取变化，追加 `chapterChanges`、更新角色 `tierName/stage/current`，失败只出 `powerWarning`；页面能力面板可「重新生成能力体系」；章节上下文包含当前角色层级、本章变化、最近三章变化；大纲生成/审校 prompt 包含能力体系并检查无铺垫跨级；`scripts/test-power-auto.mjs` 覆盖自动建立与自动更新。
 - 能力面板：层级/角色/按章变化可编辑保存；章节页展示本章能力变化。
 - 移动端：章节操作条横向滚动，避免换行挤占阅读区。
 - 上下文预览与预算配置。
@@ -129,9 +129,9 @@
 
 - 大纲问题清理：稳定 id（`level|number|type|message` 哈希，fingerprint）；`normalizeOutlineAudit` 补 id / 去重 / 过滤 `dismissed` / 截断（`issues` ≤30、`structureIssues` ≤10，`truncated` 标记）；`dismissOutlineIssues` 支持 `ids` / `chapter` / `all=true`，写入 `dismissed`（≤200）、返回 `{ removed, dismissedTotal }`，无定位报错；`update` 写盘后自动 dismiss 该章旧问题并返回 `resolvedIssues`；audit 重审不复活已忽略项；`novel_outline action=dismiss`（enum 含 dismiss）与 `novel_issues` 大纲问题 actions 含 `dismiss`；客户端待处理卡 / 弹窗「忽略」→ `outline-dismiss` 后刷新；`scripts/test-outline-dismiss.mjs` 覆盖 id / 去重 / 截断 / 三种定位 / 重审不复活 / update 自动清理 / action 与 enum、客户端静态断言；全套 54 项测试通过。
 
-- 卷目标 / 叙事格式：`scripts/test-volume-goal.mjs` 与 `scripts/test-outline-prompt.mjs` 更新——`planVolume` 注入上一卷末 3 章 `chapter_state`、末章结尾与摘要、未解冲突、角色池，返回 2–3 个候选（`goal` / `whyNow` / `exitCriteria` 必填，含 cost/risk/targetChapters/powerCeiling）且**不写盘**；`selectVolumePlan` 支持 `index` / `overrides`（goal / exitCriteria / whyNow / map / title / targetChapters / powerCeiling）写盘并记录 `whyNow` / `goalRevisedAt`；新卷生成时目标为空自动暂用候选 1 并返回 `volumeGoalWarning`（兜底不静默）；OUTLINE / VOLUME_PLAN 提示词含通用叙事格式规则（synopsis 叙事句、禁场记式/编号式/标签式、时间场景融进叙事），OUTLINE_AUDIT 报「非叙事标记 / 场记式开头」；全套 55 项测试通过。
+- 卷目标 / 叙事格式：`scripts/test-volume-goal.mjs`、`scripts/test-auto-volume-goal.mjs` 与 `scripts/test-outline-prompt.mjs`——`planVolume` 注入已确认构思/上一卷末 3 章 `chapter_state`、末章结尾与摘要、未解冲突、角色池、项目写作要求，返回 2–3 个候选（`goal` / `whyNow` / `exitCriteria` 必填，含 cost/risk/targetChapters/powerCeiling）且**不写盘**；第一卷候选从构思开局事件推导（goal 是开放问题，不复述引子）；`selectVolumePlan` 支持 `index` / `overrides` 写盘并记录 `whyNow` / `goalRevisedAt`；空目标生成时用内存卷对象自动规划候选 1，章节生成成功后再随大纲落盘（失败不留空卷）；规划失败则拒绝生成、不空目标硬写；`targetChapters` 缺失只补默认 12，不覆盖已有目标；OUTLINE / VOLUME_PLAN 提示词含通用叙事格式规则（synopsis 叙事句、禁场记式/编号式/标签式、时间场景融进叙事），OUTLINE_AUDIT 报「非叙事标记 / 场记式开头」；全套测试通过。
 
-- 章纲时间锚点：`normalizeChapterTime` 合法/非法（`day` 0–3650 或 null、`part` 四值、`spanDays` 0–30、`mode` 三值；非法整体丢弃为 null）；`update` 的 `fields.time`（`null` 删除锚点、非法报错）；大纲生成 prompt 注入最近 8 章时间线、上一章 `time` 锚点、硬事实/期限换算（`parseDeadlineDay` → day）；OUTLINE / OUTLINE_AUDIT 提示词含时间锚点规则与「时间线冲突」判定（linear 章 day 递增、同日 part 顺序、flashback/parallel 不参与、synopsis 与 time 矛盾；`time` 只写 JSON 不进 synopsis）；audit 输入带各章 `time` 锚点；`scripts/test-chapter-time.mjs` 覆盖 prompt 注入 / normalize / update / audit 规则 / 工具字段；全套 56 项测试通过。
+- 章纲时间锚点：`normalizeChapterTime` 合法/非法（`day` 0–3650 或 null、`part` 四值、`endDay` 不得早于 `day`、同日 `endPart` 不得早于 `part`、`spanDays` 0–30、`mode` 三值；非法整体丢弃为 null）；`update` 的 `fields.time`（`null` 删除锚点、start/end 非法报错）；大纲生成 prompt 注入最近 8 章时间线、上一章 `time` 锚点（含 end）、硬事实/期限换算（`parseDeadlineDay` → day）；OUTLINE / OUTLINE_AUDIT 提示词含「time 是开场、一章可跨时段、同场续写沿用上一章 end、linear 章 start 不早于上一章 end」；audit 输入带各章 `time` 锚点；`scripts/test-chapter-time.mjs` 覆盖 prompt 注入 / normalize / update / audit 规则 / 工具字段；全套测试通过。
 
 - 卷收束 / 阵容轮换：`markVolumeEnd`（`volume-end`，volumeId? / chapterNumber? 缺省卷末章）保证**全卷仅一章** `volumeEnd`（清掉其它标记）并置 `pendingNextVolume`；生成时 `volumeEnded` 与 `volumeEndOverdue`（无收束且章数 ≥ targetChapters+2 → warning）；`planVolumeCast` 注入上一卷阵容与 `unusedPool`，要求至少 1 个不同角色（优先 unusedPool，其次 newCharacters ≤2，否则 `noNewCastReason`），返回 `newFaces` / `noNewCastReason` / `castWarning`，与上一卷完全相同且无新面孔 → 「阵容未更新」warning；OUTLINE_AUDIT 的 structureIssues 含「阵容未更新」；`novel_outline` enum 含 volume-end；`scripts/test-volume-growth.mjs` 覆盖 volumeEnd 规则 / overdue / mark 唯一 / 轮换 warning / newFaces / audit 类型 / action 与 enum；全套 57 项测试通过。
 

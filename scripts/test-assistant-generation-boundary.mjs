@@ -15,4 +15,10 @@ const chapterDesc = agent.slice(agent.indexOf("name: 'novel_chapter'"), agent.in
 assert.ok(chapterDesc.includes('正文内容由生成模型依据上下文决定'), '章节工具描述应说明内容由生成模型决定')
 assert.ok(!agent.includes('action=update 首选'), '大纲工具不再把 update 作为替模型改剧情的首选')
 
+assert.ok(agent.includes('章节检查只在用户明确要求时进行'), '审稿应只在用户明确要求时进行')
+assert.ok(agent.includes('改完就停，不要自动 novel_diagnose'), '助手改完章节后不应自动诊断')
+assert.ok(!agent.includes('写完或改完章节后的默认流程'), '移除会触发助手自动检查/修复的默认流程')
+assert.ok(agent.includes('仅在用户明确要求检查/审稿时调用'), '诊断工具描述应限定为用户要求')
+assert.ok(agent.includes('仅在用户明确要求修复时使用；不要自动触发'), '修复工具描述应禁止自动触发')
+
 console.log('assistant generation boundary tests passed')

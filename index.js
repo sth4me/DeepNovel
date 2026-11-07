@@ -1200,6 +1200,8 @@ export function apply(ctx) {
         return service.generateInspiration(agent, { topic: params.topic, count: params.count, history: params.history }, signal)
       case 'power-save':
         return service.savePower(agent, { power: params.power })
+      case 'power-generate':
+        return service.generatePower(agent, {}, signal)
       case 'outline-commit':
         return service.outlineCommit(agent, {
           fromChapter: params.fromChapter,
@@ -1287,6 +1289,7 @@ export function apply(ctx) {
           map: params.map,
           powerCeiling: params.powerCeiling,
           exitCriteria: params.exitCriteria,
+          targetChapters: params.targetChapters,
         })
       case 'volume-update':
         return service.updateOutlineVolume(agent, {
@@ -1296,6 +1299,7 @@ export function apply(ctx) {
           map: params.map,
           powerCeiling: params.powerCeiling,
           exitCriteria: params.exitCriteria,
+          targetChapters: params.targetChapters,
         })
       case 'volume-plan':
         return service.planVolume(agent, { volumeId: params.volumeId, instruction: params.instruction }, signal)

@@ -842,7 +842,7 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '- newNamed: string[]（可选；本章不得不新增但未登记的名字，没有则空数组；会触发校验）',
   '- agency: {"choice":"主角本章主动做的选择","cost":"代价/风险"}（可选，写了更好；不强制每章都有）',
   '- device: string（可选，2–6 字的核心推进手段，如夜探/交涉/交易；用于检查重复是否升级）',
-  '- time: {"day":相对本卷开场的第几天(number，0 起；未知可 null),"part":"晨|日|暮|夜","spanDays":0–30,"mode":"linear|flashback|parallel"}（可选但优先给出；只写在 JSON 里，不要写进 synopsis）',
+  '- time: {"day":本章开场是相对本卷开场的第几天(number，0 起；未知可 null),"part":"晨|日|暮|夜","endDay":本章收束的第几天(可省略，默认同 day),"endPart":"晨|日|暮|夜(可省略，默认同 part)","spanDays":0–30,"mode":"linear|flashback|parallel"}（可选但优先给出；只写在 JSON 里，不要写进 synopsis）',
   '要求：章节序号连续；每章只写一个完整、具体的剧情事件链；与已确认的构思、文风契约、相邻章节保持一致；只输出请求范围内的章节。',
   '章纲是给正文写作的剧情提要，不是谜面，也不要强行套结构：不要用“关系变化”“有事发生”“被卷入”之类空话，也不要为了填字段把剧情拆成抽象分类。',
   '每章 synopsis 的结尾必须落在一个下一章能直接承接的具体状态：人物在哪里、刚做了什么决定或发生了什么；下一章从这个状态继续，不要跳空、不要重复交代。承接不等于原地续写：该转场就转场，该跳时间就跳时间，不要为了衔接把人物困在上一章的场景里。',
@@ -852,7 +852,7 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '主动性要求：每 2–4 章至少安排一次主角主动选择（有明确代价/风险）；允许个别章节被动应对，但连续 3 章以上主角被推着走、没有主动选择 → 记结构问题（主角被动，给出连续范围）。',
   '重复控制：同一推进手段（如夜探/交涉/交易/查账）连续使用，第二次必须带来新信息、新代价或新阻力；连续两章同一手段且没有任何升级 → 记结构问题（桥段重复，给出范围）。',
   '黄金三章硬要求（前 3 章必须满足，不满足时在 structureIssues 报 type=黄金三章）：第 1 章给出主角的欲望或麻烦，并以一个具体钩子收尾（动作未完成/刚做决定/关键新信息/新问题）；第 2 章让冲突或承诺升级，不是纯过场；第 3 章必须出现一次小胜利或阶段兑现（拿到关键信息、救下人、赢下一局、第一次反击成功等），纯铺垫或纯送信/传话不算小胜利。',
-  '时间锚点规则：每章尽量输出 time 字段（day 相对本卷开场 0 起，part 晨/日/暮/夜，spanDays 0–30，mode linear|flashback|parallel）；新章 day 必须 ≥ 前一 linear 章的 day；flashback/parallel 不参与线性顺序（mode 标清）；time 只写在 JSON 里，不要写进 synopsis，不要写日期代号或时间码。',
+  '时间锚点规则：每章尽量输出 time 字段（day 相对本卷开场 0 起，part 晨/日/暮/夜，endDay/endPart 为本章收束，spanDays 0–30，mode linear|flashback|parallel）。time 表示本章开场，本章可以跨时段（如暮→夜），不要求和 synopsis 全程停在同一 part。若本章紧接上一章结尾的同一场戏（没有过夜、休整或赶路），本章 day/part 必须等于上一章 endDay/endPart，不得因为换章就 +1 天；只有明确过夜/赶路/时间跳跃才推进 day 或 part。线性章 start 不得早于上一章 end；flashback/parallel 不参与线性顺序（mode 标清）；time 只写在 JSON 里，不要写进 synopsis，不要写日期代号或时间码。',
   '主线推进规则：每章必须推进本卷目标；允许时间跳跃与转场；同一目标/同一地点/同一类追逐连续 >2 章且无新信息/新代价视为停滞；不得用遇见新人物/新事件/新麻烦替代主线推进；支线必须写清被迫（有代价）或主动选择（有所图）；目标事件必须真实发生（不能只写准备去）；承接≠原地续写，可转场/跳时间。',
   'synopsis 必须写成叙事句：不得用场记式/编号式/标签式标记表示时间或场景（如字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）；时间/场景要融进叙事（次日/三日后/入夜等）。',
   '选角硬规则：本卷可具名角色 = 【本卷阵容】+【本卷具名龙套名单】，只允许使用这些名字；名单外的路人一律用身份指代、不给姓名；具名龙套不得承担关键转折（关键转折必须由阵容角色或主角主动选择完成）；不得新增未登记角色；未登场角色不得提及；需要新角色时只在 JSON 顶层 newNamed 说明，不要直接写进章纲。',
@@ -911,20 +911,21 @@ export function buildOutlineUserPrompt(input) {
   }
   if (Array.isArray(input.timeline) || input.previousTimeAnchor || (Array.isArray(input.hardFacts) && input.hardFacts.length > 0)) {
     lines.push('', '【时间锚点（必须遵守，time 只写 JSON，不写进 synopsis）】')
-    lines.push('- 每章输出 time 字段：{day（相对本卷开场第几天，0 起；未知可 null）, part（晨/日/暮/夜）, spanDays（0–30，默认 0）, mode（linear|flashback|parallel，默认 linear）}。')
-    lines.push('- 新章 day 必须 ≥ 前一 linear 章的 day；flashback/parallel 不参与线性顺序（用 mode 标清）。')
-    lines.push('- synopsis 与 time 必须一致，不要写日期代号/时间码；时间与场景融进叙事句。')
+    lines.push('- 每章输出 time 字段：{day（本章开场是相对本卷开场的第几天，0 起；未知可 null）, part（晨/日/暮/夜）, endDay（本章收束的第几天，可省略）, endPart（本章收束的时段，可省略）, spanDays（0–30，默认 0）, mode（linear|flashback|parallel，默认 linear）}。')
+    lines.push('- time 是本章开场，允许一章跨时段（如暮→夜）；不要为了把整章塞进一个 part 而硬改时间。')
+    lines.push('- 若本章紧接上一章结尾的同一场戏（没有过夜、休整或赶路），本章 day/part 必须等于上一章 endDay/endPart，不得因为换章就 +1 天；只有明确过夜/赶路/时间跳跃才推进 day。线性章 start 不得早于上一章 end；flashback/parallel 不参与线性顺序（用 mode 标清）。')
+    lines.push('- 章内时间必须单调：endDay 不得早于 day；同日 endPart 不得早于 part（晨→日→暮→夜）。')
     if (Array.isArray(input.timeline) && input.timeline.length > 0) {
       lines.push('- 已有章节时间线（最近 8 章）：')
       for (const item of input.timeline) {
         const time = item.time
-          ? `第${item.time.day ?? '?'}天${item.time.part ? `·${item.time.part}` : ''}${item.time.mode && item.time.mode !== 'linear' ? `（${item.time.mode}）` : ''}`
+          ? `第${item.time.day ?? '?'}天${item.time.part ? `·${item.time.part}` : ''}${item.time.endDay != null || item.time.endPart ? `→第${item.time.endDay ?? item.time.day ?? '?'}天${item.time.endPart ? `·${item.time.endPart}` : ''}` : ''}${item.time.mode && item.time.mode !== 'linear' ? `（${item.time.mode}）` : ''}`
           : '无锚点'
         lines.push(`  · 第${item.number}章 ${item.title || ''}：${time}`)
       }
     }
     if (input.previousTimeAnchor) {
-      lines.push(`- 上一章锚点：第${input.previousTimeAnchor.day ?? '?'}天${input.previousTimeAnchor.part ? `·${input.previousTimeAnchor.part}` : ''}`)
+      lines.push(`- 上一章锚点：第${input.previousTimeAnchor.day ?? '?'}天${input.previousTimeAnchor.part ? `·${input.previousTimeAnchor.part}` : ''}${input.previousTimeAnchor.endDay != null || input.previousTimeAnchor.endPart ? `→第${input.previousTimeAnchor.endDay ?? input.previousTimeAnchor.day ?? '?'}天${input.previousTimeAnchor.endPart ? `·${input.previousTimeAnchor.endPart}` : ''}` : ''}`)
     }
     if (Array.isArray(input.hardFacts) && input.hardFacts.length > 0) {
       lines.push('- 硬事实/期限（时间必须对齐；期限已换算为 day）：')
@@ -1379,6 +1380,28 @@ export const CAST_PLAN_SYSTEM_PROMPT = [
   `规则：cast 只能来自给定角色池，最多 ${CAST_LIMITS.volumeCast} 人；extras（具名龙套）也只能来自角色池、不得与 cast 重复、最多 ${CAST_LIMITS.namedExtrasPerVolume} 人，note 必须写清作用且明确不推动关键转折；newCharacters 最多 ${CAST_LIMITS.newNamedPerVolume} 个，且每个必须写明 reason，名字不得与池重复；fromChapter/firstChapter 必须在给定章节范围内；只选本卷真正需要的角色，不要为热闹凑人。`,
 ].join('\n')
 
+export const POWER_SYSTEM_PROMPT = [
+  '你是中文长篇小说的设定编辑，负责根据已确认构思与角色/世界设定，建立本书的能力体系。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"system":{"name":"体系名","summary":"1–2 句总述","tiers":[{"name":"层级名","order":0,"description":"这一层能做什么/不能做什么"}]},"characters":[{"name":"角色名","tierName":"层级名","stage":"小阶段/细分（可空）","abilities":["已明确的招式/能力"],"notes":"1 句定位"}]}。',
+  '规则：',
+  '- 层级 4–8 个，order 从 0 开始、由低到高；名称与描述必须贴合本书题材和已确认设定，不要照搬“未入流/三流/二流”这类默认词。',
+  '- 只写给定角色池里的具名角色；tierName 必须来自 tiers；没有明确依据的 abilities/notes 留空。',
+  '- 只描述设定层面的能力基准，不写正文尚未发生的变化，不替角色安排升级。',
+  '- 体系必须能用于判断“无铺垫跨级”和战斗表现，描述要可执行（能做什么、不能做什么）。',
+].join('\n')
+
+export const POWER_UPDATE_SYSTEM_PROMPT = [
+  '你是中文小说的能力体系记录员：从本章正文提取能力/境界/招式的实际变化。',
+  '只输出 JSON，不要 Markdown 围栏。',
+  '格式：{"changes":[{"character":"","from":"","to":"","summary":""}],"characters":[{"name":"","tierName":"","stage":"","notes":""}]}。',
+  '规则：',
+  '- 只记录正文明确写出的变化（突破、学会招式、伤势影响发挥、真气耗尽等）；没有变化就返回空数组。',
+  '- from/to 必须使用现有层级名；不要自造层级，不要把旁白形容当升级。',
+  '- characters 只更新确有变化的已登记角色；未出场/未变化的角色不要出现在数组里。',
+  '- 不推测后续成长，不补写正文没有发生的事。',
+].join('\n')
+
 export const CHARACTER_STATE_SYSTEM_PROMPT = [
   '你是中文小说的人物状态记录员：从本章正文提取人物状态，用于下一章连续写作。',
   '只输出 JSON，不要 Markdown 围栏。',
@@ -1435,7 +1458,7 @@ export const OUTLINE_AUDIT_SYSTEM_PROMPT = [
   '检查项：章纲是否空泛（synopsis 只有概括，缺具体人物、动作、结果）；时间线（先后、季节、地点移动是否可能）；人物位置与状态（上一章 synopsis 与下一章出场/状态是否矛盾，出场角色、身份和所在位置是否前后一致）；因果链（上一章 synopsis 是否支撑下一章剧情，章节之间是否自相矛盾）；伏笔（plant/payoff 是否对应、是否跨章回收）；设定（是否与既有角色/规则/地点冲突）；能力体系（境界是否无铺垫跨级、能力变化是否有来源与影响）；重复桥段（连续多章同一套路）。',
   '只报告能从前文摘要、章纲与设定中证明的冲突；不要评价文笔；没有冲突返回空数组。',
   '两类问题必须分开：issues 只放可证明的一致性冲突（事实/时间线/位置/能力/因果/设定违反）；structureIssues 只放结构问题（角色超载=核心阵容>6 人或具名龙套>3 人、重复但无升级的桥段、主角连续多章被动、主线停滞、支线挤占、阵容未更新=本卷阵容与上一卷几乎相同且没有引入新面孔/新关系变化、promise 是否连续多章未兑现、类型/调性是否漂移、因果链是否薄弱），不要塞进 issues；synopsis 出现场记式/编号式/标签式标记（字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）→ issues 报 type「非叙事标记」或「场记式开头」（一致性 warn）。',
-  '时间锚点判定：章纲 time 只在 JSON 里有意义，synopsis 不要写日期代号/时间码；相邻 linear 章 day 倒退（flashback/parallel 不参与线性顺序）→ issues（一致性 error/warn，type「时间线冲突」）；同日 linear 章 part 倒退（晨→日→暮→夜顺序）→ issues（一致性 warn，type「时间线冲突」）；synopsis 场景与 time/锚点矛盾（如 time 为夜但 synopsis 写正午）→ issues（一致性 warn）；没有 time 的章不要报；建议用 novel_outline action=update 改 time 或 synopsis，不要自动修。',
+  '时间锚点判定：章纲 time 只在 JSON 里有意义，synopsis 不要写日期代号/时间码。time 是本章开场，endDay/endPart 是本章收束；**一章可以跨时段（如从暮写到入夜），不要因为 synopsis 后半段到了另一个 part 就报时间线冲突**。只报这四类可证明冲突：① synopsis 开场事件与 time 的开场 day/part 明显矛盾；② 章内 endDay 早于 day，或同日 endPart 早于 part（晨→日→暮→夜）；③ 相邻 linear 章，本章 start 早于上一章 end（倒退，flashback/parallel 不参与）；④ 上一章结尾与本章开头写的是同一场连续戏（没有过夜/休整/赶路交代），但本章 start 比上一章 end 晚。没有 time 的章不要报；建议用 novel_outline action=update 改 time/end 或 synopsis，不要自动修。',
   '主线推进判定：同一里程碑/同一目标连续 >2 章无实质推进（只写相遇/查探/准备，没发生 mustHit 事件）→ structureIssues 记 type「主线停滞」，number 用区间起始章号，message 写范围与停滞内容；用人物相遇/新事件/新麻烦替代主线且未写清被迫（代价）/选择（所图）→ type「支线挤占」；synopsis 出现场记式/编号式/标签式标记表示时间或场景（字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）→ issues 报 type「非叙事标记」或「场记式开头」（一致性 warn，message 引用片段），advice 改为把时间/场景融进叙事句。',
   '主角被动判定：看主角是否连续 3 章以上被推着走、没有一次带代价的主动选择；允许个别章节被动应对。判定成立时 structureIssues 记 type「主角被动」，number 用连续区间的起始章号，message 写明范围（如「第 5–8 章连续被动」）。',
   '桥段重复判定：看是否连续两章使用同一推进手段（夜探/交涉/交易/查账等）且第二次没有新信息、新代价或新阻力；单纯标签相同不算问题。判定成立时 structureIssues 记 type「桥段重复」，number 用重复区间的起始章号，message 写明范围与缺少的升级。',
@@ -1451,7 +1474,7 @@ export const OUTLINE_REPAIR_SYSTEM_PROMPT = [
 ].join('\n')
 
 export const VOLUME_PLAN_SYSTEM_PROMPT = [
-  '你是中文长篇小说的分卷编辑，负责根据上一卷结束时的人物状态与未解冲突，推导本卷舞台与卷级目标。',
+  '你是中文长篇小说的分卷编辑，负责根据上一卷结束时的人物状态与未解冲突，或第一卷的已确认构思开局，推导本卷舞台与卷级目标。',
   '只输出 JSON 对象，不要 Markdown 围栏，不要解释。',
   '格式：{"candidates":[{"title":"卷名","map":"本卷主要活动范围与地点","goal":"本卷主线要解决的开放问题（不是事件顺序）","whyNow":"谁逼的/主角要什么，为什么是现在","cost":"主角为推进它要付出的代价","risk":"失败的风险/反噬","exitCriteria":"什么条件满足后离开本卷（可验证）","targetChapters":12,"powerCeiling":"本卷本地战力天花板（可选）"}]}。',
   '给 2–3 个差异明显的候选：goal 是「当前局势下主角必须解决的开放问题」，不是事件顺序或主题口号；whyNow 必须由上一卷末的人物处境/欲望/未解冲突推出；cost/risk 要具体；exitCriteria 要可判断。',
@@ -1501,7 +1524,7 @@ export function buildVolumePlanUserPrompt(input) {
       lines.push(`- 第${chapter.number}章 ${chapter.title || ''}：${String(chapter.synopsis || '').slice(0, 800)}`)
     }
   } else {
-    lines.push('本卷还没有章纲，请根据上一卷离卷结果和升级目标先规划舞台。')
+    lines.push('本卷还没有章纲。若这是第一卷（没有上一卷），根据「已确认构思」的开局事件（引子）推导本卷：goal 必须是开局事件引出的、主角必须解决的开放问题，不是把引子复述一遍，也不是事件顺序；whyNow 由开局处境/欲望/阻力推出。若已有上一卷，按上一卷末态与未解冲突推导。')
   }
   lines.push('只输出 JSON。')
   return lines.join('\n')

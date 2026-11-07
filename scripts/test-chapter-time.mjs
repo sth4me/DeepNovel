@@ -53,7 +53,9 @@ assert.ok(prompt.includes('第2天·晨'), '时间线应含 day/part')
 assert.ok(prompt.includes('上一章锚点：第2天·夜'), '应注入上一章锚点')
 assert.ok(prompt.includes('硬事实/期限'), '应注入硬事实')
 assert.ok(prompt.includes('（第3天）'), '期限应换算为 day')
-assert.ok(prompt.includes('新章 day 必须 ≥ 前一 linear 章的 day'), '应含线性递增规则')
+assert.ok(prompt.includes('若本章紧接上一章结尾的同一场戏'), '应含同场续写规则')
+assert.ok(prompt.includes('允许一章跨时段'), '应说明一章可跨时段')
+assert.ok(prompt.includes('endDay'), '应含收束锚点')
 assert.ok(prompt.includes('flashback/parallel 不参与线性顺序'), 'flashback/parallel 不参与线性顺序')
 assert.ok(prompt.indexOf('【时间锚点') > prompt.indexOf('【本卷目标与本章位置（最高优先级）】'), '时间锚点在最高优先级块之后')
 assert.ok(prompt.indexOf('【时间锚点') < prompt.indexOf('文风契约：'), '时间锚点在文风契约之前')
@@ -127,7 +129,7 @@ const makeChapter = (number, time) => ({
 })
 
 // ---------- 1) outlineGenerate 注入时间线/锚点/硬事实 ----------
-generateChapters = [makeChapter(5, { day: 3, part: '日', spanDays: 1, mode: 'linear' })]
+generateChapters = [makeChapter(5, { day: 3, part: '日', endDay: 4, endPart: '夜', spanDays: 1, mode: 'linear' })]
 const generated = await service.outlineGenerate(project, { fromChapter: 5, count: 1 })
 assert.ok(generated)
 const injected = generatePrompts[0]
@@ -137,13 +139,15 @@ assert.ok(injected.includes('第2天·晨'), '应含第3章时间锚点')
 assert.ok(injected.includes('上一章锚点：第2天·夜'), '应含上一章（第4章）锚点')
 assert.ok(injected.includes('（第3天）'), '硬事实期限应换算为 day')
 assert.ok(injected.includes('宵禁'), '应注入安全类硬事实')
-assert.ok(injected.includes('新章 day 必须 ≥ 前一 linear 章的 day'), '应含线性规则')
+assert.ok(injected.includes('若本章紧接上一章结尾的同一场戏'), '应含同场续写规则')
 
 // ---------- 2) 合法 time 写盘保留（不进 synopsis） ----------
 const saved = await chapterAt(5)
 assert.ok(saved.time, '合法 time 应保留')
 assert.equal(saved.time.day, 3)
 assert.equal(saved.time.part, '日')
+assert.equal(saved.time.endDay, 4)
+assert.equal(saved.time.endPart, '夜')
 assert.equal(saved.time.spanDays, 1)
 assert.equal(saved.time.mode, 'linear')
 assert.equal(String(saved.synopsis).includes('time'), false, 'synopsis 不应含 time 标记')
@@ -155,12 +159,18 @@ const invalidSaved = await chapterAt(6)
 assert.equal(Boolean(invalidSaved.time), false, '非法 time 应丢弃')
 
 // ---------- 4) updateOutlineChapter 支持 fields.time ----------
-const updated = await service.updateOutlineChapter(project, { number: 5, fields: { time: { day: 5, part: '暮', spanDays: 2, mode: 'flashback' } } })
+const updated = await service.updateOutlineChapter(project, { number: 5, fields: { time: { day: 5, part: '暮', endDay: 5, endPart: '夜', spanDays: 0, mode: 'flashback' } } })
 assert.equal(updated.time.day, 5)
+assert.equal(updated.time.endPart, '夜')
 assert.equal(updated.time.mode, 'flashback')
 const updatedSaved = await chapterAt(5)
 assert.equal(updatedSaved.time.part, '暮')
 await assert.rejects(() => service.updateOutlineChapter(project, { number: 5, fields: { time: { day: 'x', part: '夜' } } }), /time 不合法/)
+await assert.rejects(
+  () => service.updateOutlineChapter(project, { number: 5, fields: { time: { day: 5, part: '夜', endDay: 4, endPart: '晨' } } }),
+  /time 不合法/,
+  'end 早于 start 应拒绝',
+)
 
 // ---------- 5) OUTLINE_AUDIT：注入时间线 + 判定规则 ----------
 const auditPromptsBefore = auditPrompts.length
@@ -169,8 +179,10 @@ const auditPrompt = auditPrompts[auditPrompts.length - 1]
 assert.ok(auditPrompts.length > auditPromptsBefore)
 assert.ok(auditPrompt.includes('【时间线（章纲 time 锚点'), '审核 prompt 应注入时间线')
 assert.ok(auditPrompt.includes('"day"'), '审核 prompt 应含 time JSON')
-assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('相邻 linear 章 day 倒退'), '审核规则应含线性倒退')
-assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('flashback/parallel 不参与线性顺序'), '审核规则应含 flashback 不参与')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('一章可以跨时段'), '审核规则应允许章内跨时段')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('上一章结尾与本章开头写的是同一场连续戏'), '审核应检查同场续写')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('本章 start 早于上一章 end'), '审核应检查 start/end 倒退')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('flashback/parallel 不参与'), '审核规则应含 flashback 不参与')
 assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('没有 time 的章不要报'), '无 time 不报')
 assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('不要自动修'), '不自动修')
 assert.ok(OUTLINE_SYSTEM_PROMPT.includes('时间锚点规则'), 'system prompt 应含时间锚点规则')
@@ -182,6 +194,7 @@ const outlineTool = registered.find((tool) => tool.name === 'novel_outline')
 assert.ok(outlineTool.parameters.properties.fields.properties.time, 'update fields 应支持 time')
 assert.ok(outlineTool.description.includes('时间线冲突'), '描述应说明时间线冲突处理')
 assert.ok(outlineTool.parameters.properties.fields.properties.time.description.includes('不写进 synopsis'), 'time 字段应说明不写进 synopsis')
+assert.ok(outlineTool.parameters.properties.fields.properties.time.description.includes('endDay'), 'time 字段应支持收束锚点')
 
 service.disposeStores()
 await new Promise((resolve) => setTimeout(resolve, 80))

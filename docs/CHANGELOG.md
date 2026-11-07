@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.1.25
+
+- **前端状态竞态修复**：`project-state` 加载增加请求序号，迟到的旧响应不再覆盖新状态；文风页在表单有未保存修改时不再被外部 `contract.updatedAt` 重置，并提示「文风已在别处更新，你的未保存修改已保留」。解决“保存成功但界面又变回旧版”的问题。新增 `test-ui-state-guard`。
+- **章纲时间锚点改为「开场 + 收束」**：`time` 仍表示本章开场，新增可选 `endDay` / `endPart`；一章可以跨时段（如暮→夜），审核不再因为 synopsis 后半段到了另一个 part 而误报。同场连续戏必须沿用上一章 `endDay/endPart`，不得因为换章就 +1 天；只有明确过夜/赶路/时间跳跃才推进 day。`normalizeChapterTime` 校验 end 不早于 start，`novel_outline action=update` 支持收束字段；大纲生成/审核提示词同步。
+- **卷目标自动规划**：第一卷空目标时，先根据已确认构思的开局事件调用 `planVolume` 生成候选并采用候选 1，再生成章纲；规划失败则拒绝生成，不再空目标硬写。新卷（上一卷 `volumeEnd` 后）在内存里完成目标规划，章节生成成功后才随大纲落盘，失败不会留下空卷；卷设置新增目标章数字段，进度块不再把目标章数 0 算成每章都是卷末。新增 `test-auto-volume-goal`，扩充 `test-outline-volume`。
+- **能力体系自动维护**：生成设定时若能力体系为空，自动根据构思/角色池/世界规则建立层级与角色当前层级（已有自定义不覆盖）；首次生成章纲前为空也会补建；章节草稿/修订后从正文提取明确的能力变化，追加 `chapterChanges` 并更新角色 `tierName/stage/current`，失败只返回 `powerWarning`。新增 `novel_bible action=power-generate` 与页面「重新生成能力体系」。新增 `test-power-auto`。
+- **助手不再自动审稿**：移除「写完或改完章节后的默认流程」——助手按用户指令改完即停，不再自动 `novel_diagnose` / `novel_repair`；只有用户明确要求检查/审稿时才诊断，hard 先报告、是否修复由用户决定，soft 只提示。`novel_diagnose` / `novel_repair` 工具描述同步限定。项目写作要求里的审稿/修复尺度只约束生成与审稿流程，不要求助手每次改完都跑审稿。
+
 ## 0.1.24
 
 - **修复修订/预览的 signal 未定义**：`buildRevisionPlan` 之前没有接收 `signal` 参数，但内部已使用它，导致 `revise` / 预览报 `signal is not defined`；现在 `buildRevisionPlan(agent, options, signal)`，`reviseChapter` / `previewRevision` 调用时透传。顺带修复预览中误用未定义 `number`（应为 `plan.number`）。
