@@ -119,11 +119,12 @@ assert.deepEqual(newEntry.meta, { status: '未登场', firstChapter: 2, importan
 const castMember = bibleAfterPlan.characters.find((character) => character.name === '角色1')
 assert.equal(castMember.meta.firstChapter, 1, '选中角色应补 firstChapter')
 
-// ---------- 2) 超限截断 ----------
+// ---------- 2) 超过建议值但未超过硬上限：保留，不截断 ----------
 castPayload = makeCastPayload(9, 4)
+castPayload.newCharacters = castPayload.newCharacters.map((item, index) => ({ ...item, name: `新角色B${index + 1}` }))
 const capped = await service.planVolumeCast(project, { volumeId: 'vol-1', fromChapter: 1, toChapter: 10 })
-assert.equal(capped.cast.length, CAST_LIMITS.volumeCast, '阵容应截断到上限')
-assert.equal(capped.newCharacters.length, CAST_LIMITS.newNamedPerVolume, '新增角色应截断到上限')
+assert.equal(capped.cast.length, 9, '焦点名单超过建议值但未超硬上限应保留')
+assert.equal(capped.newCharacters.length, 4, '新增角色超过建议值但未超硬上限应保留')
 
 // ---------- 3) 池外名字 → 报错且不写盘 ----------
 const beforeInvalid = JSON.stringify((await readOutline()).volumes[0].cast)
@@ -157,7 +158,7 @@ assert.ok(capturedGeneratePrompt.includes('角色6'), '大纲 prompt 应含阵�
 for (const outside of ['角色7', '角色8', '角色9', '角色17']) {
   assert.equal(capturedGeneratePrompt.includes(outside), false, `大纲 prompt 不应含阵容外角色：${outside}`)
 }
-assert.ok(capturedGenerateSystem.includes('本卷阵容') || capturedGenerateSystem.includes('选角硬规则'), '大纲 system 应含选角规则')
+assert.ok(capturedGenerateSystem.includes('不是出场白名单') || capturedGenerateSystem.includes('角色使用规则'), '大纲 system 应含焦点名单规则')
 assert.equal(generated.cast.warning, null)
 
 // ---------- 6) 再生成复用已有 cast（不再调用选角） ----------
@@ -184,7 +185,7 @@ assert.deepEqual(warned.cast.newNamed, ['新角色X'])
 // ---------- 8) cast-list / cast-update / novel_cast ----------
 const listed = await service.listVolumeCast(project, { volumeId: 'vol-1' })
 assert.equal(listed.cast.length, 6)
-assert.deepEqual(listed.limits, { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 })
+assert.deepEqual(listed.limits, { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2, volumeCastMax: 12, namedExtrasMax: 8 })
 const updated = await service.updateVolumeCast(project, {
   volumeId: 'vol-1',
   cast: [{ name: '角色1', roleInVolume: '主角', fromChapter: 1, importance: '主角' }, { name: '角色2', roleInVolume: '配角', fromChapter: 2, importance: '配角' }],
@@ -193,7 +194,7 @@ assert.equal(updated.cast.length, 2)
 await assert.rejects(() => service.updateVolumeCast(project, { volumeId: 'vol-1', cast: [{ name: '池外角色' }] }), /角色池/)
 await assert.rejects(() => service.updateVolumeCast(project, {
   volumeId: 'vol-1',
-  cast: poolNames.slice(0, 7).map((name) => ({ name })),
+  cast: poolNames.slice(0, 13).map((name) => ({ name })),
 }), /最多/)
 
 const indexSource = await readFile(new URL('../index.js', import.meta.url), 'utf8')
@@ -267,7 +268,7 @@ assert.equal(outlineExtras.volumes[0].extras.length, 2, 'extras 应写入 volume
 assert.ok(outlineExtras.volumes[0].extras[0].note.includes('不推动关键转折'), 'note 应说明不推动关键转折')
 const bibleExtras = await service.readBible(project)
 const extraEntry = bibleExtras.characters.find((character) => character.name === withExtras.extras[0].name)
-assert.equal(extraEntry.meta.firstChapter, withExtras.extras[0].fromChapter, '龙套 meta.firstChapter 应补填')
+assert.ok(extraEntry.meta.firstChapter >= 1, '龙套 meta.firstChapter 应存在（保留已有登记信息）')
 
 // 10b) extras 超限截断；池外/与阵容重名跳过
 castPayload = {
@@ -277,8 +278,8 @@ castPayload = {
   newCharacters: [],
 }
 const cappedExtras = await service.planVolumeCast(project, { volumeId: 'vol-1', fromChapter: 1, toChapter: 10 })
-assert.equal(cappedExtras.extras.length, 3, '龙套应截断到上限')
-assert.ok(cappedExtras.warning && cappedExtras.warning.includes('截断'), '超限应返回 warning')
+assert.equal(cappedExtras.extras.length, 4, '具名配角超过建议值但未超硬上限应保留')
+assert.equal(cappedExtras.warning, null, '未超硬上限不应告警')
 assert.ok(cappedExtras.extras.every((item) => poolNames.includes(item.name)), '龙套必须来自角色池')
 assert.ok(cappedExtras.extras.every((item) => !cappedExtras.cast.some((castItem) => castItem.name === item.name)), '龙套不得与阵容重名')
 
@@ -292,7 +293,7 @@ assert.equal(updatedBoth.cast.length, 2)
 assert.equal(updatedBoth.extras.length, 1)
 assert.equal(updatedBoth.limits.namedExtrasPerVolume, 3)
 await assert.rejects(() => service.updateVolumeCast(project, { volumeId: 'vol-1', cast: [{ name: '角色1' }], extras: [{ name: '角色1' }] }), /重名/)
-await assert.rejects(() => service.updateVolumeCast(project, { volumeId: 'vol-1', cast: [{ name: '角色1' }], extras: poolNames.slice(6, 10).map((name) => ({ name })) }), /最多/)
+await assert.rejects(() => service.updateVolumeCast(project, { volumeId: 'vol-1', cast: [{ name: '角色1' }], extras: poolNames.slice(6, 15).map((name) => ({ name })) }), /最多/)
 const listedBoth = await service.listVolumeCast(project, { volumeId: 'vol-1' })
 assert.equal(listedBoth.extras.length, 1, 'cast-list 应返回 extras')
 assert.equal(listedBoth.limits.namedExtrasPerVolume, 3)

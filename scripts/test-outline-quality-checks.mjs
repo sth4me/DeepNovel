@@ -104,45 +104,31 @@ let result = await run()
 assert.equal(generateCalls, 1)
 assert.equal(retryCalls, 0, '章级选角泄漏不应自动重生成章纲')
 assert.ok(result.castViolations.some((item) => item.name === '池外角色X' && item.number === 1), '应记录 castViolations')
-assert.ok(result.cast.warning && result.cast.warning.includes('选角泄漏'), '应返回 warning')
+assert.ok(result.cast.warning && result.cast.warning.includes('未登记'), '应返回未登记名字提示')
 const audit1 = await readAudit()
 assert.ok(audit1.structureIssues.some((issue) => issue.type === '未登记角色' && Number(issue.number) === 1), '应写入未登记角色结构问题（进 replan）')
 const persisted = (await readOutline()).volumes[0].chapters
 assert.equal(persisted.length, 3, '违规不阻塞写盘')
 assert.deepEqual(persisted.find((item) => Number(item.number) === 1).castUsed, ['角色1', '池外角色X'], 'chapter.castUsed 应持久化')
 
-// ---------- A2) 仅顶层 newNamed 且无其它违规：重试一次并修复 ----------
+// ---------- A2) 仅顶层 newNamed：不重试，软提示不阻塞 ----------
 await writeOutline()
 generatePayload = { chapters: [chapter(1), chapter(2), chapter(3)], newNamed: ['池外角色Y'] }
-retryPayload = { chapters: [chapter(1), chapter(2), chapter(3)], newNamed: [] }
 result = await run()
-assert.equal(retryCalls, 1, '仅顶层 newNamed 时应重试一次')
-assert.ok(capturedRetryPrompt.includes('池外角色Y'), '重试 prompt 应列出违规名字')
-assert.ok(capturedRetryPrompt.includes('身份指代'), '重试 prompt 应要求身份指代')
-assert.ok(capturedRetryPrompt.includes('角色1'), '重试 prompt 应重申名单')
-assert.deepEqual(result.castViolations, [], '修复后不应有违规')
-assert.equal(result.cast.warning, null)
+assert.equal(retryCalls, 0, '新名字不再自动重生成')
+assert.ok(result.castViolations.some((item) => item.name === '池外角色Y' && item.kind === 'topNewNamed'), '应记录顶层新名字')
+assert.ok(result.cast.warning && result.cast.warning.includes('新名字'), '应提示新名字待登记/改身份')
+assert.equal((await readOutline()).volumes[0].chapters.length, 3, '不阻塞写盘')
 
-// ---------- A3) 顶层 newNamed 重试后仍违规：停止并记结构问题 ----------
-await writeOutline()
-generatePayload = { chapters: [chapter(1), chapter(2), chapter(3)], newNamed: ['池外角色Y'] }
-retryPayload = { chapters: [chapter(1), chapter(2), chapter(3)], newNamed: ['池外角色Y'] }
-result = await run()
-assert.equal(retryCalls, 1, '只重试一次')
-assert.ok(result.castViolations.some((item) => item.name === '池外角色Y' && item.kind === 'topNewNamed'), '仍违规应返回顶层违规')
-assert.ok(result.cast.warning)
-const audit3 = await readAudit()
-assert.ok(audit3.structureIssues.some((issue) => issue.type === '未登记角色' && (issue.number === null || Number(issue.number) === 0)), '应记录未登记角色结构问题')
-
-// ---------- A4) 章级违规 + 顶层 newNamed 同时存在：不重试，全部记录 ----------
+// ---------- A3) 章级违规 + 顶层 newNamed 同时存在：不重试，全部记录 ----------
 await writeOutline()
 generatePayload = { chapters: [chapter(1, { castUsed: ['角色1', '池外角色X'] }), chapter(2), chapter(3)], newNamed: ['池外角色Y'] }
 result = await run()
-assert.equal(retryCalls, 0, '存在章级违规时不应触发顶层重试')
+assert.equal(retryCalls, 0, '存在章级违规时也不应触发重试')
 assert.ok(result.castViolations.some((item) => item.number === 1), '应记录章级违规')
 assert.ok(result.castViolations.some((item) => item.kind === 'topNewNamed'), '应记录顶层违规')
 const audit4 = await readAudit()
-assert.ok(audit4.structureIssues.filter((issue) => issue.type === '未登记角色').length >= 2, '章级与顶层都应记结构问题')
+assert.ok(audit4.structureIssues.filter((issue) => issue.type === '未登记角色').length >= 2, '章级与顶层都应记软问题')
 
 // ---------- B/C) 提示词：主动性弧段 + 重复必须升级 ----------
 assert.ok(OUTLINE_SYSTEM_PROMPT.includes('每 2–4 章'), '大纲提示词应给主动性频率')

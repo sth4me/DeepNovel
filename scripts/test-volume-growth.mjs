@@ -101,7 +101,7 @@ const makeChapter = (number, extra = {}) => ({
 assert.ok(OUTLINE_SYSTEM_PROMPT.includes('分卷收束硬规则'), 'OUTLINE_SYSTEM_PROMPT 应含收束硬规则')
 assert.ok(OUTLINE_SYSTEM_PROMPT.includes('volumeEnd'), '应要求输出 volumeEnd')
 assert.ok(OUTLINE_SYSTEM_PROMPT.includes('全卷只能有一个收束章'), '收束章应唯一')
-assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('阵容未更新'), '审核应含阵容未更新')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('焦点名单连续多卷'), '审核应含焦点名单轮换软提示')
 const sections = []
 apply({ tools: { register: () => {} }, systemPrompt: { section: (section) => sections.push(section) } })
 const doctrine = sections.find((section) => section.name === 'deepnovel:writing-doctrine')
@@ -156,7 +156,7 @@ assert.equal(sameCast.newFaces.length, 0)
 const castPrompt = castPrompts[0]
 assert.ok(castPrompt.includes('上一卷阵容'), '选角 prompt 应注入上一卷阵容')
 assert.ok(castPrompt.includes('未使用角色池'), '选角 prompt 应注入未使用角色池')
-assert.ok(castPrompt.includes('轮换要求'), '选角 prompt 应含轮换要求')
+assert.ok(castPrompt.includes('轮换建议'), '选角 prompt 应含轮换建议（软）')
 
 // 5b) 引入未使用角色池的新面孔 → 无 warning，newFaces 正确
 castPayload = {

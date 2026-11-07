@@ -4070,8 +4070,8 @@ window.__ModuleLoader__.load({
           activeVolume
             ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
                 Array.isArray(activeVolume.cast) && activeVolume.cast.length > 0
-                  ? `本卷阵容 ${activeVolume.cast.length}/6 · 龙套 ${Array.isArray(activeVolume.extras) ? activeVolume.extras.length : 0}/3：${activeVolume.cast.map((item) => item.name).join('、')}${Array.isArray(activeVolume.extras) && activeVolume.extras.length > 0 ? `（龙套：${activeVolume.extras.map((item) => item.name).join('、')}）` : ''}`
-                  : '未选角，生成时自动规划（阵容 ≤6 · 具名龙套 ≤3）',
+                  ? `本卷焦点名单 ${activeVolume.cast.length} 人（建议 6 左右）· 具名配角 ${Array.isArray(activeVolume.extras) ? activeVolume.extras.length : 0} 人（建议 3 左右）：${activeVolume.cast.map((item) => item.name).join('、')}${Array.isArray(activeVolume.extras) && activeVolume.extras.length > 0 ? `（配角：${activeVolume.extras.map((item) => item.name).join('、')}）` : ''}`
+                  : '尚未设置焦点名单：可按剧情需要挑选，角色池里的已登记角色也都能出场',
               )
             : null,
           activeVolume

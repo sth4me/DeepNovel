@@ -14,7 +14,7 @@
 
 角色是**角色池**（bible），不是本卷阵容：
 
-- 本卷可具名角色 = 核心阵容（≤6，承担主线/关键转折）+ 具名龙套（≤3，可命名、需登记、可反复出现但不得承担关键转折）；名单外无名路人一律身份指代（不限量）；每卷新增具名角色 ≤2 且必须登记。阵容/龙套存 `volume.cast` / `volume.extras`，用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`）。默认上限 `CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 }`，当前不可在项目页配置（未来可开放）。
+- 角色池（bible）是可用演员表；本卷 `cast` / `extras` 是**焦点名单/具名配角**，不是出场白名单。焦点名单建议 6 人左右（最多 12），具名配角建议 3 人左右（最多 8），预计复用的新名字建议 2 个左右（最多 6，必须登记）。已登记角色都可以具名出场；纯功能路人用身份指代；一次性新名字不要留在正文；不强制每卷换阵容。阵容/配角存 `volume.cast` / `volume.extras`，用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`）。硬上限见 `CAST_LIMITS`（`volumeCastMax` / `namedExtrasMax` / `newNamedMax`）。
 - 大纲/正文只用本卷可具名角色；未登场角色不出现；正文不给路人取名（用身份指代），未登记命名角色会报 hard 一致性问题。
 - 写下一章前用 `novel_state action=get` 读上一章人物状态（处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点），写完 `action=update` 更新；状态只记录正文实际发生的事。
 

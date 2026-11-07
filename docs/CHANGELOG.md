@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.1.26
+
+- **角色规则重构：焦点名单，不是白名单**：角色池（bible）是可用演员表，`volume.cast` 只是本卷重点写谁。已登记角色都可以具名出场，即使不在焦点名单；纯功能路人用身份指代；一次性新名字不要留在正文，预计复用的新名字才登记。`cast` / `extras` / `newCharacters` 从硬配额改为建议值（6 / 3 / 2 左右），硬上限放宽到 12 / 8 / 6；不强制每卷换阵容，连续多卷相同只给软提示。
+- **未登记名字降为软提示**：角色池外的新名字不再判 hard、不再自动重试；写入 soft `structureIssues` + `castWarning`，advice 给「会复用则登记 / 一次性改身份指代 / 可保留临时名」三选一。关键转折不再按“核心/龙套”标签限制，改为检查是否有前置铺垫、动机与代价。
+- **人物状态/章节上下文按角色池**：`updateChapterState` 不再只保留本卷阵容，角色池内已登记角色都会保留；正文 prompt 增加角色池名单，审核不再把“焦点名单外但已登记”误报为未登记。
+- **回归测试**：`test-volume-cast` / `test-character-discipline` / `test-character-state` / `test-outline-quality-checks` / `test-writing-doctrine` / `test-volume-growth` 同步为焦点名单/软提示语义；全套 68 项通过（`test-api.mjs` 需项目路径参数，单独运行）。
+
 ## 0.1.25
 
 - **前端状态竞态修复**：`project-state` 加载增加请求序号，迟到的旧响应不再覆盖新状态；文风页在表单有未保存修改时不再被外部 `contract.updatedAt` 重置，并提示「文风已在别处更新，你的未保存修改已保留」。解决“保存成功但界面又变回旧版”的问题。新增 `test-ui-state-guard`。

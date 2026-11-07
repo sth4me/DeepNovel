@@ -168,7 +168,7 @@ export function apply(ctx) {
     name: 'deepnovel:writing-doctrine',
     order: 10120,
     text: () =>
-      '写作基础原则：本轮用户要求优先；系统注入的上下文是方法与长期约束、不是事实；技能是方法不是设定；素材是参考不是设定；发现冲突先指出再最小改动，不静默推翻。故事走向由角色性格与当前局势驱动，不写死结构。角色是世界池：本卷可具名角色 = 核心阵容（≤6）+ 具名龙套（≤3）；龙套不得承担关键转折；名单外路人一律身份指代；不新增未登记的命名角色（每卷新增 ≤2 且必须登记）；未登场角色不出现。写大纲或正文前先确认本卷阵容（novel_cast action=list/plan/update），不要临时加未登记角色。负向约束：不为凑爽点硬造冲突，不重复同一目标/场景两次以上，不偏离类型调性，不靠巧合/降智，不把结构问题当文字修，只写正式内容。新卷流程：先 novel_outline action=volume-plan 确认本卷目标 → novel_cast action=plan 确认阵容（与上一卷有差异、优先引入未使用角色池的新面孔）→ 再生成章纲；目标达成时用 novel_outline action=volume-end 标记收束，不要无限续写。',
+      '写作基础原则：本轮用户要求优先；系统注入的上下文是方法与长期约束、不是事实；技能是方法不是设定；素材是参考不是设定；发现冲突先指出再最小改动，不静默推翻。故事走向由角色性格与当前局势驱动，不写死结构。角色池是可用演员表：本卷焦点名单只提示重点写谁，不是出场白名单；已登记角色都可以具名出场；未登记的一次性名字用身份/特征指代；预计复用的新名字要登记进角色池（建议每卷 2 个左右，不硬卡）；关键转折看前置铺垫、动机与代价，不按“核心/龙套”标签限制，但不能由一次性人物凭空解决重大转折；同一章同时活跃的具名角色建议 4–5 人以内；未登场角色不提前提及。写大纲或正文前可先看本卷焦点名单（novel_cast action=list），不强制每卷换阵容。负向约束：不为凑爽点硬造冲突，不重复同一目标/场景两次以上，不偏离类型调性，不靠巧合/降智，不把结构问题当文字修，只写正式内容。新卷流程：先 novel_outline action=volume-plan 确认本卷目标 → 需要时 novel_cast action=plan 调整焦点名单 → 再生成章纲；目标达成时用 novel_outline action=volume-end 标记收束，不要无限续写。',
   })
 
   ctx.systemPrompt.section({
@@ -587,7 +587,7 @@ export function apply(ctx) {
 
   registerTool(ctx, {
     name: 'novel_cast',
-    description: '按卷选角。角色是角色池（bible），不是演员表：本卷可具名角色 = 核心阵容（≤6，承担主线/关键转折）+ 具名龙套（≤3，可命名、需登记、不得承担关键转折）；名单外路人一律身份指代；每卷新增具名角色 ≤2 且必须登记。action=list 读某卷阵容与龙套；action=plan 让模型从角色池为本卷选角（可带 fromChapter/toChapter/instruction/allowExtras）；action=update 人工调整阵容与龙套（名称必须在角色池、不重复、超上限报错）；action=delete 清空某卷阵容与龙套。',
+    description: '按卷规划焦点名单。角色池（bible）是可用演员表，本卷 cast 只表示重点写谁，不是出场白名单；角色池里的已登记角色都可以具名出场。cast 建议 6 人左右（最多 12），extras 具名配角建议 3 人左右（最多 8，可推动局部转折但要有铺垫），预计复用的新名字建议 2 个左右（最多 6，必须登记）；不强制每卷换阵容，连续多卷相同只会得到软提示。action=list 读焦点名单；action=plan 让模型从角色池为本卷选焦点名单；action=update 人工调整（名称必须在角色池、不重复；超过硬上限才报错）；action=delete 清空。',
     parameters: {
       type: 'object',
       properties: {
@@ -595,9 +595,9 @@ export function apply(ctx) {
         volumeId: { type: 'string', description: '目标卷 id（list/plan/update）' },
         fromChapter: { type: 'number', description: 'plan 的起始章号' },
         toChapter: { type: 'number', description: 'plan 的结束章号' },
-        limit: { type: 'number', description: 'plan 的阵容上限（默认 6）' },
-        allowNew: { type: 'number', description: 'plan 允许新增的命名角色数（默认 2）' },
-        allowExtras: { type: 'number', description: 'plan 允许的具名龙套数（默认 3）' },
+        limit: { type: 'number', description: 'plan 的焦点名单人数（建议 6，默认取硬上限 12）' },
+        allowNew: { type: 'number', description: 'plan 建议新增的命名角色数（默认 2，最多 6）' },
+        allowExtras: { type: 'number', description: 'plan 的具名配角数（建议 3，最多 8）' },
         instruction: { type: 'string', description: 'plan 的额外选角要求' },
         cast: {
           type: 'array',

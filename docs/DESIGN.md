@@ -93,9 +93,9 @@
 
 `bible_entries.meta_json`（schema v5）存角色生命周期：`status`（未登场 / 活跃 / 退场）、`firstChapter`、`importance`。bible 是**角色池**，不是本卷阵容。
 
-- `planVolumeCast`：本卷**可具名角色 = 核心阵容 + 具名龙套**——核心阵容 `cast` ≤6 人（承担主线冲突与关键转折）；具名龙套 `extras` ≤3 人（需登记、可反复出现，但**不得承担关键转折**）；名单外无名背景不限（一律身份指代）；每卷新增具名角色 ≤2 且必须登记。`CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2 }`（当前固定，未在项目页开放配置）。`cast-plan` 生成阵容与龙套，`cast-list` 读取，`cast-update` 调整核心阵容；结果写 `volume.cast`（`name` / `roleInVolume` / `fromChapter` / `importance`）与 `volume.extras`（`name` / `roleInVolume` / `fromChapter` / `note`），助手 `novel_cast`。
+- `planVolumeCast`：角色池（bible）是可用演员表，`volume.cast` 是**本卷焦点名单**而非出场白名单。焦点名单 `cast` 建议 6 人左右（最多 12）；具名配角 `extras` 建议 3 人左右（最多 8，可推动有铺垫的局部转折）；预计复用的新名字 `newCharacters` 建议 2 个左右（最多 6，必须登记）；纯功能路人用身份指代。`CAST_LIMITS = { volumeCast: 6, namedExtrasPerVolume: 3, newNamedPerVolume: 2, volumeCastMax: 12, namedExtrasMax: 8, newNamedMax: 6 }`，只在前三项作为建议、后三项作为硬上限。`cast-plan` 生成焦点名单，`cast-list` 读取，`cast-update` 调整；结果写 `volume.cast`（`name` / `roleInVolume` / `fromChapter` / `importance`）与 `volume.extras`（`name` / `roleInVolume` / `fromChapter` / `note`），助手 `novel_cast`。
 - 大纲/正文只用本卷可具名角色；未登场角色不出现；正文不给路人取名（用身份指代）；未登记的命名角色 → hard 一致性问题（advice：改身份指代或先 `novel_cast` 登记）。
-- **新卷阵容轮换**：`planVolumeCast` 计算上一卷阵容（`previousCastNames` = 上卷 cast + extras）与全卷未使用角色池（`unusedPool`），要求本卷阵容与上一卷**至少有 1 个不同角色**——优先 `unusedPool`，其次 `newCharacters`（≤2）；确属同一批人时由模型写 `noNewCastReason`。返回 `newFaces` / `noNewCastReason` / `castWarning`；与上一卷完全相同且无新面孔 → 「阵容未更新」warning；`OUTLINE_AUDIT` 的 `structureIssues` 也有「阵容未更新」类型。
+- **新卷焦点名单**：`planVolumeCast` 计算上一卷焦点名单与未使用角色池，但**不再强制轮换**——焦点名单可沿用上一卷，也可引入新面孔；连续多卷完全相同且无新面孔/新关系变化时只给软提示（`castWarning` 与 OUTLINE_AUDIT 的「焦点名单连续多卷」结构提示）。返回 `newFaces` / `noNewCastReason` / `castWarning`。
 
 ### 状态驱动
 
@@ -111,7 +111,7 @@
 - 结构问题**只建议重规划**（`replan`，1–3 个范围），不进 outline repair；`repairOutlineIssues` 遇到仅结构问题时返回 `reason:'structure-only'` + `replan`。
 - `diagnoseChapter` 返回 `suggestedAction`：有 hard → `repair`；仅 story 软问题 → `revise`；其余 `ignore`；无问题为 `null`。
 - 章节 repair 仍只修一致性问题（熔断/回滚/尝试上限/过期清理）。
-- **选角泄漏（确定性校验）**：生成后校验 `castUsed` / `newNamed` 是否都在本卷可具名名单内（空格/大小写归一）；**不自动重生成**。只有「顶层 `newNamed` 泄漏且无任何章级违规」时重试一次；仍有违规 → 写入 `structureIssues`（未登记角色）并进 `replan`；`castViolations` 随生成结果返回。
+- **角色名字校验（确定性，软提示）**：生成后校验 `castUsed` / `newNamed`。角色池内已登记角色（即使不在本卷焦点名单）不算违规；只有角色池外的新名字写入 `structureIssues`（type「未登记角色」，advice 给“会复用则登记 / 一次性改身份指代 / 可保留临时名”三选一），**不自动重试、不阻塞写盘**；`castViolations` 随生成结果返回，`focusWarning` 提示“已登记但未列入焦点名单”。
 - **主角主动性（弧段级）**：每 2–4 章至少一次有代价/风险的主动选择；连续 3 章以上被推着走 → `structureIssues`（主角被动，number 用连续区间起始章、message 写范围）。
 - **重复诊断（无升级才算）**：同一推进手段（夜探/交涉/交易等）连续使用，第二次必须带来新信息/新代价/新阻力；连续两章同手段且无升级 → `structureIssues`（桥段重复，给范围）。纯标签相同不算；不计数、不自动重试。
 - **局部修改优先**：单章或局部问题用 `novel_outline action=update` 改 1–3 章（title / synopsis / change / storyQuestion / promise / beats / wordBudget）；只有连续 ≥3 章崩坏、整卷崩或用户明确要求才 generate / regenerate，且先说明影响范围；`audit` 后不自动 repair / regenerate，等用户确认。

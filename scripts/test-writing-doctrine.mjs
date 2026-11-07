@@ -19,11 +19,11 @@ assert.ok(doctrine.WRITING_DOCTRINE.includes('本轮用户明确要求优先'), 
 assert.ok(doctrine.WRITING_DOCTRINE.includes('不是本书事实'), '应含上下文≠事实')
 assert.ok(doctrine.WRITING_DOCTRINE.includes('技能是写作方法，不是本书设定'), '应含技能≠设定')
 assert.ok(doctrine.WRITING_DOCTRINE.includes('发现冲突先指出'), '应含冲突先指出+最小改动')
-assert.ok(doctrine.WRITING_DOCTRINE.includes('不得新增未登记的命名角色'), '应含不新增未登记角色')
+assert.ok(doctrine.WRITING_DOCTRINE.includes('登记进角色池'), '应含新名字登记规则')
 assert.ok(doctrine.WRITING_DOCTRINE.includes('不为凑爽点'), '应含负向约束')
 assert.ok(doctrine.WRITING_DOCTRINE.length >= 600, 'doctrine 应有足够内容')
-assert.ok(doctrine.CAST_RULES.includes('≤6'), 'CAST_RULES 应含本卷阵容上限')
-assert.ok(doctrine.CAST_RULES.includes('≤2'), 'CAST_RULES 应含每卷新增上限')
+assert.ok(doctrine.CAST_RULES.includes('焦点名单'), 'CAST_RULES 应说明焦点名单')
+assert.ok(doctrine.CAST_RULES.includes('最多 12'), 'CAST_RULES 应含硬上限')
 assert.equal(doctrine.CAST_LIMITS.volumeCast, 6)
 assert.equal(doctrine.CAST_LIMITS.newNamedPerVolume, 2)
 
@@ -61,7 +61,7 @@ for (const key of ['outline', 'draft', 'revise', 'fix', 'bible', 'bibleCharacter
   const system = await service.systemFor(project, key, `TASK_${key.toUpperCase()}`)
   assert.ok(system.includes('写作基础原则'), `${key} system 应含写作基础原则`)
   assert.ok(system.includes(`TASK_${key.toUpperCase()}`), `${key} 应保留任务提示词`)
-  assert.ok(system.includes('选角规则'), `${key} system 应含选角规则`)
+  assert.ok(system.includes('角色使用规则'), `${key} system 应含角色使用规则`)
 }
 const reviewSystem = await service.systemFor(project, 'review', 'REVIEW_TASK')
 assert.equal(reviewSystem.includes('写作基础原则'), false, '非写作类 system 不应注入 doctrine')

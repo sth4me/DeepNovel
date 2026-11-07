@@ -95,22 +95,22 @@ service.callModel = async (agent, options) => {
 // ---------- 1) updateChapterState：生成 + 阵容外剔除 + 写盘 ----------
 await service.writeTextFile(project, 'story/chapters/002/draft.md', '角色1追查线索，和角色2见面。'.repeat(20))
 const updated = await service.updateChapterState(project, { number: 2 })
-assert.equal(updated.state.characters.length, 2, '阵容外角色应被剔除')
+assert.equal(updated.state.characters.length, 3, '角色池内角色应保留（不再按焦点名单过滤）')
 assert.ok(updated.state.characters.every((character) => poolNames.includes(character.name)))
-assert.ok(updated.warning && updated.warning.includes('角色8'), '应返回剔除 warning')
+assert.ok(!updated.warning, '角色池内角色不应产生剔除 warning')
 assert.equal(updated.state.scene.location, '码头')
 assert.equal(updated.state.summary.includes('角色1'), true)
 const persisted = await service.chapterState(project, 2)
-assert.equal(persisted.characters.length, 2, 'state 应写盘')
+assert.equal(persisted.characters.length, 3, 'state 应写盘')
 assert.equal(persisted.characters[0].nextHook, '去找角色2对质')
 
 // ---------- 2) draftChapter：注入上一章状态 + 阵容，生成后自动更新 state ----------
 stateCalls = 0
 const draftResult = await service.draftChapter(project, { number: 2 })
 assert.ok(draftPrompt.includes('【上一章人物状态'), 'draft prompt 应含上一章人物状态')
-assert.ok(draftPrompt.includes('【本卷阵容'), 'draft prompt 应含本卷阵容')
+assert.ok(draftPrompt.includes('【本卷焦点名单'), 'draft prompt 应含本卷焦点名单')
 assert.ok(draftPrompt.includes('角色1'), '阵容应含角色名')
-assert.equal(draftPrompt.includes('角色8'), false, '阵容外角色不应出现在 prompt')
+assert.ok(draftPrompt.includes('角色8'), '角色池内角色应可出现在 prompt（焦点名单不是白名单）')
 assert.equal(draftPrompt.includes('上一章人物状态：无'), false)
 assert.ok(stateCalls >= 1, '生成后应自动更新人物状态')
 assert.ok(draftResult.state, 'draft 返回应含 state')
@@ -121,7 +121,7 @@ await service.writeJson(project, 'story/state/001.json', null)
 stateCalls = 0
 const noPrev = await service.draftChapter(project, { number: 2 })
 assert.equal(draftPrompt.includes('【上一章人物状态'), false, '无上章状态时不注入')
-assert.ok(draftPrompt.includes('【本卷阵容'))
+assert.ok(draftPrompt.includes('【本卷焦点名单'))
 assert.ok(noPrev)
 
 // ---------- 4) state 生成失败不影响 draft ----------

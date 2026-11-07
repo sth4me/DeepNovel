@@ -80,16 +80,16 @@ const prompt = buildChapterUserPrompt({
   chapter: { number: 1, title: '开端', synopsis: 'x' },
   styleFields: {}, cast,
 })
-assert.ok(prompt.includes('【角色纪律（硬约束）】'), 'draft prompt 应含角色纪律')
-assert.ok(prompt.includes('一律不给姓名'), '应禁止给路人取名')
+assert.ok(prompt.includes('【角色使用规则】'), 'draft prompt 应含角色使用规则')
+assert.ok(prompt.includes('纯功能路人'), '应区分纯功能路人')
 assert.ok(prompt.includes('身份/特征指代'), '应要求用身份指代')
-assert.ok(prompt.includes('必须先登记'), '应要求固定配角先登记')
-assert.ok(prompt.includes('不另造新名'), '已有路人名冲突时不另造新名')
+assert.ok(prompt.includes('登记进角色池'), '应要求复用名字先登记')
+assert.ok(prompt.includes('不要造名后消失'), '一次性名字不要留在正文')
 const promptNoCast = buildChapterUserPrompt({
   title: 't', language: 'zh-CN', number: 2, wordBudget: 800,
   chapter: { number: 2, title: '章', synopsis: 'x' }, styleFields: {},
 })
-assert.ok(promptNoCast.includes('【角色纪律（硬约束）】'), '无阵容的章节也应有角色纪律（保持无名）')
+assert.ok(promptNoCast.includes('【角色使用规则】'), '无阵容的章节也应有角色使用规则')
 // 三层角色：阵容 + 具名龙套
 const promptWithExtras = buildChapterUserPrompt({
   title: 't', language: 'zh-CN', number: 1, wordBudget: 800,
@@ -97,35 +97,35 @@ const promptWithExtras = buildChapterUserPrompt({
   styleFields: {},
   cast: [...cast, { name: '王掌柜', roleInVolume: '信息源', note: '提供线索，不推动关键转折', kind: 'extra' }],
 })
-assert.ok(promptWithExtras.includes('【本卷具名龙套'), '有龙套时 prompt 应列出龙套')
-assert.ok(promptWithExtras.includes('王掌柜'), 'prompt 应含龙套名字')
-assert.ok(promptWithExtras.includes('不得承担关键转折'), '龙套不得承担关键转折')
-assert.ok(prompt.includes('仅限「本卷阵容」与「本卷具名龙套」名单'), '角色纪律应按 阵容+龙套 限定')
-assert.ok(OUTLINE_SYSTEM_PROMPT.includes('本卷具名龙套名单'), '大纲提示词应含阵容+龙套名单')
-assert.ok(OUTLINE_SYSTEM_PROMPT.includes('具名龙套不得承担关键转折'), '大纲提示词应禁止龙套承担关键转折')
-assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('角色超载=核心阵容>6 人或具名龙套>3 人'), '审核应区分阵容/龙套超载')
-assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('龙套推动'), '审核应识别龙套推动关键转折')
-assert.ok(CHAPTER_REVIEW_SYSTEM_PROMPT.includes('阵容 + 龙套'), '统一审校未登记判定应按阵容+龙套')
-assert.ok(STORY_AUDIT_SYSTEM_PROMPT.includes('阵容 + 龙套'), '故事审校未登记判定应按阵容+龙套')
+assert.ok(promptWithExtras.includes('【本卷具名配角'), '有配角时 prompt 应列出')
+assert.ok(promptWithExtras.includes('王掌柜'), 'prompt 应含配角名字')
+assert.ok(promptWithExtras.includes('可以推动局部转折') || promptWithExtras.includes('不限制其推动局部转折'), '具名配角可推动局部转折')
+assert.ok(prompt.includes('【角色池已登记') === false, '未传角色池时不伪造角色池块')
+assert.ok(OUTLINE_SYSTEM_PROMPT.includes('角色池里的已登记角色都可以具名出场'), '大纲提示词应允许角色池角色出场')
+assert.ok(OUTLINE_SYSTEM_PROMPT.includes('不是出场白名单'), '大纲提示词应说明焦点名单不是白名单')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('角色超载=焦点名单>12 人或具名配角>8 人'), '审核应区分软超载')
+assert.ok(OUTLINE_AUDIT_SYSTEM_PROMPT.includes('关键转折缺铺垫'), '审核应识别关键转折缺铺垫')
+assert.ok(CHAPTER_REVIEW_SYSTEM_PROMPT.includes('角色池'), '统一审校未登记判定应按角色池')
+assert.ok(STORY_AUDIT_SYSTEM_PROMPT.includes('角色池'), '故事审校未登记判定应按角色池')
 assert.ok(EXPAND_SYSTEM_PROMPT.includes('路人'), '扩写提示词应含路人规则')
 assert.ok(EXPAND_SYSTEM_PROMPT.includes('不给姓名'), '扩写提示词应禁止给路人取名')
 assert.ok(EXPAND_SYSTEM_PROMPT.includes('先登记'), '扩写提示词应要求先登记')
 
 // ---------- 2) 审校提示词：未登记角色判定 ----------
 assert.ok(CHAPTER_REVIEW_SYSTEM_PROMPT.includes('未登记角色'), '统一审校应判定未登记角色')
-assert.ok(CHAPTER_REVIEW_SYSTEM_PROMPT.includes('身份指代'), '统一审校应给出身份指代改法')
+assert.ok(CHAPTER_REVIEW_SYSTEM_PROMPT.includes('改身份'), '统一审校应给出改身份处理')
 assert.ok(STORY_AUDIT_SYSTEM_PROMPT.includes('未登记角色'), '故事审校应判定未登记角色')
-assert.ok(STORY_AUDIT_SYSTEM_PROMPT.includes('身份指代'), '故事审校应给出身份指代改法')
+assert.ok(STORY_AUDIT_SYSTEM_PROMPT.includes('改身份'), '故事审校应给出改身份处理')
 
 // 先生成正文（诊断需要正文）
 const draft = await service.draftChapter(project, { number: 1 })
 assert.ok(draft.runId, 'draft 应成功')
 
-// ---------- 3) diagnoseChapter：未登记角色 → hard + 固定 advice + suggestedAction repair ----------
+// ---------- 3) diagnoseChapter：未登记角色 → soft + 三选一 advice，不强制 repair ----------
 reviewPayload = {
   score: 80,
   styleIssues: [],
-  continuityIssues: [{ level: 'warn', type: '未登记角色', message: '正文出现「胡屠户」，不在本卷阵容内', advice: '改掉' }],
+  continuityIssues: [{ level: 'warn', type: '未登记角色', message: '正文出现「胡屠户」，不在角色池内', advice: '改掉' }],
 }
 storyPayload = {
   changeHappened: true, questionProgress: 'advanced', promiseProgress: 'kept', newQuestion: '',
@@ -136,10 +136,10 @@ storyPayload = {
 const diagnosis = await service.diagnoseChapter(project, { number: 1 })
 const unregistered = diagnosis.issues.filter((issue) => issue.type === '未登记角色')
 assert.ok(unregistered.length >= 1, '应识别未登记角色问题')
-assert.ok(unregistered.every((issue) => issue.level === 'hard'), '未登记角色应为 hard')
+assert.ok(unregistered.every((issue) => issue.level === 'soft'), '未登记角色应为 soft 提示')
 assert.ok(unregistered.every((issue) => issue.source === 'continuity'), '未登记角色应归为 continuity')
-assert.ok(unregistered.every((issue) => issue.advice.includes('身份指代') && issue.advice.includes('novel_cast')), 'advice 应给两种改法')
-assert.equal(diagnosis.suggestedAction, 'repair', '未登记角色应建议 repair')
+assert.ok(unregistered.every((issue) => issue.advice.includes('登记') && issue.advice.includes('身份')), 'advice 应给登记/改身份/临时名三种处理')
+assert.notEqual(diagnosis.suggestedAction, 'repair', '未登记名字不应强制 repair')
 
 // ---------- 4) draftChapter 不阻塞（角色纪律问题只影响诊断，不阻断生成） ----------
 const draftAgain = await service.draftChapter(project, { number: 1 })
@@ -154,11 +154,11 @@ apply({ tools: { register: (tool) => registered.push(tool) }, systemPrompt: { se
 const diagTool = registered.find((item) => item.name === 'novel_diagnose')
 assert.ok(diagTool, '应注册 novel_diagnose')
 const toolDiag = await diagTool.execute({ number: 1 }, { agent: project, signal: null })
-assert.ok(toolDiag.issues.some((issue) => issue.type === '未登记角色' && issue.level === 'hard'), 'novel_diagnose 应保留未登记角色问题')
-assert.ok(toolDiag.issues.some((issue) => String(issue.advice).includes('novel_cast')))
+assert.ok(toolDiag.issues.some((issue) => issue.type === '未登记角色' && issue.level === 'soft'), 'novel_diagnose 应保留未登记名字的软提示')
+assert.ok(toolDiag.issues.some((issue) => String(issue.advice).includes('登记')))
 
 
-// ---------- 6) OUTLINE_AUDIT：角色超载（阵容/龙套）与龙套推动关键转折 ----------
+// ---------- 6) OUTLINE_AUDIT：焦点名单超载与关键转折缺铺垫 ----------
 let auditPayload = null
 service.callJsonModel = async (agent, options) => {
   if (options.kind === 'outline.audit') return wrap(auditPayload ?? { issues: [], structureIssues: [] })
@@ -170,14 +170,14 @@ service.callJsonModel = async (agent, options) => {
 auditPayload = {
   issues: [],
   structureIssues: [
-    { type: '角色超载', number: 1, message: '阵容 7 人、具名龙套 4 人，超出上限（6+3）', advice: '削减到上限内' },
-    { type: '因果薄弱', number: 1, message: '关键转折由具名龙套推动，主角被动', advice: '改为阵容角色或主角主动选择完成' },
+    { type: '角色超载', number: 1, message: '焦点名单 13 人、具名配角 9 人，超过硬上限（12+8）且没有场景拆分', advice: '拆场景或减少焦点角色' },
+    { type: '关键转折缺铺垫', number: 1, message: '关键转折由一次性新人物凭空解决，前面没有铺垫', advice: '补铺垫或改由已有角色承担' },
   ],
 }
 const auditResult = await service.auditOutline(project, { fromChapter: 1, toChapter: 1 })
 assert.equal(auditResult.structureIssues.length, 2, '应保留 2 条结构问题')
 assert.ok(auditResult.structureIssues.some((issue) => issue.type === '角色超载'), '应识别角色超载')
-assert.ok(auditResult.structureIssues.some((issue) => issue.message.includes('龙套推动')), '应识别龙套推动关键转折')
+assert.ok(auditResult.structureIssues.some((issue) => issue.type === '关键转折缺铺垫'), '应识别关键转折缺铺垫')
 await service.writeJson(project, 'story/plot/outline-audit.json', auditResult)
 const auditReplan = await service.repairOutlineIssues(project, { issues: [] })
 assert.equal(auditReplan.reason, 'structure-only', '结构问题不应进入 repair')

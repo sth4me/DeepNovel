@@ -4208,14 +4208,16 @@ export class NovelWriterService {
     const roster = await this.volumeRoster(agent, number).catch(() => ({ cast: null, extras: [] }))
     const rosterItems = [...(roster.cast ?? []), ...(roster.extras ?? [])]
     const bible = await this.readBible(agent)
-    const castNames = rosterItems.length > 0
-      ? new Set(rosterItems.map((item) => String(item.name)))
-      : new Set(bible.characters.slice(0, CAST_LIMITS.volumeCast).map((character) => String(character.name)))
+    // 人物状态记录整个已登记角色池；焦点名单之外的已登记角色也可以出场。
+    const castNames = new Set((bible.characters ?? [])
+      .filter((character) => character?.meta?.status !== '退场')
+      .map((character) => String(character.name)))
+    for (const item of rosterItems) castNames.add(String(item.name))
     const castCharacters = (bible.characters ?? []).filter((character) => castNames.has(String(character.name)))
     const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, CHARACTER_STATE_SYSTEM_PROMPT)
     const userText = [
       `第 ${number} 章《${detail.chapter.title || '未命名'}》`,
-      `本卷阵容：${JSON.stringify(castCharacters.map((character) => ({ name: character.name, role: character.role, description: character.description, meta: character.meta })))}`,
+      `角色池（已登记，可出场；未登记名字不要写入状态）：${JSON.stringify(castCharacters.map((character) => ({ name: character.name, role: character.role, description: String(character.description ?? '').slice(0, 160), meta: character.meta })))}`,
       previousState ? `上一章人物状态：${JSON.stringify(previousState)}` : '上一章人物状态：无（第一章）',
       `当前正文：\n${text}`,
       '只输出 JSON。',
@@ -4325,6 +4327,8 @@ export class NovelWriterService {
         volumeCast: CAST_LIMITS.volumeCast,
         namedExtrasPerVolume: CAST_LIMITS.namedExtrasPerVolume,
         newNamedPerVolume: CAST_LIMITS.newNamedPerVolume,
+        volumeCastMax: CAST_LIMITS.volumeCastMax,
+        namedExtrasMax: CAST_LIMITS.namedExtrasMax,
       },
     }
   }
@@ -4350,8 +4354,8 @@ export class NovelWriterService {
         importance: BIBLE_META_IMPORTANCE.includes(item?.importance) ? item.importance : '配角',
       })
     }
-    if (cast.length > CAST_LIMITS.volumeCast) {
-      throw new Error(`本卷阵容最多 ${CAST_LIMITS.volumeCast} 人，当前 ${cast.length} 人`)
+    if (cast.length > CAST_LIMITS.volumeCastMax) {
+      throw new Error(`焦点名单最多 ${CAST_LIMITS.volumeCastMax} 人，请拆分到不同卷或减少焦点角色`)
     }
     const castNames = new Set(cast.map((item) => item.name))
     const extras = []
@@ -4368,8 +4372,8 @@ export class NovelWriterService {
         note: String(item?.note ?? '').slice(0, 200),
       })
     }
-    if (extras.length > CAST_LIMITS.namedExtrasPerVolume) {
-      throw new Error(`本卷具名龙套最多 ${CAST_LIMITS.namedExtrasPerVolume} 人，当前 ${extras.length} 人`)
+    if (extras.length > CAST_LIMITS.namedExtrasMax) {
+      throw new Error(`具名配角最多 ${CAST_LIMITS.namedExtrasMax} 人，其余请用身份指代或登记为焦点角色`)
     }
     volume.cast = cast
     if (Array.isArray(options.extras)) volume.extras = extras
@@ -4384,6 +4388,8 @@ export class NovelWriterService {
         volumeCast: CAST_LIMITS.volumeCast,
         namedExtrasPerVolume: CAST_LIMITS.namedExtrasPerVolume,
         newNamedPerVolume: CAST_LIMITS.newNamedPerVolume,
+        volumeCastMax: CAST_LIMITS.volumeCastMax,
+        namedExtrasMax: CAST_LIMITS.namedExtrasMax,
       },
     }
   }
@@ -4426,8 +4432,8 @@ export class NovelWriterService {
     const volumeNumbers = (volume.chapters ?? []).map((chapter) => Number(chapter.number)).filter((number) => Number.isFinite(number) && number > 0)
     const fromChapter = Math.max(1, explicitFrom > 0 ? explicitFrom : (volumeNumbers.length > 0 ? Math.max(...volumeNumbers) + 1 : 1))
     const toChapter = Math.max(fromChapter, Number(options.toChapter) > 0 ? Number(options.toChapter) : fromChapter + 9)
-    const limit = Math.max(1, Math.min(CAST_LIMITS.volumeCast, Number(options.limit) || CAST_LIMITS.volumeCast))
-    const allowNew = Math.max(0, Math.min(CAST_LIMITS.newNamedPerVolume, Number.isFinite(Number(options.allowNew)) ? Number(options.allowNew) : CAST_LIMITS.newNamedPerVolume))
+    const limit = Math.max(1, Math.min(CAST_LIMITS.volumeCastMax, Number(options.limit) || CAST_LIMITS.volumeCastMax))
+    const allowNew = Math.max(0, Math.min(CAST_LIMITS.newNamedMax, Number.isFinite(Number(options.allowNew)) ? Number(options.allowNew) : CAST_LIMITS.newNamedMax))
     const bible = await this.readBible(agent)
     const pool = (bible.characters ?? []).filter((character) => character?.meta?.status !== '退场' && String(character?.name ?? '').trim())
     const poolNames = new Set(pool.map((character) => String(character.name)))
@@ -4444,14 +4450,14 @@ export class NovelWriterService {
     }
     const unusedPool = pool.filter((character) => !usedCastNames.has(String(character.name))).map((character) => character.name)
     const rotationRule = previousCastNames.size > 0
-      ? `轮换要求：本卷阵容与上一卷（${[...previousCastNames].join('、')}）至少有 1 个不同角色；优先从「未使用角色池」选，其次 newCharacters（≤${allowNew} 个）；若与上一卷完全相同，必须写 noNewCastReason 说明理由。`
-      : '轮换要求：这是第一卷，阵容按角色池与卷目标挑选。'
+      ? `轮换建议（软）：本卷焦点名单可沿用上一卷，也可引入未使用角色池的新面孔；不强制每卷换人。若连续多卷焦点完全相同且无关系变化，审核会给结构提示。`
+      : '这是第一卷：按角色池与卷目标挑选焦点名单。'
     const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, CAST_PLAN_SYSTEM_PROMPT)
     const userText = [
       `项目：${(await this.readJson(agent, this.marker)).title ?? ''}`,
       `本卷：${volume.title || volume.id}（章节范围：第 ${fromChapter}–${toChapter} 章）`,
       `角色池（${pool.length} 人）：${JSON.stringify(pool.map((character) => ({ name: character.name, role: character.role, importance: character.meta?.importance ?? '配角', status: character.meta?.status ?? '未登场', description: String(character.description ?? '').slice(0, 160) })))}`,
-      `限制：核心阵容最多 ${limit} 人（承担主线/关键转折）；具名龙套最多 ${Math.min(CAST_LIMITS.namedExtrasPerVolume, Number(options.allowExtras) >= 0 ? Number(options.allowExtras) : CAST_LIMITS.namedExtrasPerVolume)} 人（只能来自角色池、不与阵容重名、note 说明作用且不推动关键转折）；最多新增 ${allowNew} 个命名角色（必须写 reason）；fromChapter/firstChapter 必须在 ${fromChapter}–${toChapter} 之间。`,
+      `焦点名单建议 ${Math.min(limit, CAST_LIMITS.volumeCast)} 人左右（最多 ${CAST_LIMITS.volumeCastMax}，用于提示重点写谁，不是出场白名单）；具名配角建议 ${Math.min(CAST_LIMITS.namedExtrasMax, Number(options.allowExtras) >= 0 ? Number(options.allowExtras) : CAST_LIMITS.namedExtrasPerVolume)} 人左右（最多 ${CAST_LIMITS.namedExtrasMax}，只能来自角色池、不与焦点名单重名、note 说明作用）；可新增/建议登记 ${allowNew} 个命名角色（必须写 reason，预计会复用）；fromChapter/firstChapter 必须在 ${fromChapter}–${toChapter} 之间。`,
       previousCastNames.size > 0 ? `上一卷阵容：${JSON.stringify([...previousCastNames])}` : '',
       unusedPool.length > 0 ? `未使用角色池（优先在本卷引入新面孔）：${JSON.stringify(unusedPool.slice(0, 12))}` : '',
       rotationRule,
@@ -4472,7 +4478,7 @@ export class NovelWriterService {
     const rawCast = Array.isArray(parsed.cast) ? parsed.cast : []
     const rawExtras = Array.isArray(parsed.extras) ? parsed.extras : []
     const rawNew = Array.isArray(parsed.newCharacters) ? parsed.newCharacters : []
-    const extraLimit = Math.max(0, Math.min(CAST_LIMITS.namedExtrasPerVolume, Number.isFinite(Number(options.allowExtras)) ? Number(options.allowExtras) : CAST_LIMITS.namedExtrasPerVolume))
+    const extraLimit = Math.max(0, Math.min(CAST_LIMITS.namedExtrasMax, Number.isFinite(Number(options.allowExtras)) ? Number(options.allowExtras) : CAST_LIMITS.namedExtrasMax))
     const cast = []
     const seen = new Set()
     for (const item of rawCast) {
@@ -4505,8 +4511,8 @@ export class NovelWriterService {
     }
     const totalExtras = Array.isArray(parsed.extras) ? parsed.extras.length : 0
     let castWarning = null
-    if (totalExtras > extras.length) {
-      castWarning = `选角结果中的具名龙套超出上限 ${extraLimit}，已截断到 ${extras.length} 人`
+    if (totalExtras > extraLimit) {
+      castWarning = `具名配角超出硬上限 ${extraLimit}，已保留前 ${extras.length} 人（建议 ${CAST_LIMITS.namedExtrasPerVolume} 人左右，不需要为热闹凑人）`
     }
     const parsedNewFaces = Array.isArray(parsed.newFaces) ? parsed.newFaces.map(String).filter(Boolean) : []
     const declaredNewFaces = parsedNewFaces.filter((name) => !previousCastNames.has(name))
@@ -4595,9 +4601,12 @@ export class NovelWriterService {
       warning: castWarning,
       castWarning,
       limits: {
-        volumeCast: limit,
-        namedExtrasPerVolume: extraLimit,
-        newNamedPerVolume: allowNew,
+        volumeCast: CAST_LIMITS.volumeCast,
+        namedExtrasPerVolume: CAST_LIMITS.namedExtrasPerVolume,
+        newNamedPerVolume: CAST_LIMITS.newNamedPerVolume,
+        volumeCastMax: CAST_LIMITS.volumeCastMax,
+        namedExtrasMax: CAST_LIMITS.namedExtrasMax,
+        newNamedMax: CAST_LIMITS.newNamedMax,
       },
     }
   }
@@ -5296,20 +5305,8 @@ export class NovelWriterService {
     const bible = await this.readBible(agent)
     const power = await this.readPower(agent)
     const outline = await this.readJson(agent, 'story/plot/outline.json')
-    // 按卷阵容过滤角色池：有 cast 时只保留本卷阵容（bible 是池，不是演员表）。
-    const volumeForCast = (outline?.volumes ?? []).find((item) =>
-      (item.chapters ?? []).some((chapterItem) => Number(chapterItem.number) === Number(number)),
-    )
-    const volumeRosterItems = [
-      ...(Array.isArray(volumeForCast?.cast) ? volumeForCast.cast : []),
-      ...(Array.isArray(volumeForCast?.extras) ? volumeForCast.extras : []),
-    ]
-    const volumeCastNames = volumeRosterItems.length > 0
-      ? new Set(volumeRosterItems.map((item) => String(item.name)))
-      : null
-    const poolCharacters = volumeCastNames
-      ? bible.characters.filter((character) => volumeCastNames.has(String(character.name)))
-      : bible.characters
+    // 角色池是可用演员表：本卷焦点名单只影响提示优先级，不再过滤掉其它已登记角色。
+    const poolCharacters = (bible.characters ?? []).filter((character) => character?.meta?.status !== '退场')
     const config = this.contextConfig(project)
     const allChapters = (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
     const chapterText = JSON.stringify(chapter)
@@ -5678,77 +5675,57 @@ export class NovelWriterService {
    * - 违规未消除 → structureIssue('未登记角色')，写 outline-audit（进 replan），不阻塞写盘。
    */
   async checkOutlineCastLeaks(agent, options = {}) {
-    const { normalized, volume, messages, system, signal, wordBudget, inputs } = options
-    let topNew = Array.isArray(options.topNewNamed) ? options.topNewNamed.map(String).filter(Boolean) : []
+    const { normalized, volume } = options
+    const topNew = Array.isArray(options.topNewNamed) ? options.topNewNamed.map(String).filter(Boolean) : []
     const roster = [
       ...(Array.isArray(volume?.cast) ? volume.cast : []),
       ...(Array.isArray(volume?.extras) ? volume.extras : []),
     ]
     const normalizeName = (name) => String(name ?? '').replace(/\s+/g, '').toLowerCase()
     const rosterNames = new Set(roster.map((item) => normalizeName(item?.name)).filter(Boolean))
-    const rosterLabel = roster.map((item) => String(item?.name ?? '')).filter(Boolean)
+    const registeredNames = new Set((Array.isArray(options.registeredNames) ? options.registeredNames : [])
+      .map(normalizeName).filter(Boolean))
+    const focusOutside = []
     const validateChapters = (chapters) => {
       const violations = []
       for (const chapter of chapters) {
         const number = Number(chapter.number) || 0
         for (const name of Array.isArray(chapter.castUsed) ? chapter.castUsed : []) {
-          if (!rosterNames.has(normalizeName(name))) violations.push({ number, name: String(name), kind: 'castUsed' })
+          const normalizedName = normalizeName(name)
+          if (rosterNames.has(normalizedName)) continue
+          if (registeredNames.has(normalizedName)) {
+            focusOutside.push({ number, name: String(name) })
+            continue
+          }
+          violations.push({ number, name: String(name), kind: 'castUsed' })
         }
         for (const name of Array.isArray(chapter.newNamed) ? chapter.newNamed : []) {
-          violations.push({ number, name: String(name), kind: 'newNamed' })
+          const normalizedName = normalizeName(name)
+          if (registeredNames.has(normalizedName)) focusOutside.push({ number, name: String(name) })
+          else violations.push({ number, name: String(name), kind: 'newNamed' })
         }
       }
       return violations
     }
     const topViolations = (names) => names
-      .filter((name) => !rosterNames.has(normalizeName(name)))
+      .filter((name) => {
+        const normalizedName = normalizeName(name)
+        if (rosterNames.has(normalizedName)) return false
+        if (registeredNames.has(normalizedName)) return false
+        return true
+      })
       .map((name) => ({ number: null, name: String(name), kind: 'topNewNamed' }))
     const chapterViolations = validateChapters(normalized)
-    const initialViolations = [...chapterViolations, ...topViolations(topNew)]
-    let retried = false
-    const onlyTopNewNamed = chapterViolations.length === 0 && initialViolations.length > 0 &&
-      initialViolations.every((item) => item.kind === 'topNewNamed')
-    if (onlyTopNewNamed) {
-      retried = true
-      const names = [...new Set(initialViolations.map((item) => item.name))].slice(0, 10)
-      const lines = [
-        '',
-        '【上一轮违规（必须修正）】',
-        `顶层的 newNamed 列出了未登记角色：${names.join('、')}。`,
-        `本卷可具名角色名单（只能用这些名字）：${rosterLabel.join('、') || '（空）'}；名单外人物一律用身份指代（不出现名字），不得新增未登记角色。`,
-        '重新输出本节要求的章纲（保持其它内容不变，只修正角色名与身份指代）。只输出 JSON。',
-      ]
-      const retryText = `${messages?.[0]?.content?.[0]?.text ?? ''}\n${lines.join('\n')}`
-      const retry = await this.callJsonModel(agent, {
-        kind: 'outline.enforce.retry',
-        task: 'outline',
-        system,
-        messages: [{ role: 'user', content: [{ type: 'text', text: retryText }] }],
-        signal,
-        temperature: 0.5,
-      }).catch(() => null)
-      const retryChapters = Array.isArray(retry?.parsed) ? retry.parsed : retry?.parsed?.chapters
-      if (Array.isArray(retryChapters) && retryChapters.length > 0) {
-        for (const raw of retryChapters) {
-          const number = Number(raw?.number) || 0
-          const index = normalized.findIndex((item) => Number(item.number) === number)
-          if (index >= 0) normalized[index] = this.normalizeOutlineChapter(raw, number, { wordBudget, inputs })
-        }
-      }
-      const retryParsed = retry?.parsed && typeof retry.parsed === 'object' && !Array.isArray(retry.parsed) ? retry.parsed : null
-      if (retryParsed && Array.isArray(retryParsed.newNamed)) topNew = retryParsed.newNamed.map(String).filter(Boolean)
-    }
-    const afterChapter = validateChapters(normalized)
-    const after = [...afterChapter, ...topViolations(topNew)]
+    const after = [...chapterViolations, ...topViolations(topNew)]
     const structureIssues = []
     for (const item of after) {
       const issue = {
         type: '未登记角色',
         number: item.number,
         message: item.number
-          ? `第${item.number}章使用了名单外角色「${item.name}」`
-          : `章纲提出了未登记角色「${item.name}」`,
-        advice: '改为身份指代，或先登记为该卷角色/龙套后再使用',
+          ? `第${item.number}章出现了未登记名字「${item.name}」`
+          : `章纲提出了未登记名字「${item.name}」`,
+        advice: '未登记名字不阻塞写盘：先判断会不会复用——复用则登记进角色池；一次性则改为身份/特征指代；不确定可保留为临时名，后续不再使用就不登记',
       }
       if (!structureIssues.some((existing) =>
         existing.type === issue.type &&
@@ -5778,9 +5755,12 @@ export class NovelWriterService {
       }).catch(() => null)
     }
     const warning = structureIssues.length > 0
-      ? `章纲存在选角泄漏：${structureIssues.slice(0, 3).map((item) => `${item.number ? `第${item.number}章` : '顶层'}「${item.message.match(/「([^」]+)」/)?.[1] ?? ''}」`).join('；')}；建议重规划对应章节`
+      ? `章纲出现未登记名字：${structureIssues.slice(0, 5).map((item) => `${item.number ? `第${item.number}章` : '顶层'}「${item.message.match(/「([^」]+)」/)?.[1] ?? ''}」`).join('；')}；建议登记/改身份指代，不阻塞写盘`
       : null
-    return { retried, castViolations: after, structureIssues, warning }
+    const focusWarning = focusOutside.length > 0
+      ? `以下已登记角色未列入本卷焦点名单：${[...new Set(focusOutside.map((item) => item.name))].slice(0, 8).join('、')}；可以出场，如要重点写请加入焦点名单（不强制）`
+      : null
+    return { retried: false, castViolations: after, structureIssues, warning, focusWarning }
   }
 
   async outlineGenerate(agent, options = {}, signal) {
@@ -6101,10 +6081,14 @@ export class NovelWriterService {
     const newNamed = Array.isArray(parsedMeta.newNamed) ? parsedMeta.newNamed.map(String).filter(Boolean) : []
     const castUsed = Array.isArray(parsedMeta.castUsed) ? parsedMeta.castUsed.map(String).filter(Boolean) : []
     if (newNamed.length > 0) {
-      castWarning = `模型提出了未登记角色（${newNamed.slice(0, 5).join('、')}），已忽略；如需新增请先用 cast-plan 登记`
+      castWarning = `模型提出了新名字（${newNamed.slice(0, 5).join('、')}）；首次出现不阻塞：预计复用请登记进角色池，一次性则改为身份指代`
     } else if (castUsed.some((name) => !castNameSet.has(name))) {
       const outside = castUsed.filter((name) => !castNameSet.has(name))
-      castWarning = `章纲用到了阵容外角色（${outside.slice(0, 5).join('、')}），建议先调整本卷阵容`
+      const registered = new Set((bible.characters ?? []).map((character) => String(character.name)))
+      const known = outside.filter((name) => registered.has(name))
+      const unknown = outside.filter((name) => !registered.has(name))
+      if (unknown.length > 0) castWarning = `章纲出现未登记名字（${unknown.slice(0, 5).join('、')}）；复用请登记，一次性请改身份指代`
+      if (known.length > 0) castWarning = `已登记但未列入本卷焦点名单（${known.slice(0, 5).join('、')}）；可以出场，不强制加入`
     }
     if (!Array.isArray(rawChapters) || rawChapters.length === 0) {
       const error = new Error('章纲解析成功但未返回 chapters 数组')
@@ -6247,22 +6231,19 @@ export class NovelWriterService {
       normalized,
       volume,
       topNewNamed: newNamed,
-      messages,
-      system,
-      signal,
-      wordBudget,
-      inputs,
+      registeredNames: (bible.characters ?? []).map((character) => String(character.name)),
     }).catch((error) => ({
       retried: false,
       castViolations: [],
       structureIssues: [],
-      warning: `章纲选角校验失败：${errorText(error)}`,
+      warning: `章纲角色校验失败：${errorText(error)}`,
+      focusWarning: null,
     }))
     if (enforcement.warning) {
       castWarning = castWarning ? `${castWarning}；${enforcement.warning}` : enforcement.warning
-    } else if (enforcement.retried && castWarning && castWarning.startsWith('模型提出了未登记角色')) {
-      // 顶层 newNamed 重试已修复：清除初次生成留下的 warning。
-      castWarning = null
+    }
+    if (enforcement.focusWarning) {
+      castWarning = castWarning ? `${castWarning}；${enforcement.focusWarning}` : enforcement.focusWarning
     }
     const partial = normalized.length < range.length
     const missingChapters = range.filter((number) => !normalized.some((item) => Number(item.number) === Number(number)))
@@ -8880,7 +8861,8 @@ export class NovelWriterService {
       `当前章纲：${JSON.stringify(detail.chapter)}`,
       `前文摘要：${JSON.stringify(previous)}`,
       `设定：${JSON.stringify(bible?.characters ?? [])}`,
-      `本卷可具名角色（阵容+龙套；名单外的具名人物=未登记角色）：${JSON.stringify({ cast: (diagnosisRoster.cast ?? []).map((item) => item.name), extras: (diagnosisRoster.extras ?? []).map((item) => item.name) })}`,
+      `本卷焦点名单（不是出场白名单；焦点外但在角色池内的角色也可具名出场）：${JSON.stringify({ cast: (diagnosisRoster.cast ?? []).map((item) => item.name), extras: (diagnosisRoster.extras ?? []).map((item) => item.name) })}`,
+      `角色池已登记：${JSON.stringify((bible?.characters ?? []).map((character) => character.name))}`,
       `项目事实：${JSON.stringify(facts.map((fact) => ({ kind: fact.kind, key: fact.key, value: fact.value })))}`,
       `当前正文：\n${text}`,
     ].join('\n\n')
@@ -8942,9 +8924,9 @@ export class NovelWriterService {
         if (/未登记/.test(String(issue.type ?? '')) || /未登记角色/.test(String(issue.message ?? ''))) {
           addIssue({
             type: '未登记角色',
-            level: 'hard',
+            level: 'soft',
             quote: '',
-            advice: '改为身份指代，或先用 novel_cast 登记后再使用',
+            advice: '未登记名字只提示、不阻塞：会复用则登记进角色池；一次性则改身份/特征指代；不确定可保留临时名，后续不再使用就不登记',
             source: 'continuity',
           })
           continue
@@ -8997,9 +8979,9 @@ export class NovelWriterService {
         if (/未登记角色/.test(String(issue.type ?? ''))) {
           addIssue({
             type: '未登记角色',
-            level: 'hard',
+            level: 'soft',
             quote: issue.quote ?? '',
-            advice: '改为身份指代，或先用 novel_cast 登记后再使用',
+            advice: '未登记名字只提示、不阻塞：会复用则登记进角色池；一次性则改身份/特征指代；不确定可保留临时名，后续不再使用就不登记',
             source: 'continuity',
           })
           continue
@@ -9798,6 +9780,11 @@ ${sections.join('\n')}
       constraints,
       styleProfile: styleProfile ? renderStyleProfile(styleProfile) : '',
       cast: namedRoster,
+      registeredPool: (bible.characters ?? [])
+        .filter((character) => character?.meta?.status !== '退场')
+        .map((character) => String(character.name))
+        .filter(Boolean)
+        .slice(0, 40),
       characterState: previousState,
       wordBudget,
     })
@@ -11036,7 +11023,7 @@ ${sections.join('\n')}
           `规则：${JSON.stringify((bible.rules ?? []).map((entry) => ({ name: entry.name, description: entry.description })))}`,
           `地点：${JSON.stringify((bible.locations ?? []).map((entry) => ({ name: entry.name, description: entry.description })))}`,
           `能力体系：${JSON.stringify(power ? { system: power.system, characters: power.characters, chapterChanges: power.chapterChanges } : null)}`,
-          `本卷可具名角色（阵容+龙套；名单外的具名人物=未登记角色）：${JSON.stringify({ cast: (roster.cast ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })), extras: (roster.extras ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })) })}`,
+          `本卷焦点名单（不是出场白名单；焦点外但在角色池内的角色也可具名出场）：${JSON.stringify({ cast: (roster.cast ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })), extras: (roster.extras ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })) })}`,
           `【时间线（章纲 time 锚点，只用于检查一致性）】${JSON.stringify([...chapters, ...context].map((chapter) => ({ number: chapter.number, time: chapter.time ?? null })))}`,
           `章纲（JSON）：${JSON.stringify([...chapters, ...context].map(slim))}`,
         ].join('\n\n'),

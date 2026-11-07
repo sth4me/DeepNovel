@@ -855,7 +855,7 @@ export const OUTLINE_SYSTEM_PROMPT = [
   '时间锚点规则：每章尽量输出 time 字段（day 相对本卷开场 0 起，part 晨/日/暮/夜，endDay/endPart 为本章收束，spanDays 0–30，mode linear|flashback|parallel）。time 表示本章开场，本章可以跨时段（如暮→夜），不要求和 synopsis 全程停在同一 part。若本章紧接上一章结尾的同一场戏（没有过夜、休整或赶路），本章 day/part 必须等于上一章 endDay/endPart，不得因为换章就 +1 天；只有明确过夜/赶路/时间跳跃才推进 day 或 part。线性章 start 不得早于上一章 end；flashback/parallel 不参与线性顺序（mode 标清）；time 只写在 JSON 里，不要写进 synopsis，不要写日期代号或时间码。',
   '主线推进规则：每章必须推进本卷目标；允许时间跳跃与转场；同一目标/同一地点/同一类追逐连续 >2 章且无新信息/新代价视为停滞；不得用遇见新人物/新事件/新麻烦替代主线推进；支线必须写清被迫（有代价）或主动选择（有所图）；目标事件必须真实发生（不能只写准备去）；承接≠原地续写，可转场/跳时间。',
   'synopsis 必须写成叙事句：不得用场记式/编号式/标签式标记表示时间或场景（如字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）；时间/场景要融进叙事（次日/三日后/入夜等）。',
-  '选角硬规则：本卷可具名角色 = 【本卷阵容】+【本卷具名龙套名单】，只允许使用这些名字；名单外的路人一律用身份指代、不给姓名；具名龙套不得承担关键转折（关键转折必须由阵容角色或主角主动选择完成）；不得新增未登记角色；未登场角色不得提及；需要新角色时只在 JSON 顶层 newNamed 说明，不要直接写进章纲。',
+  '角色使用规则：本卷焦点名单只提示重点写谁，不是出场白名单；角色池里的已登记角色都可以具名出场；未登记的一次性名字用身份/特征指代；预计复用的新名字要登记进角色池。关键转折必须有前置铺垫、动机与代价，不按“核心/龙套”标签限制，但不能由一次性人物凭空解决重大转折；未登场角色不要提前提及；需要新角色时只在 JSON 顶层 newNamed 说明。',
   'JSON 顶层除 chapters 外，请返回 castUsed（本批章纲实际用到的阵容名字数组）与 newNamed（不得不新增但未登记的名字数组，没有则空数组）；每章对象请带 castUsed（必填）与 newNamed（可选），用于确定性校验。',
   '能力体系必须按既定层级推进：不得让角色无铺垫跨级；若本章涉及能力变化，在 synopsis 中写明旧层级→新层级、变化原因与影响。',
   '分卷生成时以【本卷阶段控制】为准：本卷章节只能发生在“本卷舞台”（按题材：武侠/修真用地图，言情用场所与关系阶段，悬疑用案发地与调查范围）；本卷阶段目标达成、舞台迁移、主要对手更替或大事件收束，任一满足即可结束本卷并留钩子；战力天花板只是武侠/修真题材的可选参考，不要求每卷升级；每卷 8–12 章是参考，不是硬性章数。',
@@ -1185,21 +1185,25 @@ export function buildChapterUserPrompt(input) {
     const mainCast = input.cast.filter((item) => item.kind !== 'extra')
     const extras = input.cast.filter((item) => item.kind === 'extra')
     if (mainCast.length > 0) {
-      lines.push('', '【本卷阵容（只能使用这些具名角色）】',
+      lines.push('', '【本卷焦点名单（重点写谁，不是出场白名单）】',
         mainCast.map((item) => `${item.name}${item.roleInVolume ? `（${item.roleInVolume}）` : ''}`).join('、'),
       )
     }
     if (extras.length > 0) {
-      lines.push('', '【本卷具名龙套（可命名、可反复出现，但不得承担关键转折）】',
+      lines.push('', '【本卷具名配角（可反复出现，不限制其推动局部转折）】',
         extras.map((item) => `${item.name}${item.note ? `（${item.note}）` : ''}`).join('、'),
       )
     }
   }
-  lines.push('', '【角色纪律（硬约束）】',
-    '- 正文可具名的角色仅限「本卷阵容」与「本卷具名龙套」名单；名单之外的角色一律不给姓名，用身份/特征指代（如「卖豆腐的老汉」「挑担的货郎」「护院」）；',
-    '- 具名龙套只做陪衬、信息源或阻力，不得承担关键转折；关键转折必须由阵容角色或主角主动选择完成；',
-    '- 确需新增固定配角时，不得直接在正文造名，必须先登记（cast-plan / novel_cast / cast-update），否则保持无名；',
-    '- 已有的路人名如果与设定冲突，用身份/特征指代替换，不另造新名。',
+  if (Array.isArray(input.registeredPool) && input.registeredPool.length > 0) {
+    lines.push('', '【角色池已登记（可具名出场，不必在本卷焦点名单）】', input.registeredPool.join('、'))
+  }
+  lines.push('', '【角色使用规则】',
+    '- 可具名出场：本卷焦点名单 + 角色池已登记角色；不在名单里的已登记角色也能出场，只是不是本卷重点。',
+    '- 纯功能路人（伙计、守门、脚夫、摊贩）用身份/特征指代，不给名字；会反复出现、有关系/欲望/后果的人物才命名。',
+    '- 新名字是“还会再出现”的承诺：一次性新名字改为身份指代；预计复用请先登记进角色池，不要造名后消失。',
+    '- 关键转折必须有前置铺垫、动机与代价；可以发生在具名配角身上，但不能由一次性人物凭空解决。',
+    '- 同一章同时活跃的具名角色建议 4–5 人以内；超过就拆场景或合并功能，不要为热闹凑人。',
   )
   if (input.characterState) {
     lines.push('', '【上一章人物状态（连续性参考：处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点）】', JSON.stringify(input.characterState, null, 2))
@@ -1339,7 +1343,7 @@ export const CHAPTER_REVIEW_SYSTEM_PROMPT = [
   '真人基准对照：段落 1–3 句为主；对话 60% 以上无标签；情绪用动作展示；生活化比喻；省略留白；章尾用动作/对话收束。',
   '文风问题只报确实影响阅读的；同类合并，同一段最多一条；没有就返回空数组。',
   '连续性判断：只报告能从前文摘要、章纲和设定中证明的矛盾——时间线、人物位置/状态、因果链、伏笔、设定、能力层级；没有就返回空数组。',
-  '角色纪律检查：正文中出现的具名人物是否都在【本卷可具名角色（阵容 + 龙套名单）】内；名单外的具名路人/次要人物 → continuityIssues，type 写「未登记角色」（level 至少 warn），message 引用原文里的名字，advice 给两种改法：改为身份指代，或先登记为该卷角色/龙套后再使用；具名龙套承担关键转折 → styleIssues 报「龙套承担关键转折」（severity medium/high）。',
+  '角色纪律检查：正文具名人物只要在角色池（设定里的角色）内就不算未登记；不在焦点名单但在角色池 → 不报。只有角色池外的新名字 → continuityIssues，type 写「未登记角色」（level warn，不是 error），message 引用名字，advice 给三种处理：会复用则登记为角色；一次性则改身份指代；不确定可保留临时名。关键转折由一次性新人物凭空解决 → styleIssues 报「关键转折缺铺垫」（severity medium/high）；具名配角有铺垫地推动局部转折不报。',
   '不要因为题材或关系尺度本身判问题；不要评价题材偏好。',
 ].join('\n')
 
@@ -1367,7 +1371,7 @@ export const STORY_AUDIT_SYSTEM_PROMPT = [
   '只输出 JSON，不要 Markdown 围栏。',
   '格式：{"changeHappened":true|false,"changeQuote":"正文中体现变化的片段","questionProgress":"answered|advanced|stalled","promiseProgress":"kept|partial|broken","newQuestion":"结尾产生的新问题/新代价（可为空）","endingHook":{"type":"动作|决定|信息|问题|留白|无","strength":0-1,"newQuestion":""},"causalChain":"ok|broken","contrived":"none|low|medium|high","issues":[{"type":"无变化|因果断裂|承诺未推进|为冲突而冲突|降智|巧合解决|未登记角色","quote":"","advice":""}],"summary":""}。',
   '判定标准：只依据给定正文与章纲（change/storyQuestion/promise）；不要求每场冲突、不要求章末钩子；安静章节只要 change 成立就不算问题（contrived 可为 none）。',
-  '角色纪律：正文里出现的具名人物必须在本卷可具名角色（阵容 + 龙套名单）内；名单外临时造名的路人/次要人物 → issues 报 type「未登记角色」，quote 引用原文名字，advice 给改为身份指代或先登记两种改法；具名龙套承担关键转折 → issues 报 type「龙套承担关键转折」。',
+  '角色纪律：正文具名人物在角色池内即可，不在焦点名单不报；只有角色池外的新名字 → issues 报 type「未登记角色」（warn），advice 给登记/改身份/临时名三种处理；关键转折由一次性新人物凭空解决才报「关键转折缺铺垫」，具名配角有铺垫地推动局部转折不报。',
   '章末钩子（endingHook）：判断本章结尾是否留下让读者想翻下一章的钩子——动作未完成（动作）、人物刚做出决定（决定）、出现关键新信息（信息）、抛出读者想问的问题（问题）、有意留白（留白）、没有钩子（无）；strength 0–1 表示强度。第 1 章必须有具体钩子（动作/决定/新信息/新问题），不能停在无关动作或总结。',
   'contrived 只针对「无动机对抗、突然降智、巧合解决、为冲突而冲突」；causalChain 只报可证明的因果断裂；promiseProgress 只有明确违背承诺才判 broken，推进中判 partial。',
 ].join('\n')
@@ -1375,9 +1379,9 @@ export const STORY_AUDIT_SYSTEM_PROMPT = [
 export const CAST_PLAN_SYSTEM_PROMPT = [
   '你是长篇小说的选角统筹：从角色池里为「本卷」挑选阵容，并决定是否需要新增角色。',
   '只输出 JSON，不要 Markdown 围栏。',
-  '格式：{"rationale":"一句话选角理由","newFaces":["本卷新进阵容的名字"],"noNewCastReason":"若与上一卷阵容完全相同且无新面孔，写明理由","cast":[{"name":"角色池中的名字","roleInVolume":"本卷作用","fromChapter":number,"importance":"主角|核心|配角|龙套"}],"extras":[{"name":"角色池中的名字","roleInVolume":"本卷作用","fromChapter":number,"note":"为什么需要这个具名龙套、出现在哪几章、不推动关键转折"}],"newCharacters":[{"name":"新角色名","role":"身份/作用","description":"1–2 句","reason":"为什么现有池补不上","firstChapter":number}]}。',
-  `阵容轮换规则：本卷阵容必须与上一卷有差异——至少引入 1 个上一卷没进阵容的角色（优先从未使用角色池里选，其次用 newCharacters，最多 ${CAST_LIMITS.newNamedPerVolume} 个）；只有确实不该引入新面孔时才写 noNewCastReason 说明理由（例如本卷是上一卷的直接延续、新面孔会破坏关系闭环）。`,
-  `规则：cast 只能来自给定角色池，最多 ${CAST_LIMITS.volumeCast} 人；extras（具名龙套）也只能来自角色池、不得与 cast 重复、最多 ${CAST_LIMITS.namedExtrasPerVolume} 人，note 必须写清作用且明确不推动关键转折；newCharacters 最多 ${CAST_LIMITS.newNamedPerVolume} 个，且每个必须写明 reason，名字不得与池重复；fromChapter/firstChapter 必须在给定章节范围内；只选本卷真正需要的角色，不要为热闹凑人。`,
+  '格式：{"rationale":"一句话选角理由","newFaces":["本卷新进焦点名单的名字"],"noNewCastReason":"若焦点名单与上一卷相同且无新面孔，简述理由（软提示，不阻塞）","cast":[{"name":"角色池中的名字","roleInVolume":"本卷重点作用","fromChapter":number,"importance":"主角|核心|配角|龙套"}],"extras":[{"name":"角色池中的名字","roleInVolume":"本卷作用","fromChapter":number,"note":"为什么需要这个具名配角、出现在哪几章"}],"newCharacters":[{"name":"新角色名","role":"身份/作用","description":"1–2 句","reason":"为什么现有池补不上、预计何时复用","firstChapter":number}]}。',
+  `焦点名单说明：cast 是本卷重点写谁，不是出场白名单；建议 ${CAST_LIMITS.volumeCast} 人左右（软目标，最多 ${CAST_LIMITS.volumeCastMax}），按剧情需要可多可少。extras 是具名配角，建议 ${CAST_LIMITS.namedExtrasPerVolume} 人左右（最多 ${CAST_LIMITS.namedExtrasMax}），可以推动局部转折，只要前面有铺垫。newCharacters 是预计会复用的新名字，建议 ${CAST_LIMITS.newNamedPerVolume} 个左右（最多 ${CAST_LIMITS.newNamedMax}），每个写清 reason 与预计复用点。`,
+  '规则：cast 与 extras 只能来自给定角色池，不与彼此重名；fromChapter/firstChapter 必须在给定章节范围内；只选本卷真正需要的角色，不要为热闹凑人；不强制每卷换阵容。',
 ].join('\n')
 
 export const POWER_SYSTEM_PROMPT = [
@@ -1457,12 +1461,12 @@ export const OUTLINE_AUDIT_SYSTEM_PROMPT = [
   '格式：{"issues":[{"level":"warn|error","number":章节号,"message":"具体冲突","advice":"怎么改"}],"structureIssues":[{"type":"角色超载|桥段重复|主角被动|承诺未推进|调性漂移|因果薄弱","number":章号或0,"message":"具体判断","advice":"重规划建议"}]}。',
   '检查项：章纲是否空泛（synopsis 只有概括，缺具体人物、动作、结果）；时间线（先后、季节、地点移动是否可能）；人物位置与状态（上一章 synopsis 与下一章出场/状态是否矛盾，出场角色、身份和所在位置是否前后一致）；因果链（上一章 synopsis 是否支撑下一章剧情，章节之间是否自相矛盾）；伏笔（plant/payoff 是否对应、是否跨章回收）；设定（是否与既有角色/规则/地点冲突）；能力体系（境界是否无铺垫跨级、能力变化是否有来源与影响）；重复桥段（连续多章同一套路）。',
   '只报告能从前文摘要、章纲与设定中证明的冲突；不要评价文笔；没有冲突返回空数组。',
-  '两类问题必须分开：issues 只放可证明的一致性冲突（事实/时间线/位置/能力/因果/设定违反）；structureIssues 只放结构问题（角色超载=核心阵容>6 人或具名龙套>3 人、重复但无升级的桥段、主角连续多章被动、主线停滞、支线挤占、阵容未更新=本卷阵容与上一卷几乎相同且没有引入新面孔/新关系变化、promise 是否连续多章未兑现、类型/调性是否漂移、因果链是否薄弱），不要塞进 issues；synopsis 出现场记式/编号式/标签式标记（字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）→ issues 报 type「非叙事标记」或「场记式开头」（一致性 warn）。',
+  '两类问题必须分开：issues 只放可证明的一致性冲突（事实/时间线/位置/能力/因果/设定违反）；structureIssues 只放结构问题（角色超载=焦点名单>12 人或具名配角>8 人且没有场景拆分、重复但无升级的桥段、主角连续多章被动、主线停滞、支线挤占、焦点名单连续多卷几乎相同且没有新面孔/新关系变化=只提示轮换、不强制、promise 是否连续多章未兑现、类型/调性是否漂移、因果链是否薄弱），不要塞进 issues；synopsis 出现场记式/编号式/标签式标记（字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）→ issues 报 type「非叙事标记」或「场记式开头」（一致性 warn）。',
   '时间锚点判定：章纲 time 只在 JSON 里有意义，synopsis 不要写日期代号/时间码。time 是本章开场，endDay/endPart 是本章收束；**一章可以跨时段（如从暮写到入夜），不要因为 synopsis 后半段到了另一个 part 就报时间线冲突**。只报这四类可证明冲突：① synopsis 开场事件与 time 的开场 day/part 明显矛盾；② 章内 endDay 早于 day，或同日 endPart 早于 part（晨→日→暮→夜）；③ 相邻 linear 章，本章 start 早于上一章 end（倒退，flashback/parallel 不参与）；④ 上一章结尾与本章开头写的是同一场连续戏（没有过夜/休整/赶路交代），但本章 start 比上一章 end 晚。没有 time 的章不要报；建议用 novel_outline action=update 改 time/end 或 synopsis，不要自动修。',
   '主线推进判定：同一里程碑/同一目标连续 >2 章无实质推进（只写相遇/查探/准备，没发生 mustHit 事件）→ structureIssues 记 type「主线停滞」，number 用区间起始章号，message 写范围与停滞内容；用人物相遇/新事件/新麻烦替代主线且未写清被迫（代价）/选择（所图）→ type「支线挤占」；synopsis 出现场记式/编号式/标签式标记表示时间或场景（字母+数字代号、DayN、时间码、方括号场景标签、以「时间，地点。」开头的清单式写法）→ issues 报 type「非叙事标记」或「场记式开头」（一致性 warn，message 引用片段），advice 改为把时间/场景融进叙事句。',
   '主角被动判定：看主角是否连续 3 章以上被推着走、没有一次带代价的主动选择；允许个别章节被动应对。判定成立时 structureIssues 记 type「主角被动」，number 用连续区间的起始章号，message 写明范围（如「第 5–8 章连续被动」）。',
   '桥段重复判定：看是否连续两章使用同一推进手段（夜探/交涉/交易/查账等）且第二次没有新信息、新代价或新阻力；单纯标签相同不算问题。判定成立时 structureIssues 记 type「桥段重复」，number 用重复区间的起始章号，message 写明范围与缺少的升级。',
-  '角色层级检查：核心阵容承担主线冲突与关键转折；具名龙套只做陪衬/信息源/阻力，若关键转折由具名龙套推动 → structureIssues（type「主角被动」或「因果薄弱」并说明是龙套推动，number 指向该章）；具名角色超过 阵容 6 人或龙套 3 人 → structureIssues（type「角色超载」）；龙套在多章出现但身份/称呼前后不一致 → issues（一致性 warn/error）。',
+  '角色层级检查：本卷焦点名单决定重点写谁，不是出场白名单；角色池已登记角色可具名出场，不在焦点名单不报。焦点名单 >12 人或具名配角 >8 人且无场景拆分 → structureIssues（type「角色超载」，软提示）；关键转折由一次性新人物凭空解决、前面没有铺垫 → structureIssues（type「关键转折缺铺垫」或「因果薄弱」）；具名配角有铺垫地推动局部转折不报；具名角色身份/称呼前后不一致 → issues（一致性 warn/error）。',
 ].join('\n')
 
 export const OUTLINE_REPAIR_SYSTEM_PROMPT = [
