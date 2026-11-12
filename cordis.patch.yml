@@ -2,13 +2,16 @@
     - id: deepnovel
       name: '@sth4me/deepnovel'
       config: {}
+    - id: deepnovel-ui
+      name: '@sth4me/deepnovel-ui'
+      config: {}
     - id: preset-deepnovel
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: novel-writer
         order: 20
         name: DeepNovel 写作
-        description: 长篇小说写作工作台：固定流程、设定/章节上下文、质检修复与按任务模型配置。
+        description: 文档驱动的长篇小说写作工作台：项目树、对话写作、diff 审批与连续性账本。
         plugins:
           - id: deepnovel-agent
             name: '@sth4me/deepnovel/agent'

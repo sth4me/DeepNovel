@@ -5,10 +5,18 @@ dist/
 
 # 插件运行态（可重建，不强制入库）
 .dsh-writing/
+.deepnovel-backup/
 
 # 用户小说数据与导出（不属于插件仓库）
 story/
 exports/
+world/
+characters/
+plot/
+manuscript/
+continuity/
+revisions/
+deepnovel.json
 
 # OS / 编辑器
 .DS_Store

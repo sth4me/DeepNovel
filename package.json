@@ -1,9 +1,9 @@
 {
   "name": "@sth4me/deepnovel",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "private": true,
   "type": "module",
-  "description": "DSH 长篇小说写作插件：主面板写作台、固定流程、设定/章节上下文、质检修复与按任务模型配置。",
+  "description": "DSH 长篇小说写作插件：文档驱动工作台、对话写作、diff 审批与连续性账本。",
   "repository": {
     "type": "git",
     "url": "https://github.com/sth4me/DeepNovel.git"
@@ -12,47 +12,30 @@
   "exports": {
     ".": "./index.js",
     "./agent": "./agent.js",
-    "./client": "./client.js",
-    "./service": "./service.js",
-    "./templates": "./templates.js",
-    "./runtime": "./runtime.js",
-    "./locale/*.json": "./locale/*.json",
+    "./writing/manifest": "./writing/manifest.js",
+    "./writing/storage": "./writing/storage.js",
+    "./writing/project": "./writing/project.js",
+    "./writing/tools": "./writing/tools.js",
+    "./writing/prompts": "./writing/prompts.js",
+    "./writing/routes": "./writing/routes.js",
+    "./writing/*": "./writing/*.js",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
     "agent.js",
-    "client.js",
-    "service.js",
-    "runtime.js",
-    "templates.js",
-    "craft.js",
-    "skills.js",
-    "builtin-skills.js",
-    "writing-rules.js",
-    "db.js",
-    "store.js",
-    "migrate.js",
-    "lock-rules.js",
     "cordis.patch.yml",
-    "locale/*.json",
-    "icon.svg",
-    "constraints.js",
-    "style-profile.js",
-    "writing-doctrine.js"
+    "writing",
+    "ui",
+    "icon.svg"
   ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "immediately": true,
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-sidebar-right"
-      ]
     }
+  },
+  "dependencies": {
+    "@sth4me/deepnovel-ui": "file:./ui"
   },
   "license": "MIT"
 }

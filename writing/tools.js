@@ -1,0 +1,337 @@
+// 通用写作工具：项目地图、读、搜、创建对象、写提案/应用、连续性。
+import { resolve } from 'node:path'
+import { Project } from './project.js'
+import { STAGE_GUIDES, stageGuide } from './prompts.js'
+import { withProjectLock } from './locks.js'
+
+function textRender(_args, value) {
+  return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
+}
+
+const jsonOutput = {
+  schema: { type: 'object', additionalProperties: true },
+  render: textRender,
+}
+
+function errorResult(tool, error) {
+  return {
+    ok: false,
+    tool,
+    error: error instanceof Error ? error.message : String(error),
+    hint: '先读项目地图/相关文档；不要重复提交同一个写提案。',
+  }
+}
+
+const activeRoots = new Map()
+
+function rootKey(ctx, agent) {
+  return String(agent?.id ?? ctx.sessionId ?? 'default')
+}
+
+function rememberRoot(ctx, agent, root) {
+  const path = resolve(String(root))
+  activeRoots.set(rootKey(ctx, agent), path)
+  return path
+}
+
+async function projectRoot(ctx, agent) {
+  const remembered = activeRoots.get(rootKey(ctx, agent))
+  if (remembered) return remembered
+  const root = await ctx.workingDirectory?.ensure?.(agent)
+  if (!root) throw new Error('当前会话没有工作目录')
+  return root
+}
+
+async function openProject(ctx, agent) {
+  const root = await projectRoot(ctx, agent)
+  return Project.open(root)
+}
+
+async function withWriteLock(ctx, agent, run) {
+  const root = await projectRoot(ctx, agent)
+  return withProjectLock(root, () => run(root))
+}
+
+const KINDS = ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary', 'ledger']
+
+export function registerWritingTools(ctx) {
+  const register = (tool) => ctx.tools.register({
+    ...tool,
+    output: jsonOutput,
+    async execute(args, exec) {
+      try {
+        return await tool.execute(args ?? {}, exec)
+      } catch (error) {
+        return errorResult(tool.name, error)
+      }
+    },
+  })
+
+  register({
+    name: 'novel_project',
+    description: '项目入口：action=open/status 打开项目并返回地图；action=init 初始化项目；action=set 修改标题/题材/语言。项目根可显式指定，之后本会话的工具都作用于该项目。文档是唯一事实来源；不生成内容。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['open', 'status', 'init', 'set'] },
+        projectRoot: { type: 'string', description: '项目绝对路径；open/init 时传给写作台项目目录' },
+        title: { type: 'string' },
+        genre: { type: 'string' },
+        language: { type: 'string', enum: ['zh', 'en'] },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      if (args.action === 'open' || (args.action === 'init' && args.projectRoot)) {
+        const explicit = resolve(String(args.projectRoot ?? ''))
+        if (!explicit) throw new Error('需要 projectRoot')
+        const project = await Project.open(explicit).catch(() => null)
+        if (project) {
+          rememberRoot(ctx, exec.agent, explicit)
+          return { opened: true, root: explicit, map: await project.projectMap() }
+        }
+        if (args.action !== 'init') throw new Error(`不是 DeepNovel 项目：${explicit}`)
+        return withWriteLock(ctx, exec.agent, async () => {
+          const project = await Project.init(explicit, { title: args.title, genre: args.genre, language: args.language })
+          rememberRoot(ctx, exec.agent, explicit)
+          return { initialized: true, root: explicit, map: await project.projectMap() }
+        })
+      }
+      const root = await projectRoot(ctx, exec.agent)
+      if (args.action === 'init') {
+        return withWriteLock(ctx, exec.agent, async () => {
+          const existing = await Project.open(root).catch(() => null)
+          if (existing) return { initialized: false, alreadyInitialized: true, map: await existing.projectMap() }
+          const project = await Project.init(root, { title: args.title, genre: args.genre, language: args.language })
+          return { initialized: true, root, map: await project.projectMap() }
+        })
+      }
+      const project = await openProject(ctx, exec.agent)
+      if (args.action === 'set') {
+        return withWriteLock(ctx, exec.agent, async () => {
+          const current = await Project.open(root)
+          return current.setMeta({ title: args.title, genre: args.genre, language: args.language })
+        })
+      }
+      return { root, map: await project.projectMap() }
+    },
+  })
+
+  register({
+    name: 'novel_read',
+    description: '读取项目中的一份文档：kind=book/world/character/volume/arc/chapter/manuscript/summary/ledger。返回正文和路径；只读，不生成。',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary', 'ledger'] },
+        id: { type: 'string', description: '对象 id；book/ledger 可省略' },
+      },
+      required: ['kind'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      return project.read(args.kind, args.id ?? '')
+    },
+  })
+
+  register({
+    name: 'novel_search',
+    description: '在项目文档中搜索原文；返回命中文件、对象类型和前后片段。用于写前定位，不要一次把全书读入。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '要搜索的原文片段' },
+        limit: { type: 'number', description: '最多命中数，默认 12，上限 30' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      const query = String(args.query ?? '').trim()
+      if (!query) throw new Error('query 不能为空')
+      const limit = Math.max(1, Math.min(30, Number(args.limit) || 12))
+      const files = (await project.store.tree()).filter((path) => /\.(md|json)$/i.test(path) && !path.startsWith('revisions/'))
+      const results = []
+      for (const path of files) {
+        if (results.length >= limit) break
+        const text = await project.store.readTextOrNull(path)
+        if (!text) continue
+        let index = text.indexOf(query)
+        while (index >= 0 && results.length < limit) {
+          results.push({
+            path,
+            at: index,
+            context: text.slice(Math.max(0, index - 100), Math.min(text.length, index + query.length + 140)),
+          })
+          index = text.indexOf(query, index + query.length)
+        }
+      }
+      return { query, total: results.length, results }
+    },
+  })
+
+  register({
+    name: 'novel_create',
+    description: '创建对象提案：world/character/volume/arc/chapter。必须同时给出正文；返回原子创建提案（元数据+正文），用户确认后用 novel_write action=apply 应用。不要先建空对象。',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['world', 'character', 'volume', 'arc', 'chapter'] },
+        title: { type: 'string' },
+        name: { type: 'string', description: 'character 的名称' },
+        role: { type: 'string', description: 'character 的身份/功能；AI 推断，不要问用户' },
+        category: { type: 'string', description: 'world 分类；AI 推断，不要问用户' },
+        volumeId: { type: 'string', description: 'arc/chapter 所属卷' },
+        arcId: { type: 'string', description: 'chapter 可选所属剧情点' },
+        content: { type: 'string', description: '对象正文；创建提案不能为空' },
+      },
+      required: ['kind', 'content'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      return withWriteLock(ctx, exec.agent, async () => {
+        const project = await openProject(ctx, exec.agent)
+        const workflow = await project.workflow()
+        const allowed = workflow.allowed[args.kind === 'arc' ? 'volume' : args.kind]
+        if (!allowed) {
+          const reasons = {
+            world: '故事方向还没有定案：先把讨论结果写进 plot/book.md。',
+            character: '故事方向还没有定案：先写 plot/book.md。',
+            volume: '需要先定方向，并至少有一条设定和一个主要人物。',
+            chapter: '需要先有方向和至少一卷。',
+          }
+          throw new Error(`${workflow.next.label}：${reasons[args.kind] ?? '当前阶段不允许创建该对象。'}`)
+        }
+        return project.proposeCreate({
+          kind: args.kind,
+          title: args.title,
+          name: args.name,
+          role: args.role,
+          category: args.category,
+          volumeId: args.volumeId,
+          arcId: args.arcId,
+          content: args.content,
+        })
+      })
+    },
+  })
+
+  register({
+    name: 'novel_write',
+    description: '写文档/应用提案。action=propose 返回 diff/提案，不写盘；action=apply 需 proposalId + confirm:true，应用前校验正文未变。novel_create 的原子创建提案也用 action=apply 应用，确认后一次性创建对象和正文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['propose', 'apply'] },
+        kind: { type: 'string', enum: ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary'] },
+        id: { type: 'string', description: '目标对象 id；book 可省略' },
+        content: { type: 'string', description: 'propose 时的新正文' },
+        proposalId: { type: 'string', description: 'apply 时由 propose 返回' },
+        confirm: { type: 'boolean', description: 'apply 必须为 true' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      if (args.action === 'propose') {
+        if (!args.kind) throw new Error('propose 需要 kind')
+        const project = await openProject(ctx, exec.agent)
+        return project.proposeWrite(args.kind, args.id ?? '', args.content ?? '')
+      }
+      if (args.action === 'apply') {
+        return withWriteLock(ctx, exec.agent, async () => {
+          const project = await openProject(ctx, exec.agent)
+          return project.applyProposal(args.proposalId, { confirm: args.confirm === true })
+        })
+      }
+      throw new Error(`未知写入操作：${args.action}`)
+    },
+  })
+
+
+  register({
+    name: 'novel_style',
+    description: '读取或设置文风契约。action=get 返回当前文风；action=set 合并写入字段。文风是写作要求，不是剧情内容。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'] },
+        style: { type: 'object', additionalProperties: true, description: 'set 时要合并的文风字段' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      if (args.action === 'get') return { style: project.manifest.style }
+      if (args.action === 'set') {
+        return withWriteLock(ctx, exec.agent, async () => {
+          const current = await openProject(ctx, exec.agent)
+          return { style: await current.setStyle(args.style ?? {}) }
+        })
+      }
+      throw new Error(`未知文风操作：${args.action}`)
+    },
+  })
+
+  register({
+    name: 'novel_stage',
+    description: '查看当前阶段、阶段提示和下一步建议。阶段由项目实际文档推导，不是硬流程；讨论和跨阶段读取不受限制。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    async execute(_args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      const map = await project.projectMap()
+      return {
+        stage: map.stage,
+        guide: stageGuide(map.stage),
+        next: nextSuggestion(map.stage),
+        map,
+      }
+    },
+  })
+
+  register({
+    name: 'novel_continuity',
+    description: '连续性账本：action=get 读取；action=commit 提交本章摘要、交接、事实、知识、伏笔、时间线。只记录正文确实发生的内容，不生成剧情。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'commit'] },
+        chapterId: { type: 'string' },
+        summary: { type: 'string' },
+        handoff: { type: 'string' },
+        facts: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        knowledge: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        foreshadow: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        timeline: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      if (args.action === 'get') return project.readLedger()
+      return withWriteLock(ctx, exec.agent, async () => project.commitChapter(args))
+    },
+  })
+
+  return {
+    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity'],
+    stages: Object.keys(STAGE_GUIDES),
+  }
+}
+
+function nextSuggestion(stage) {
+  switch (stage) {
+    case 'setup': return '和用户确认方向；先建最小世界观/人物/卷。'
+    case 'world': return '补会影响人物选择的规则、势力、地点。'
+    case 'character': return '补主要人物的欲望、恐惧、缺陷、关系。'
+    case 'plot': return '建卷、剧情点、章卡；再写正文。'
+    case 'manuscript': return '按章卡写下一章正文；写完提交连续性。'
+    case 'continuity': return '补章节摘要/交接；准备下一章或检查连续性。'
+    default: return '讨论修改、润色或导出。'
+  }
+}
