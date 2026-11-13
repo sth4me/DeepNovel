@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.1.39
+
+- 写作 Agent 增加写文件守卫：用 write/edit/apply_patch 或命令行直接改 manuscript、plot、world、characters、continuity、revisions、references、deepnovel.json 会被拒绝。
+- 守卫会提示改用 novel_write 的 propose/append/patch，避免绕过提案审批和修订记录。
+- 只读命令（Get-Content、cat、grep 等）和项目外文件不受影响。
+
 ## 0.1.38
 
 - novel_write 增加 action=append：只提交新增段落，避免扩写时整章重发。

@@ -1,6 +1,7 @@
 // 新写作 Agent：通用文档工具 + 主创提示词；不注册 UI 路由。
 import { LEAD_SYSTEM_PROMPT } from './prompts.js'
 import { registerWritingTools } from './tools.js'
+import { installDirectWriteGuard } from './guard.js'
 
 export const name = '@sth4me/deepnovel/agent'
 
@@ -16,6 +17,7 @@ function optionalService(ctx, name) {
 
 export function apply(ctx) {
   registerWritingTools(ctx)
+  installDirectWriteGuard(ctx)
   const systemPrompt = optionalService(ctx, 'systemPrompt')
   if (systemPrompt?.section) {
     systemPrompt.section({

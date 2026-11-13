@@ -171,6 +171,16 @@ assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
 
+const guardModule = await import('../writing/guard.js')
+assert.ok(guardModule.directWriteGuard({ name: 'write', arguments: { path: 'manuscript/ch1.md', content: 'x' } }), '原生 write 写正文必须被阻止')
+assert.ok(guardModule.directWriteGuard({ name: 'edit', arguments: { file_path: '%ROOT%/plot/book.md' } }), '原生 edit 写大纲必须被阻止')
+assert.ok(guardModule.directWriteGuard({ name: 'pwsh', arguments: { command: 'Set-Content manuscript/ch1.md -Value x' } }), '命令行写正文必须被阻止')
+assert.equal(guardModule.directWriteGuard({ name: 'write', arguments: { path: 'notes/todo.md', content: 'x' } }), undefined, '非项目文档不拦')
+assert.equal(guardModule.directWriteGuard({ name: 'read', arguments: { path: 'manuscript/ch1.md' } }), undefined, '读取不拦')
+assert.equal(guardModule.directWriteGuard({ name: 'pwsh', arguments: { command: 'Get-Content manuscript/ch1.md' } }), undefined, '只读命令不拦')
+assert.ok(guardModule.directWriteGuard({ name: 'bash', arguments: { command: 'python -c "open(\'manuscript/ch1.md\',\'w\').write(x)"' } }), '脚本写文件必须被阻止')
+assert.ok(guardModule.directWriteGuard({ name: 'bash', arguments: { command: 'node -e "fs.writeFileSync(\'plot/book.md\', x)"' } }), 'node 写文件必须被阻止')
+
 const statsModule = await import('../writing/textstats.js')
 const countModule = await import('../writing/count.js')
 
