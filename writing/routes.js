@@ -1,9 +1,10 @@
 // 最小 HTTP API：项目树、文档读写、提案/diff、连续性。供可选 UI 使用。
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Project } from './project.js'
 import { deleteReference, importReferences, listReferences, readReference, searchReferences, updateReference } from './references.js'
 import { withProjectLock } from './locks.js'
-import { ROUTE_ROLES, normalizeRouting } from './routing.js'
+import { ROUTE_ROLES, normalizeRouting, resolveRoute } from './routing.js'
 
 function json(res, status, value) {
   const body = JSON.stringify(value)
@@ -165,6 +166,87 @@ export function registerWritingRoutes(ctx, webServer) {
     const root = projectRoot(url.searchParams.get('projectRoot'))
     const project = await Project.open(root)
     return project.readRevision(url.searchParams.get('name') ?? '')
+  })
+
+  const agentServices = () => ({
+    agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined,
+    llm: typeof ctx.get === 'function' ? ctx.get('llm') : undefined,
+    defaultModel: typeof ctx.get === 'function' ? ctx.get('agentDefaultModel') : undefined,
+  })
+
+  const taskMessage = (text) => ({
+    id: `msg-${randomUUID()}`,
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'user' },
+  })
+
+  register('/deepnovel/api/run', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    const project = await Project.open(root)
+    const { agents, llm, defaultModel } = agentServices()
+    if (!agents?.create || !agents?.get) throw new Error('当前宿主不支持后台子代理执行')
+    const parentSessionId = typeof payload.parentSessionId === 'string' ? payload.parentSessionId : ''
+    const parent = parentSessionId ? agents.get(parentSessionId) : undefined
+    let base = parent?.model?.current?.() ?? null
+    if (!base) base = defaultModel?.currentSelection?.() ?? null
+    let efforts = []
+    if (llm && base?.provider && base?.model) {
+      try {
+        const info = await llm.resolveModelInfo(base.provider, base.model)
+        efforts = (info.reasoning?.efforts ?? []).map((effort) => String(effort.id))
+      } catch {
+        efforts = []
+      }
+    }
+    const role = payload.role === 'prose' ? 'prose' : 'plan'
+    const route = resolveRoute(project.routing(), role, {
+      provider: base?.provider ?? '',
+      model: base?.model ?? '',
+      efforts,
+    })
+    const sessionId = `session-${randomUUID()}`
+    const agentOptions = {}
+    if (route.provider) agentOptions.provider = route.provider
+    if (route.model) agentOptions.model = route.model
+    if (route.reasoningEffort) agentOptions.reasoningEffort = route.reasoningEffort
+    const handle = await agents.create({
+      sessionId,
+      ...(parent ? { parentAgent: parent } : {}),
+      meta: {
+        cwd: root,
+        ...(parentSessionId ? { parentSession: parentSessionId } : {}),
+        ...(parent ? { origin: 'subagent', delegationDepth: 1 } : {}),
+        agentPreset: 'novel-writer',
+      },
+      agentOptions,
+    })
+    handle.agent.followup(taskMessage(String(payload.prompt ?? '')))
+    return { sessionId, route, delegated: Boolean(parent) }
+  })
+
+  register('/deepnovel/api/run/status', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const ids = String(url.searchParams.get('sessionIds') ?? '').split(',').map((item) => item.trim()).filter(Boolean)
+    const agents = typeof ctx.get === 'function' ? ctx.get('agents') : undefined
+    const statuses = {}
+    for (const id of ids) {
+      const agent = agents?.get?.(id)
+      statuses[id] = { live: Boolean(agent), status: agent?.status ?? 'unknown' }
+    }
+    return { statuses }
+  })
+
+  register('/deepnovel/api/run/stop', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const agents = typeof ctx.get === 'function' ? ctx.get('agents') : undefined
+    const agent = agents?.get?.(String(payload.sessionId ?? ''))
+    if (!agent) return { stopped: false, reason: '会话不在运行' }
+    agent.cancel({ kind: 'user' })
+    return { stopped: true }
   })
 
   register('/deepnovel/api/routing', async (req) => {

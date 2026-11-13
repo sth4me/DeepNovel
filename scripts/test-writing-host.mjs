@@ -77,6 +77,26 @@ const importResponse = await fetch(`${base}/deepnovel/api/references/import`, {
 const importPayload = await importResponse.json()
 assert.equal(importPayload.ok, true)
 assert.equal(importPayload.data.imported, 2)
+const runWithoutAgents = await fetch(`${base}/deepnovel/api/run`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ projectRoot: root, role: 'prose', title: 't', prompt: 'p' }),
+})
+assert.equal(runWithoutAgents.status, 400)
+const runError = await runWithoutAgents.json()
+assert.match(runError.error.message, /子代理/)
+const runStatus = await fetch(`${base}/deepnovel/api/run/status?sessionIds=`)
+assert.equal(runStatus.status, 200)
+const emptyStatus = await runStatus.json()
+assert.deepEqual(emptyStatus.data.statuses, {})
+const runStop = await fetch(`${base}/deepnovel/api/run/stop`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ sessionId: 'session-x' }),
+})
+const stopBody = await runStop.json()
+assert.equal(stopBody.data.stopped, false)
+
 const routingGet = await fetch(`${base}/deepnovel/api/routing?projectRoot=${encodeURIComponent(root)}`)
 assert.equal(routingGet.status, 200)
 const routingBody = await routingGet.json()

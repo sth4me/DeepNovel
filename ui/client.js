@@ -1297,6 +1297,38 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const TASK_STATE_LABELS = {
+      running: '执行中', done: '已完成', stopped: '已停止', failed: '失败',
+      sending: '发送中', sent: '已发送', fallback: '已回退', cancelled: '已取消',
+    }
+
+    function TaskDock({ tasks, onOpen, onStop, onRetry, onAll, style }) {
+      if (!tasks.length) return null
+      return h('div', { style: { display: 'grid', gap: 2, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, padding: '6px 8px', background: 'var(--dsw-alias-bg-layer-1)' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 } },
+          h('strong', null, '任务'),
+          h('span', { className: 'dn-tree-count' }, String(tasks.filter((item) => item.state === 'running').length || tasks.length)),
+          h('span', { style: { flex: 1 } }),
+          h('button', { type: 'button', style: style.addButton, onClick: onAll }, '全部'),
+        ),
+        ...tasks.slice(0, 3).map((task) => h('div', { key: task.id, style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0' } },
+          h('span', {
+            style: {
+              width: 6, height: 6, borderRadius: 3, flex: '0 0 auto',
+              background: task.state === 'running' ? 'var(--dsw-alias-brand-primary)' : task.state === 'done' ? 'var(--dsw-alias-state-success-primary)' : task.state === 'failed' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
+            },
+          }),
+          h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 } }, task.title),
+          task.route?.model ? h('span', { style: { fontSize: 10, opacity: 0.5 } }, `${task.route.model}${task.route.reasoningEffort ? ` · ${task.route.reasoningEffort}` : ''}`) : null,
+          h('span', { style: { flex: 1 } }),
+          h('span', { style: { fontSize: 10, opacity: 0.6 } }, TASK_STATE_LABELS[task.state] ?? task.state),
+          task.sessionId ? h('button', { type: 'button', style: style.addButton, onClick: () => onOpen(task) }, '打开') : null,
+          task.state === 'running' ? h('button', { type: 'button', style: style.addButton, onClick: () => onStop(task) }, '停止') : null,
+          task.state === 'failed' || task.state === 'stopped' ? h('button', { type: 'button', style: style.addButton, onClick: () => onRetry(task) }, '重试') : null,
+        )),
+      )
+    }
+
     function DocumentContext({ doc, text, style, onJump }) {
       if (!doc) return null
       const headings = String(text ?? '').split(/\r?\n/)
@@ -1463,6 +1495,39 @@ window.__ModuleLoader__.load({
           setTasks([])
         }
       }, [root])
+
+      useEffect(() => {
+        if (!root) return undefined
+        const active = tasks.filter((item) => item.state === 'running' && item.sessionId)
+        if (active.length === 0) return undefined
+        const ids = active.map((item) => item.sessionId).join(',')
+        let alive = true
+        const poll = async () => {
+          try {
+            const data = await api(`/deepnovel/api/run/status?sessionIds=${encodeURIComponent(ids)}`)
+            if (!alive) return
+            setTasks((current) => {
+              let changed = false
+              const next = current.map((item) => {
+                if (item.state !== 'running' || !item.sessionId) return item
+                const info = data.statuses?.[item.sessionId]
+                if (!info) return item
+                if (info.live && info.status === 'running') return item
+                changed = true
+                return { ...item, state: info.live && info.status === 'idle' ? 'done' : 'done', updatedAt: new Date().toISOString() }
+              })
+              if (changed) {
+                try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next)) } catch {}
+                return next
+              }
+              return current
+            })
+          } catch {}
+        }
+        const timer = setInterval(poll, 4000)
+        void poll()
+        return () => { alive = false; clearInterval(timer) }
+      }, [root, tasks.map((item) => `${item.id}:${item.state}`).join('|')])
 
       const dispatchTask = async (prompt) => {
         const service = clientScope?.get?.('uiWorkspace') ?? null
@@ -1952,21 +2017,28 @@ window.__ModuleLoader__.load({
 
       const retryTask = async (task) => {
         if (!task) return
-        patchTask(task.id, { state: 'sending' })
+        const role = task.role ?? roleOfTask(task.title ?? '', task.body ?? '')
+        const body = task.body ?? task.prompt ?? ''
+        patchTask(task.id, { state: 'running', error: '' })
         setError('')
         try {
-          const sessionId = await dispatchTask(task.prompt)
-          setLastSessionId(sessionId)
-          try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
-          patchTask(task.id, { state: 'sent', sessionId })
-          setActivity('任务已重新发送')
-        } catch (e) {
-          const message = String(e?.message ?? e)
-          patchTask(task.id, { state: 'failed', error: message })
-          setError(`重新发送失败：${message}`)
+          const data = await runBackgroundTask(task.title ?? '任务', body, role)
+          patchTask(task.id, { state: 'running', sessionId: data.sessionId, route: data.route, prompt: data.prompt })
+          setActivity('任务已重新开始')
+        } catch (error) {
+          const message = String(error?.message ?? error)
+          try {
+            const sessionId = await dispatchTask(task.prompt ?? buildTaskPrompt(task.title ?? '任务', root, body))
+            setLastSessionId(sessionId)
+            try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
+            patchTask(task.id, { state: 'sent', sessionId })
+            setActivity('任务已重新发送')
+          } catch (fallbackError) {
+            patchTask(task.id, { state: 'failed', error: `${message}；${String(fallbackError?.message ?? fallbackError)}` })
+            setError(`重新执行失败：${message}`)
+          }
         }
       }
-
 
       const cancelTask = async (task) => {
         const sessionId = task?.sessionId || lastSessionId
@@ -1974,6 +2046,18 @@ window.__ModuleLoader__.load({
           patchTask(task?.id, { state: 'failed', error: '没有可停止的会话' })
           return
         }
+        try {
+          const hostStop = await api('/deepnovel/api/run/stop', {
+            method: 'POST',
+            body: JSON.stringify({ sessionId }),
+          }).catch(() => null)
+          if (hostStop?.stopped) {
+            patchTask(task.id, { state: 'stopped' })
+            setAiTask({ state: 'stopped', title: task.title })
+            setActivity('任务已停止')
+            return
+          }
+        } catch {}
         try {
           const sessions = clientScope?.get?.('sessions')
           if (!sessions?.retain) throw new Error('会话服务不可用')
@@ -1993,40 +2077,49 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const openTask = (title, body, options = {}) => {
-        const service = uiWorkspace()
-        if (!service?.startSession && !service?.connectWorkspace) {
-          setError('当前环境不能从写作台打开 DSH 对话；请在主对话里选择 DeepNovel 写作预设后直接说任务。')
-          return
-        }
+      const roleOfTask = (title, body) => {
+        const text = `${title} ${body}`
+        return /写正文|正文|润色|改写|续写|写下一章/.test(text) && !/章卡|大纲|规划/.test(text) ? 'prose' : 'plan'
+      }
+
+      const runBackgroundTask = async (title, body, role) => {
         const prompt = buildTaskPrompt(title, root, body)
+        const data = await api('/deepnovel/api/run', {
+          method: 'POST',
+          body: JSON.stringify({ projectRoot: root, role, title, prompt, parentSessionId: lastSessionId }),
+        })
+        return { ...data, prompt }
+      }
+
+      const openTask = (title, body, options = {}) => {
+        const role = options.role ?? roleOfTask(title, body)
         const taskId = `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-        const task = { id: taskId, title, body, prompt, state: 'sending', createdAt: new Date().toISOString() }
+        const task = { id: taskId, title, body, role, state: 'running', createdAt: new Date().toISOString() }
         rememberTask(task)
         setError('')
-        setActivity('正在创建写作会话并发送任务…')
-        setAiTask({ state: 'sending', title })
-        dispatchTask(prompt).then((sessionId) => {
-          setLastSessionId(sessionId)
-          try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
-          setAiTask({ state: 'sent', title, sessionId })
-          patchTask(taskId, { state: 'sent', sessionId })
-          setActivity('任务已发送到正常写作对话')
+        setActivity(`已开始任务：${title}`)
+        setAiTask({ state: 'running', title })
+        runBackgroundTask(title, body, role).then((data) => {
+          patchTask(taskId, { state: 'running', sessionId: data.sessionId, route: data.route, prompt: data.prompt })
+          setAiTask({ state: 'running', title, sessionId: data.sessionId })
+          setActivity(`任务执行中：${title}${data.route?.model ? `（${data.route.model}）` : ''}`)
         }).catch((error) => {
           const message = String(error?.message ?? error)
-          setAiTask({ state: 'failed', title, error: message })
-          patchTask(taskId, { state: 'fallback', error: message })
-          setActivity('任务未能自动发送')
-          setError(`无法自动发送任务：${message}。已保留任务文本；请打开写作对话后手动发送。`)
-          try { navigator.clipboard?.writeText(prompt) } catch {}
-          try {
-            service.startSession?.(undefined, {
-              agentPreset: 'novel-writer',
-              prompt,
-              clearPreviousDraft: true,
-              whenDraftExists: 'replace',
-            })
-          } catch {}
+          // 宿主不支持后台子代理时，回退到原来的会话发送路径。
+          const prompt = buildTaskPrompt(title, root, body)
+          dispatchTask(prompt).then((sessionId) => {
+            setLastSessionId(sessionId)
+            try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
+            patchTask(taskId, { state: 'sent', sessionId, prompt })
+            setAiTask({ state: 'sent', title, sessionId })
+            setActivity('任务已发送到写作对话')
+          }).catch((fallbackError) => {
+            const fallbackMessage = String(fallbackError?.message ?? fallbackError)
+            patchTask(taskId, { state: 'failed', error: `${message}；${fallbackMessage}`, prompt })
+            setAiTask({ state: 'failed', title, error: fallbackMessage })
+            setError(`无法执行任务：${message}；${fallbackMessage}`)
+            try { navigator.clipboard?.writeText(prompt) } catch {}
+          })
         })
       }
 
@@ -2223,6 +2316,14 @@ window.__ModuleLoader__.load({
               activity ? h('span', { style: style.muted }, activity) : null,
               busy ? h('span', { style: style.muted }, '处理中…') : null,
             ),
+            h(TaskDock, {
+              tasks,
+              style,
+              onAll: () => setDialog('tasks'),
+              onOpen: (task) => { try { uiWorkspace()?.openSession?.(task.sessionId) } catch {} },
+              onStop: (task) => { void cancelTask(task) },
+              onRetry: (task) => { void retryTask(task) },
+            }),
             ),
           ),
           (proposal || doc) && inspectorOpen ? h('div', { className: 'dn-inspector' },
@@ -2281,11 +2382,11 @@ window.__ModuleLoader__.load({
               ...tasks.map((item) => h('div', { key: item.id, className: 'dn-card', style: { gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'center', gap: 8 } },
                 h('div', { style: { minWidth: 0 } },
                   h('div', { style: { fontWeight: 600, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.title),
-                  h('div', { style: { fontSize: 10, opacity: 0.55 } }, `${item.state === 'sent' ? '已发送' : item.state === 'sending' ? '发送中' : item.state === 'cancelled' ? '已停止' : item.state === 'fallback' ? '已回退预填' : '发送失败'} · ${String(item.createdAt ?? '').replace('T', ' ').slice(0, 16)}`),
+                  h('div', { style: { fontSize: 10, opacity: 0.55 } }, `${TASK_STATE_LABELS[item.state] ?? item.state}${item.route?.model ? ` · ${item.route.model}${item.route.reasoningEffort ? ` / ${item.route.reasoningEffort}` : ''}` : ''} · ${String(item.createdAt ?? '').replace('T', ' ').slice(0, 16)}`),
                 ),
                 h('div', { style: { display: 'flex', gap: 4 } },
-                  item.state === 'failed' || item.state === 'fallback' ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
-                  item.state === 'sent' || item.state === 'sending' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
+                  item.state === 'failed' || item.state === 'fallback' || item.state === 'stopped' || item.state === 'done' ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
+                  item.state === 'sent' || item.state === 'sending' || item.state === 'running' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
                   item.sessionId ? h(Btn, { onClick: () => { try { uiWorkspace()?.openSession?.(item.sessionId) } catch {} } }, '打开对话') : null,
                 ),
               )),
@@ -2461,7 +2562,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      __test: { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, StepRail, PageView, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
+      __test: { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, StepRail, PageView, TaskDock, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
       inject: ['slots'],
       apply(ctx) {
         clientScope = ctx
