@@ -14,6 +14,7 @@ import {
   normalizeManifest,
 } from './manifest.js'
 import { FileStore, contentHash, lineDiff } from './storage.js'
+import { listReferences } from './references.js'
 
 const DEFAULT_LEDGER = {
   version: 1,
@@ -161,6 +162,18 @@ export class Project {
     }
     const result = await this.write(kind, kind === 'book' ? 'book' : id, content)
     return { ...current, content: String(content ?? ''), hash: result.afterHash, revision: result }
+  }
+
+  async revisions(kind, id = '') {
+    const file = fileFor(kind === 'manuscript' ? 'manuscript' : kind === 'summary' ? 'summary' : kind, id)
+    return { file, revisions: await this.store.listRevisions(file) }
+  }
+
+  async readRevision(name) {
+    const path = String(name ?? '').replace(/\\/g, '/')
+    if (!path.startsWith('revisions/') || path.includes('..')) throw new Error('非法修订路径')
+    const content = await this.store.readText(path)
+    return { name: path, content }
   }
 
   async setStyle(style) {
@@ -427,6 +440,36 @@ export class Project {
     }
   }
 
+  async listProposals() {
+    const entries = await this.store.list('revisions/proposals').catch(() => [])
+    const proposals = []
+    for (const entry of entries) {
+      if (!entry.name.endsWith('.json')) continue
+      const id = entry.name.slice(0, -5)
+      const proposal = await this.store.readJson(entry.path, null).catch(() => null)
+      if (!proposal) continue
+      if (proposal.expiresAt && proposal.expiresAt < Date.now()) {
+        await this.store.remove(entry.path).catch(() => {})
+        continue
+      }
+      const { content: _content, ...visible } = proposal
+      proposals.push({
+        ...visible,
+        id: visible.id ?? id,
+        contentPreview: String(proposal.content ?? '').slice(0, 600),
+      })
+    }
+    return proposals.sort((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
+  }
+
+  async rejectProposal(proposalId) {
+    const id = String(proposalId ?? '')
+    if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new Error('非法提案 id')
+    this.proposals.delete(id)
+    await this.store.remove(`revisions/proposals/${id}.json`).catch(() => {})
+    return { rejected: true, id }
+  }
+
   async applyProposal(proposalId, { confirm = false } = {}) {
     if (confirm !== true) throw new Error('应用修改需要 confirm: true')
     const key = String(proposalId ?? '')
@@ -588,6 +631,7 @@ export class Project {
       readiness: this.readiness(),
       workflow: await this.workflow(),
       style: this.manifest.style,
+      references: await listReferences(this),
       world: this.manifest.world.map((item) => ({ id: item.id, title: item.title, category: item.category })),
       characters: this.manifest.characters.map((item) => ({ id: item.id, name: item.name, role: item.role })),
       plot: {
@@ -679,7 +723,38 @@ export class Project {
     return { chapterId, summaryPath: fileFor('summary', chapterId), ledgerVersion: ledger.version }
   }
 
-  async exportMarkdown() {
+  async exportMarkdown({ scope = 'all', volumeId = '', chapterId = '' } = {}) {
+    const safeName = (value) => String(value ?? '').replace(/[\\/:*?"<>|]/g, '_') || 'novel'
+    const allVolumes = this.manifest.plot.volumes
+    const allChapters = allVolumes.flatMap((volume) => volume.chapters.map((chapter) => ({ ...chapter, volumeId: volume.id })))
+    if (scope === 'chapter') {
+      const chapter = allChapters.find((item) => item.id === chapterId)
+      if (!chapter) throw new Error(`找不到章节：${chapterId}`)
+      const parent = allVolumes.find((volume) => volume.id === chapter.volumeId)
+      const card = await this.store.readTextOrNull(fileFor('chapter', chapter.id))
+      const prose = await this.store.readTextOrNull(fileFor('manuscript', chapter.id))
+      const summary = await this.store.readTextOrNull(fileFor('summary', chapter.id))
+      const parts = [`# ${this.manifest.title}`, '', `## ${parent?.title ?? ''} · 第 ${chapter.order} 章 ${chapter.title}`, '']
+      if (card) parts.push('### 章卡', '', card.trim(), '')
+      if (prose) parts.push('### 正文', '', prose.trim(), '')
+      if (summary) parts.push('### 摘要', '', summary.trim(), '')
+      return { filename: `${safeName(this.manifest.title)}-第${chapter.order}章.md`, content: parts.join('\n') }
+    }
+    if (scope === 'volume') {
+      const volume = allVolumes.find((item) => item.id === volumeId)
+      if (!volume) throw new Error(`找不到卷：${volumeId}`)
+      const parts = [`# ${this.manifest.title}`, '', `## 卷：${volume.title}`, '']
+      const content = await this.store.readTextOrNull(fileFor('volume', volume.id))
+      if (content) parts.push(content.trim(), '')
+      for (const chapter of volume.chapters) {
+        const card = await this.store.readTextOrNull(fileFor('chapter', chapter.id))
+        const prose = await this.store.readTextOrNull(fileFor('manuscript', chapter.id))
+        parts.push(`### 第 ${chapter.order} 章 ${chapter.title}`, '')
+        if (card) parts.push('【章卡】', '', card.trim(), '')
+        if (prose) parts.push('【正文】', '', prose.trim(), '')
+      }
+      return { filename: `${safeName(this.manifest.title)}-${safeName(volume.title)}.md`, content: parts.join('\n') }
+    }
     const parts = [`# ${this.manifest.title}`, '', `题材：${this.manifest.genre || '未设置'}`, '']
     const book = await this.store.readTextOrNull(fileFor('book'))
     if (book) parts.push('## 全书主线', '', book.trim(), '')
@@ -691,7 +766,7 @@ export class Project {
       const content = await this.store.readTextOrNull(fileFor('character', item.id))
       if (content) parts.push(`## 人物：${item.name}`, '', content.trim(), '')
     }
-    for (const volume of this.manifest.plot.volumes) {
+    for (const volume of allVolumes) {
       const content = await this.store.readTextOrNull(fileFor('volume', volume.id))
       if (content) parts.push(`## 卷：${volume.title}`, '', content.trim(), '')
       for (const chapter of volume.chapters) {
@@ -703,8 +778,8 @@ export class Project {
       }
     }
     return {
-      filename: `${this.manifest.title.replace(/[\\/:*?"<>|]/g, '_') || 'novel'}.md`,
-      content: parts.filter((part) => part !== undefined).join('\n'),
+      filename: `${safeName(this.manifest.title)}.md`,
+      content: parts.join('\n'),
     }
   }
 

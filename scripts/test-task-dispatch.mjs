@@ -28,7 +28,7 @@ globalThis.localStorage = globalThis.window.localStorage
 
 await import('../ui/client.js')
 assert.ok(plugin?.__test, 'client plugin should expose test helpers')
-const { App, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, Sidebar, PageView, buildTaskPrompt, findWorkspaceForPath, normalizeWorkspacePath, sendTaskToSessionWith, dispatchTaskWith } = plugin.__test
+const { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, PageView, buildTaskPrompt, findWorkspaceForPath, normalizeWorkspacePath, sendTaskToSessionWith, dispatchTaskWith } = plugin.__test
 
 const emptyMap = { title: '渲染测试', genre: '', notes: '', readiness: { ready: false, missing: ['题材', '写作要求/核心方向'] }, style: {}, world: [], characters: [], plot: { book: { title: '全书主线' }, volumes: [] }, continuity: { ledger: 'continuity/ledger.json' } }
 assert.ok(App({}), 'App should render without crashing')
@@ -40,6 +40,8 @@ assert.ok(DocTree({ map: treeMap, doc: { kind: 'world', id: 'w1' }, onOpen: () =
 assert.ok(Sidebar({ map: treeMap, page: 'bible', doc: null, onPage: () => {}, onOpen: () => {}, style: { sidebar: {}, treeRow: {}, groupTitle: {}, addButton: {}, badge: {} } }), 'Sidebar should render')
 assert.ok(DocumentContext({ doc: { kind: 'world', id: 'w1', title: '示例' }, text: '# 标题\n\n正文', style: { badge: {}, treeRow: {} }, onJump: () => {} }), 'DocumentContext should render TOC')
 assert.ok(LedgerView({ text: JSON.stringify({ facts: ['事实'], knowledge: [], foreshadow: [], timeline: [], handoffs: [] }), style: { badge: {}, muted: {}, card: {}, addButton: {} }, onTask: () => {}, allowed: () => true }), 'LedgerView should render structured ledger')
+assert.ok(ReferencePage({ references: [], kind: 'all', setKind: () => {}, query: '', setQuery: () => {}, busy: false, onImport: () => {}, onOpen: () => {}, onRemove: () => {}, style: { input: {}, badge: {}, card: {}, muted: {}, addButton: {} } }), 'ReferencePage should render')
+assert.ok(DiffView({ diff: { linesAdded: 1, linesRemoved: 1, changes: [{ line: 1, before: '旧', after: '新' }] }, style: { muted: {} } }), 'DiffView should render')
 for (const page of ['project', 'premise', 'style', 'bible', 'outline', 'chapters']) {
   const output = PageView({ map: emptyMap, page, style: {}, onOpen: () => {}, onTask: () => {}, onSettings: () => {}, onEditBook: () => {}, onPlanBook: () => {} })
   assert.ok(output, `PageView ${page} should render`)

@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     const DESIGN_CSS = `
 .dn-app{--dn-brand-soft:color-mix(in srgb,var(--dsw-alias-brand-primary) 10%,transparent);--dn-brand-line:color-mix(in srgb,var(--dsw-alias-brand-primary) 26%,transparent);--dn-rail-surface:linear-gradient(180deg,color-mix(in srgb,var(--dsw-alias-brand-primary) 8%,var(--dsw-alias-bg-layer-2)),var(--dsw-alias-bg-layer-2) 48%);--dn-stage-surface:radial-gradient(1000px 480px at 20% -8%,color-mix(in srgb,var(--dsw-alias-brand-primary) 5%,transparent),transparent 58%);height:100%;min-height:0;display:flex;flex-direction:column;background:var(--dn-stage-surface),var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-size:14px}
 .dn-top{flex:0 0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:13px 22px;border-bottom:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,var(--dsw-alias-border-l1));background:linear-gradient(180deg,color-mix(in srgb,var(--dsw-alias-bg-layer-2) 90%,var(--dsw-alias-brand-primary) 10%),var(--dsw-alias-bg-layer-1) 82%);box-shadow:0 8px 24px rgba(0,0,0,.05);position:relative;z-index:20}
-.dn-body{flex:1;min-height:0;display:flex}
+.dn-body{position:relative;flex:1;min-height:0;display:flex}
 .dn-rail{width:clamp(264px,17vw,320px);flex:0 0 auto;min-height:0;display:flex;flex-direction:column;padding:16px 12px;border-right:1px solid var(--dsw-alias-border-l1);background:var(--dn-rail-surface);overflow:auto}
 .dn-stage{flex:1;min-width:0;overflow:auto;padding:30px 44px 46px;scrollbar-width:thin;background:var(--dn-stage-surface)}
 .dn-stage-inner{width:100%;max-width:1560px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;gap:10px}
@@ -54,8 +54,15 @@ window.__ModuleLoader__.load({
 .dn-mode{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;overflow:hidden;display:inline-flex}
 .dn-mode button{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;padding:6px 10px;cursor:pointer}
 .dn-mode button.active{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:600}
-@media (max-width:1350px){.dn-inspector{display:none}.dn-stage{padding:24px 28px 36px}}
-@media (max-width:980px){.dn-rail{width:190px}.dn-stage{padding:20px 16px 28px}}
+@media (max-width:1350px){.dn-stage{padding:24px 28px 36px}}
+@media (max-width:1350px){.dn-inspector{position:absolute;right:0;top:0;bottom:0;z-index:35;width:min(340px,88vw);box-shadow:-18px 0 44px rgba(0,0,0,.18)}}
+@media (max-width:980px){.dn-rail{width:190px}.dn-stage{padding:20px 16px 28px}.dn-top{gap:8px;padding:10px 12px}.dn-top input{width:min(240px,42vw)!important}}
+.dn-app.dn-focus .dn-rail,.dn-app.dn-focus .dn-inspector{display:none!important}
+.dn-app.dn-focus .dn-stage{padding:36px min(6vw,84px) 50px}
+.dn-app.dn-focus .dn-stage-inner{max-width:1120px}
+.dn-app.dn-focus .dn-editor-head{border-bottom-color:transparent}
+.dn-app.dn-focus .dn-top{opacity:.82}
+.dn-app[data-theme="paper"]{--dn-brand-soft:color-mix(in srgb,#9a5b2d 12%,transparent);--dn-brand-line:color-mix(in srgb,#9a5b2d 32%,transparent);--dn-rail-surface:linear-gradient(180deg,color-mix(in srgb,#9a5b2d 9%,#f3eadb),#f3eadb 48%);--dn-stage-surface:radial-gradient(1000px 480px at 20% -8%,color-mix(in srgb,#9a5b2d 7%,transparent),transparent 58%);--dsw-alias-bg-layer-1:#fbf7ef;--dsw-alias-bg-layer-2:#f2eadc;--dsw-alias-border-l1:#dfd2bf;--dsw-alias-border-l2:#cbb99f;--dsw-alias-label-primary:#2f2a22;--dsw-alias-label-secondary:#776b5b;--dsw-alias-brand-primary:#9a5b2d}
 `
 
     function normalizeWorkspacePath(value) {
@@ -165,6 +172,45 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function visibleTextLength(text) {
+      const plain = String(text ?? '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`[^`]*`/g, ' ')
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+        .replace(/\[[^\]]*\]\([^)]*\)/g, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/[*_~]/g, '')
+      const cjk = (plain.match(/[\u3400-\u9fff]/g) ?? []).length
+      const words = (plain.match(/[A-Za-z0-9]+/g) ?? []).length
+      return cjk + words
+    }
+
+    function draftKey(root, doc) {
+      return `deepnovel.v2.draft.${root}.${doc.kind}.${doc.id}`
+    }
+
+    function loadDraft(root, doc) {
+      try {
+        const raw = localStorage.getItem(draftKey(root, doc))
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed.content === 'string' ? parsed : null
+      } catch {
+        return null
+      }
+    }
+
+    function saveDraft(root, doc, content) {
+      try {
+        localStorage.setItem(draftKey(root, doc), JSON.stringify({ content, at: Date.now() }))
+      } catch {}
+    }
+
+    function clearDraft(root, doc) {
+      try { localStorage.removeItem(draftKey(root, doc)) } catch {}
+    }
+
     function rememberRecent(path) {
       const next = [path, ...loadRecent().filter((item) => item !== path)].slice(0, 8)
       localStorage.setItem(RECENT_KEY, JSON.stringify(next))
@@ -211,7 +257,7 @@ window.__ModuleLoader__.load({
       return nodes
     }
 
-    function MarkdownPreview({ text, style }) {
+    function MarkdownPreview({ text, style, size = 'm', font = 'sans', width = 'normal' }) {
       const source = String(text ?? '')
       if (!source.trim()) return h('div', { style: style.muted }, '（空文档）')
       const blocks = []
@@ -619,9 +665,17 @@ window.__ModuleLoader__.load({
       { id: 'project', label: '项目', icon: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z' },
       { id: 'premise', label: '构思', icon: 'M12 3a6 6 0 0 0-4 10v3h8v-3a6 6 0 0 0-4-10zM9 20h6' },
       { id: 'style', label: '文风', icon: 'M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0' },
+      { id: 'references', label: '资料', icon: 'M4 5h6l2 2h8v12H4zM4 9h16' },
       { id: 'bible', label: '设定', icon: 'M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 0-3 3zM5 4v16' },
       { id: 'outline', label: '大纲', icon: 'M5 5h14M5 12h14M5 19h9' },
       { id: 'chapters', label: '章节', icon: 'M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5' },
+    ]
+
+    const REFERENCE_KINDS = [
+      ['canon', '原作'],
+      ['prior', '我的前作'],
+      ['research', '研究资料'],
+      ['idea', '灵感'],
     ]
 
     function PageIcon({ path, active }) {
@@ -659,6 +713,7 @@ window.__ModuleLoader__.load({
         project: `${counts.world + counts.characters}`,
         premise: '',
         style: `${Object.keys(map?.style ?? {}).length}`,
+        references: `${(map?.references ?? []).length}`,
         bible: `${counts.world + counts.characters}`,
         outline: `${counts.volumes}`,
         chapters: `${counts.manuscripts}/${counts.chapters}`,
@@ -834,12 +889,118 @@ window.__ModuleLoader__.load({
       )
     }
 
-    const STYLE_LABELS = {
-      pov: '视角', tense: '时态', voice: '叙述声音', diction: '用词', pacing: '节奏',
-      dialogueStyle: '对白', sensoryFocus: '感官重点', must: '必须', never: '禁止', adjust: '调整', notes: '备注',
+    function ReferencePage({ references = [], kind, setKind, query, setQuery, busy, onImport, onOpen, onRemove, style }) {
+      const needle = query.trim().toLowerCase()
+      const filtered = references.filter((item) => {
+        if (kind !== 'all' && item.kind !== kind) return false
+        if (!needle) return true
+        return `${item.title} ${(item.tags ?? []).join(' ')} ${item.kind}`.toLowerCase().includes(needle)
+      })
+      const counts = Object.fromEntries(REFERENCE_KINDS.map(([key]) => [key, references.filter((item) => item.kind === key).length]))
+      return h('div', { style: { display: 'grid', gap: 12, padding: 14, overflow: 'auto', alignContent: 'start' } },
+        (() => {
+          const extra = h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+            h('select', {
+              style: { ...style.input, width: 'auto', padding: '6px 8px', fontSize: 12 },
+              value: kind,
+              onChange: (event) => setKind(event.target.value),
+            }, h('option', { value: 'all' }, '全部'), ...REFERENCE_KINDS.map(([value, label]) => h('option', { key: value, value }, label))),
+            h(Btn, { kind: 'primary', disabled: busy, onClick: onImport }, busy ? '导入中…' : '导入资料目录'),
+          )
+          return h('div', { className: 'dn-page-head' },
+            h('h2', { className: 'dn-section-title' }, '资料库'),
+            h('span', { style: { flex: 1 } }),
+            extra,
+          )
+        })(),
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          ...REFERENCE_KINDS.map(([value, label]) => h('button', {
+            key: value,
+            type: 'button',
+            onClick: () => setKind(value),
+            style: { ...style.badge, cursor: 'pointer', background: kind === value ? 'var(--dsw-alias-brand-primary)' : undefined, color: kind === value ? '#fff' : undefined, borderColor: kind === value ? 'transparent' : undefined },
+          }, `${label} ${counts[value] ?? 0}`)),
+        ),
+        h('input', {
+          style: { ...style.input, maxWidth: 360 },
+          value: query,
+          placeholder: '按标题、标签筛选资料',
+          onChange: (event) => setQuery(event.target.value),
+        }),
+        filtered.length
+          ? h('div', { style: { display: 'grid', gap: 6 } },
+            ...filtered.map((item) => h('div', {
+              key: item.id,
+              className: 'dn-card',
+              style: { gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'center', cursor: 'pointer', gap: 10 },
+              onClick: () => onOpen(item),
+            },
+              h('div', { style: { display: 'grid', gap: 3, minWidth: 0 } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 } },
+                  h('strong', { style: { fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.title),
+                  h('span', { style: style.badge }, REFERENCE_KINDS.find(([key]) => key === item.kind)?.[1] ?? item.kind),
+                ),
+                h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, `${item.chars ?? 0} 字${(item.tags ?? []).length ? ` · ${item.tags.join(' / ')}` : ''}`),
+              ),
+              h('div', { style: { display: 'flex', gap: 4 } },
+                h('button', { type: 'button', style: style.addButton, onClick: (event) => { event.stopPropagation(); onOpen(item) } }, '查看'),
+                h('button', { type: 'button', style: style.addButton, onClick: (event) => { event.stopPropagation(); onRemove(item) } }, '删除'),
+              ),
+            )),
+          )
+          : h('div', { style: style.card },
+            h('div', { style: { fontWeight: 700 } }, '还没有资料'),
+            h('div', { style: style.muted }, '导入原作、前作、研究资料或灵感目录；资料只读，不会自动混进正文。'),
+            h('div', null, h(Btn, { kind: 'primary', disabled: busy, onClick: onImport }, '导入资料目录')),
+          ),
+      )
     }
 
-    function PageView({ map, page, style, onOpen, onTask, onSettings, onEditBook, onPlanBook, onNavigate = () => {} }) {
+    function DiffView({ diff, style }) {
+      const changes = Array.isArray(diff?.changes) ? diff.changes : []
+      if (!changes.length) return h('div', { style: style.muted }, '内容没有变化。')
+      const rows = []
+      for (const change of changes) {
+        if (change.before !== null && change.before !== undefined) {
+          rows.push(h('div', { key: `del-${change.line}`, style: { display: 'flex', gap: 6, padding: '2px 7px', background: 'color-mix(in srgb,var(--dsw-alias-state-error-primary) 9%,transparent)' } },
+            h('span', { style: { width: 34, flex: '0 0 auto', opacity: 0.4, textAlign: 'right', fontSize: 10 } }, String(change.line)),
+            h('span', { style: { width: 10, flex: '0 0 auto', opacity: 0.7 } }, '-'),
+            h('span', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: 11.5, lineHeight: 1.65, color: 'var(--dsw-alias-state-error-primary)' } }, change.before || ' '),
+          ))
+        }
+        if (change.after !== null && change.after !== undefined) {
+          rows.push(h('div', { key: `add-${change.line}`, style: { display: 'flex', gap: 6, padding: '2px 7px', background: 'color-mix(in srgb,var(--dsw-alias-state-success-primary) 9%,transparent)' } },
+            h('span', { style: { width: 34, flex: '0 0 auto', opacity: 0.4, textAlign: 'right', fontSize: 10 } }, String(change.line)),
+            h('span', { style: { width: 10, flex: '0 0 auto', opacity: 0.7 } }, '+'),
+            h('span', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: 11.5, lineHeight: 1.65, color: 'var(--dsw-alias-state-success-primary)' } }, change.after || ' '),
+          ))
+        }
+      }
+      return h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 8, overflow: 'auto', maxHeight: '52vh', background: 'var(--dsw-alias-bg-layer-1)' } },
+        h('div', { style: { display: 'flex', gap: 8, padding: '7px 9px', borderBottom: '1px solid var(--dsw-alias-border-l1)', fontSize: 11, opacity: 0.7 } },
+          h('span', null, `+${diff.linesAdded ?? 0}`),
+          h('span', null, `-${diff.linesRemoved ?? 0}`),
+          diff.truncated ? h('span', { style: { marginLeft: 'auto' } }, '变更过多，仅显示前 400 行') : null,
+        ),
+        ...rows,
+      )
+    }
+
+    const STYLE_LABELS = {
+      tone: '基调', pov: '视角', tense: '时态', voice: '叙述声音', diction: '用词', pacing: '节奏',
+      dialogueStyle: '对白', sensoryFocus: '感官重点', must: '必须', never: '禁止', adjust: '调整', notes: '备注',
+    }
+    const STYLE_VALUE_LABELS = {
+      pov: { 'third-limited': '第三人称限知', 'third-omniscient': '第三人称全知', first: '第一人称', 'first-person': '第一人称', second: '第二人称', 'second-person': '第二人称' },
+      tense: { past: '过去时', present: '现在时', future: '未来时' },
+    }
+    function styleValue(key, value) {
+      if (Array.isArray(value)) return value.join('；')
+      const text = String(value ?? '')
+      return STYLE_VALUE_LABELS[key]?.[text] ?? text
+    }
+
+    function PageView({ map, page, style, onOpen, onTask, onSettings, onEditBook, onPlanBook, onNavigate = () => {}, references = [], referenceKind = 'all', setReferenceKind = () => {}, referenceQuery = '', setReferenceQuery = () => {}, referenceBusy = false, onImportReference = () => {}, onOpenReference = () => {}, onRemoveReference = () => {} }) {
       const counts = pageCounts(map)
       const flow = map?.workflow ?? null
       const allowed = (key) => flow?.allowed?.[key] !== false
@@ -856,6 +1017,10 @@ window.__ModuleLoader__.load({
         h('span', { style: { flex: 1 } }),
         extra ?? null,
       )
+
+      if (page === 'references') {
+        return h(ReferencePage, { references, kind: referenceKind, setKind: setReferenceKind, query: referenceQuery, setQuery: setReferenceQuery, busy: referenceBusy, onImport: onImportReference, onOpen: onOpenReference, onRemove: onRemoveReference, style })
+      }
 
       if (page === 'project') {
         const cards = [
@@ -911,29 +1076,56 @@ window.__ModuleLoader__.load({
       }
 
       if (page === 'style') {
-        const keys = Object.keys(STYLE_LABELS)
-        const filled = keys.filter((key) => map?.style?.[key] !== undefined && map.style[key] !== '')
+        const scalarKeys = ['tone', 'pov', 'tense', 'voice', 'diction', 'pacing', 'dialogueStyle', 'sensoryFocus']
+        const listKeys = ['must', 'never', 'adjust']
+        const filledScalars = scalarKeys.filter((key) => map?.style?.[key] !== undefined && String(map.style[key] ?? '').trim() !== '')
+        const filledLists = listKeys.filter((key) => Array.isArray(map?.style?.[key]) ? map.style[key].length > 0 : String(map?.style?.[key] ?? '').trim() !== '')
+        const notes = String(map?.style?.notes ?? '').trim()
+        const actions = h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          taskButton('提炼文风', '提炼文风', '根据项目写作要求、已有正文或用户提供的样本，提炼可执行的文风字段；先给方案，确认后再改 manifest.style。', { gate: 'style' }),
+          taskButton('检查一致性', '检查文风一致性', '读取最近正文，找出与文风契约冲突的表达习惯，给具体修改建议；不要自动改正文。', { gate: 'style' }),
+        )
         return h('div', { style: { display: 'grid', gap: 12, padding: 14, overflow: 'auto', alignContent: 'start' } },
-          titleRow('文风'),
-          h('div', { style: style.card },
-            filled.length
-              ? h('div', null,
-                ...filled.map((key) => h('div', { key, style: { display: 'grid', gridTemplateColumns: '90px 1fr', gap: 8, fontSize: 12, borderTop: '1px solid var(--dsw-alias-border-l1)', padding: '5px 0' } },
-                  h('span', { style: { opacity: 0.55 } }, STYLE_LABELS[key] ?? key),
-                  h('span', { style: { whiteSpace: 'pre-wrap' } }, Array.isArray(map.style[key]) ? map.style[key].join('；') : String(map.style[key])),
-                )),
-              )
-              : h('div', null,
-                h('div', { style: { fontWeight: 700 } }, '还没有文风契约'),
-                h('div', { style: { marginTop: 8 } },
-                  taskButton('让 AI 提炼文风', '提炼文风', '根据项目写作要求、已有正文或用户提供的样本，提炼可执行的文风字段；先给方案，确认后再改 manifest.style。', { gate: 'style' }),
-                ),
-              ),
-            filled.length ? h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 } },
-              taskButton('让 AI 提炼', '提炼文风', '根据项目写作要求、已有正文或用户提供的样本，提炼可执行的文风字段；先给方案，确认后再改 manifest.style。', { gate: 'style' }),
-              taskButton('检查一致性', '检查文风一致性', '读取最近正文，找出与文风契约冲突的表达习惯，给具体修改建议；不要自动改正文。', { gate: 'style' }),
-            ) : null,
-          ),
+          titleRow('文风', actions),
+          (!filledScalars.length && !filledLists.length && !notes)
+            ? h('div', { style: style.card },
+              h('div', { style: { fontWeight: 700 } }, '还没有文风契约'),
+              h('div', { style: style.muted }, '从样本或已有正文里提炼视角、时态、叙述声音和节奏。'),
+              h('div', null, taskButton('让 AI 提炼文风', '提炼文风', '根据项目写作要求、已有正文或用户提供的样本，提炼可执行的文风字段；先给方案，确认后再改 manifest.style。', { gate: 'style' })),
+            )
+            : h('div', { style: { display: 'grid', gap: 12 } },
+              filledScalars.length
+                ? h('div', { style: style.card },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                    h('strong', { style: { fontSize: 13, flex: 1 } }, '叙事契约'),
+                    h('span', { className: 'dn-tree-count' }, String(filledScalars.length)),
+                  ),
+                  h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10 } },
+                    ...filledScalars.map((key) => h('div', { key, style: { borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 7, minWidth: 0 } },
+                      h('div', { style: { fontSize: 10, opacity: 0.5, marginBottom: 3 } }, STYLE_LABELS[key] ?? key),
+                      h('div', { style: { fontSize: 13, lineHeight: 1.6, overflowWrap: 'anywhere' } }, styleValue(key, map.style[key])),
+                    )),
+                  ),
+                )
+                : null,
+              filledLists.length
+                ? h('div', { style: style.card },
+                  h('div', { style: { fontWeight: 700 } }, '执行规则'),
+                  ...filledLists.map((key) => h('div', { key, style: { display: 'grid', gap: 5, borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 8 } },
+                    h('div', { style: { fontSize: 10, fontWeight: 700, opacity: 0.55 } }, STYLE_LABELS[key]),
+                    h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
+                      ...(Array.isArray(map.style[key]) ? map.style[key] : [map.style[key]]).map((item, index) => h('span', { key: index, style: { ...style.badge, whiteSpace: 'normal', lineHeight: 1.5, padding: '3px 8px' } }, String(item))),
+                    ),
+                  )),
+                )
+                : null,
+              notes
+                ? h('div', { style: style.card },
+                  h('div', { style: { fontWeight: 700 } }, '补充说明'),
+                  h('div', { style: { fontSize: 13, lineHeight: 1.75, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, notes),
+                )
+                : null,
+            ),
         )
       }
 
@@ -1093,7 +1285,7 @@ window.__ModuleLoader__.load({
         })
         .filter(Boolean)
       const headingIndexes = headings.map((item, index) => ({ ...item, index }))
-      const chars = String(text ?? '').replace(/\s/g, '').length
+      const chars = visibleTextLength(text)
       return h('div', { style: { display: 'grid', gap: 10 } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
           h('strong', { style: { fontSize: 13 } }, '文档信息'),
@@ -1176,9 +1368,29 @@ window.__ModuleLoader__.load({
       const [searchQuery, setSearchQuery] = useState('')
       const [searchResults, setSearchResults] = useState([])
       const [searchBusy, setSearchBusy] = useState(false)
+      const [referenceKind, setReferenceKind] = useState('all')
+      const [referenceQuery, setReferenceQuery] = useState('')
+      const [referenceBusy, setReferenceBusy] = useState(false)
+      const [referenceDoc, setReferenceDoc] = useState(null)
+      const [revisions, setRevisions] = useState([])
+      const [revisionDoc, setRevisionDoc] = useState(null)
+      const [revisionBusy, setRevisionBusy] = useState(false)
+      const [proposals, setProposals] = useState([])
+      const [selectedProposal, setSelectedProposal] = useState(null)
+      const [proposalBusy, setProposalBusy] = useState(false)
+      const [draftNotice, setDraftNotice] = useState(null)
+      const [exportForm, setExportForm] = useState({ scope: 'all', volumeId: '', chapterId: '' })
+      const [tasks, setTasks] = useState([])
       const [aiTask, setAiTask] = useState(null)
       const [lastSessionId, setLastSessionId] = useState('')
       const [command, setCommand] = useState('')
+      const [sidebarOpen, setSidebarOpen] = useState(true)
+      const [theme, setTheme] = useState(() => { try { return localStorage.getItem('deepnovel.v2.theme') ?? 'default' } catch { return 'default' } })
+      const [readingSize, setReadingSize] = useState(() => { try { return localStorage.getItem('deepnovel.v2.readingSize') ?? 'm' } catch { return 'm' } })
+      const [readingFont, setReadingFont] = useState(() => { try { return localStorage.getItem('deepnovel.v2.readingFont') ?? 'sans' } catch { return 'sans' } })
+      const [readingWidth, setReadingWidth] = useState(() => { try { return localStorage.getItem('deepnovel.v2.readingWidth') ?? 'normal' } catch { return 'normal' } })
+      const [focusMode, setFocusMode] = useState(false)
+      const [inspectorOpen, setInspectorOpen] = useState(() => typeof window === 'undefined' || (window.innerWidth ?? 1600) >= 1250)
       const [editorMode, setEditorMode] = useState('edit')
       const [saveState, setSaveState] = useState('saved')
       const dirty = Boolean(doc && text !== (doc.content ?? ''))
@@ -1192,8 +1404,22 @@ window.__ModuleLoader__.load({
       }, [activity])
 
       useEffect(() => {
+        if (!focusMode) return undefined
+        const onKey = (event) => { if (event.key === 'Escape') setFocusMode(false) }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [focusMode])
+
+
+      useEffect(() => {
         setLastSessionId(root ? localStorage.getItem(`deepnovel.v2.session.${root}`) ?? '' : '')
         setAiTask(null)
+        try {
+          const saved = JSON.parse(localStorage.getItem(`deepnovel.v2.tasks.${root}`) ?? '[]')
+          setTasks(Array.isArray(saved) ? saved.filter((item) => item && item.id && item.title).slice(0, 20) : [])
+        } catch {
+          setTasks([])
+        }
       }, [root])
 
       const dispatchTask = async (prompt) => {
@@ -1216,9 +1442,20 @@ window.__ModuleLoader__.load({
         return data
       }, [])
 
+      const loadProposals = useCallback(async (target = root) => {
+        if (!target) return []
+        try {
+          const data = await api(`/deepnovel/api/proposals?projectRoot=${encodeURIComponent(target)}`)
+          setProposals(data.proposals ?? [])
+          return data.proposals ?? []
+        } catch {
+          return []
+        }
+      }, [root])
+
       useEffect(() => {
         if (!root) return undefined
-        const refresh = () => { loadTree(root).catch(() => {}) }
+        const refresh = () => { loadTree(root).catch(() => {}); loadProposals(root).catch(() => {}) }
         const timer = setInterval(refresh, 5000)
         const onFocus = () => refresh()
         const onVisibility = () => { if (document.visibilityState === 'visible') refresh() }
@@ -1248,6 +1485,8 @@ window.__ModuleLoader__.load({
           setDoc((current) => current && current.kind === baseDoc.kind && current.id === baseDoc.id
             ? { ...current, content: value, hash: result.hash }
             : current)
+          clearDraft(root, baseDoc)
+          setDraftNotice(null)
           setSaveState('saved')
         } catch (e) {
           setSaveState('error')
@@ -1268,6 +1507,7 @@ window.__ModuleLoader__.load({
         setError('')
         try {
           await loadTree(path)
+          await loadProposals(path)
           localStorage.setItem(ROOT_KEY, path)
           setRoot(path)
           setPathDraft(path)
@@ -1346,6 +1586,8 @@ window.__ModuleLoader__.load({
           setText(data.content ?? '')
           setEditorMode('preview')
           setSaveState('saved')
+          const draft = data.kind === 'ledger' ? null : loadDraft(root, data)
+          setDraftNotice(draft && draft.content !== (data.content ?? '') ? draft : null)
           setActivity(`已打开 ${kindLabel(data.kind)}`)
         } catch (e) {
           setError(String(e?.message ?? e))
@@ -1411,13 +1653,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const downloadExport = async () => {
+      const downloadExport = async (options = {}) => {
         setBusy(true)
         setError('')
         try {
           const data = await api('/deepnovel/api/export', {
             method: 'POST',
-            body: JSON.stringify({ projectRoot: root }),
+            body: JSON.stringify({ projectRoot: root, ...options }),
           })
           const blob = new Blob([data.content], { type: 'text/markdown;charset=utf-8' })
           const url = URL.createObjectURL(blob)
@@ -1452,6 +1694,213 @@ window.__ModuleLoader__.load({
         }
       }
 
+
+      const importReference = async () => {
+        const picked = await pickDirectory()
+        if (!picked.path) return
+        setReferenceBusy(true)
+        setError('')
+        try {
+          const result = await api('/deepnovel/api/references/import', {
+            method: 'POST',
+            body: JSON.stringify({ projectRoot: root, sourcePath: picked.path, kind: referenceKind === 'all' ? 'research' : referenceKind }),
+          })
+          await loadTree(root)
+          setActivity(`已导入 ${result.imported} 份资料`)
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setReferenceBusy(false)
+        }
+      }
+
+      const openReference = async (item) => {
+        setReferenceBusy(true)
+        setError('')
+        try {
+          const data = await api(`/deepnovel/api/reference?projectRoot=${encodeURIComponent(root)}&id=${encodeURIComponent(item.id)}`)
+          setReferenceDoc(data)
+          setDialog('reference')
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setReferenceBusy(false)
+        }
+      }
+
+      const removeReference = async (item) => {
+        if (!window.confirm(`删除资料「${item.title}」？`)) return
+        setReferenceBusy(true)
+        try {
+          await api('/deepnovel/api/references/delete', {
+            method: 'POST',
+            body: JSON.stringify({ projectRoot: root, id: item.id }),
+          })
+          await loadTree(root)
+          setReferenceDoc(null)
+          setDialog(null)
+          setActivity('资料已删除')
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setReferenceBusy(false)
+        }
+      }
+
+
+      const openRevisions = async () => {
+        if (!doc) return
+        setRevisionBusy(true)
+        setError('')
+        try {
+          const data = await api(`/deepnovel/api/revisions?projectRoot=${encodeURIComponent(root)}&kind=${encodeURIComponent(doc.kind)}&id=${encodeURIComponent(doc.id)}`)
+          setRevisions(data.revisions ?? [])
+          setRevisionDoc(null)
+          setDialog('revisions')
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setRevisionBusy(false)
+        }
+      }
+
+      const openRevision = async (item) => {
+        setRevisionBusy(true)
+        try {
+          const data = await api(`/deepnovel/api/revision?projectRoot=${encodeURIComponent(root)}&name=${encodeURIComponent(item.name)}`)
+          setRevisionDoc(data)
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setRevisionBusy(false)
+        }
+      }
+
+      const restoreRevision = async () => {
+        if (!doc || !revisionDoc) return
+        if (!window.confirm('用这个修订覆盖当前文档？当前版本会先进入修订历史。')) return
+        await saveDoc(doc, revisionDoc.content)
+        setText(revisionDoc.content)
+        setRevisionDoc(null)
+        setRevisions([])
+        setDialog(null)
+        setActivity('已恢复修订')
+      }
+
+
+      const openProposals = async () => {
+        setProposalBusy(true)
+        setError('')
+        await loadProposals()
+        setSelectedProposal(null)
+        setDialog('proposals')
+        setProposalBusy(false)
+      }
+
+      const applyPendingProposal = async (proposal) => {
+        if (!proposal) return
+        setProposalBusy(true)
+        try {
+          const result = await api('/deepnovel/api/apply', {
+            method: 'POST',
+            body: JSON.stringify({ projectRoot: root, proposalId: proposal.id, confirm: true }),
+          })
+          if (result.applied === false) setError(`未应用：${result.reason ?? '内容已变化'}`)
+          else setActivity('提案已应用')
+          await loadTree(root)
+          await loadProposals(root)
+          setSelectedProposal(null)
+          if (doc && result.applied !== false) await openNode({ kind: doc.kind, id: doc.id }, { force: true })
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setProposalBusy(false)
+        }
+      }
+
+      const rejectPendingProposal = async (proposal) => {
+        if (!proposal) return
+        setProposalBusy(true)
+        try {
+          await api('/deepnovel/api/proposals/reject', {
+            method: 'POST',
+            body: JSON.stringify({ projectRoot: root, id: proposal.id }),
+          })
+          setSelectedProposal(null)
+          await loadProposals(root)
+          setActivity('提案已拒绝')
+        } catch (e) {
+          setError(String(e?.message ?? e))
+        } finally {
+          setProposalBusy(false)
+        }
+      }
+
+
+      const persistTasks = (next) => {
+        setTasks(next)
+        try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next.slice(0, 20))) } catch {}
+      }
+
+      const rememberTask = (task) => {
+        setTasks((current) => {
+          const next = [task, ...current].slice(0, 20)
+          try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next)) } catch {}
+          return next
+        })
+      }
+
+      const patchTask = (id, patch) => {
+        setTasks((current) => {
+          const next = current.map((item) => item.id === id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item)
+          try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next)) } catch {}
+          return next
+        })
+      }
+
+      const retryTask = async (task) => {
+        if (!task) return
+        patchTask(task.id, { state: 'sending' })
+        setError('')
+        try {
+          const sessionId = await dispatchTask(task.prompt)
+          setLastSessionId(sessionId)
+          try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
+          patchTask(task.id, { state: 'sent', sessionId })
+          setActivity('任务已重新发送')
+        } catch (e) {
+          const message = String(e?.message ?? e)
+          patchTask(task.id, { state: 'failed', error: message })
+          setError(`重新发送失败：${message}`)
+        }
+      }
+
+
+      const cancelTask = async (task) => {
+        const sessionId = task?.sessionId || lastSessionId
+        if (!sessionId) {
+          patchTask(task?.id, { state: 'failed', error: '没有可停止的会话' })
+          return
+        }
+        try {
+          const sessions = clientScope?.get?.('sessions')
+          if (!sessions?.retain) throw new Error('会话服务不可用')
+          const reference = sessions.retain(sessionId, { source: 'controllerOperation' })
+          try {
+            const binding = reference.binding ?? await reference.ready
+            const result = await binding?.session?.cancel?.()
+            if (result && result.ok === false) throw new Error(result.error?.message ?? '停止失败')
+          } finally {
+            try { reference.release?.() } catch {}
+          }
+          patchTask(task.id, { state: 'cancelled' })
+          setAiTask({ state: 'cancelled', title: task.title })
+          setActivity('任务已停止')
+        } catch (e) {
+          setError(`停止任务失败：${String(e?.message ?? e)}`)
+        }
+      }
+
       const openTask = (title, body, options = {}) => {
         const service = uiWorkspace()
         if (!service?.startSession && !service?.connectWorkspace) {
@@ -1459,6 +1908,9 @@ window.__ModuleLoader__.load({
           return
         }
         const prompt = buildTaskPrompt(title, root, body)
+        const taskId = `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+        const task = { id: taskId, title, body, prompt, state: 'sending', createdAt: new Date().toISOString() }
+        rememberTask(task)
         setError('')
         setActivity('正在创建写作会话并发送任务…')
         setAiTask({ state: 'sending', title })
@@ -1466,10 +1918,12 @@ window.__ModuleLoader__.load({
           setLastSessionId(sessionId)
           try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
           setAiTask({ state: 'sent', title, sessionId })
+          patchTask(taskId, { state: 'sent', sessionId })
           setActivity('任务已发送到正常写作对话')
         }).catch((error) => {
           const message = String(error?.message ?? error)
           setAiTask({ state: 'failed', title, error: message })
+          patchTask(taskId, { state: 'fallback', error: message })
           setActivity('任务未能自动发送')
           setError(`无法自动发送任务：${message}。已保留任务文本；请打开写作对话后手动发送。`)
           try { navigator.clipboard?.writeText(prompt) } catch {}
@@ -1525,6 +1979,7 @@ window.__ModuleLoader__.load({
           h('span', { style: { width: 27, height: 27, borderRadius: 8, display: 'grid', placeItems: 'center', background: 'var(--dsw-alias-brand-primary)', color: '#fff', fontSize: 12, fontWeight: 800 } }, 'D'),
           h('strong', { style: { whiteSpace: 'nowrap', fontSize: 15, letterSpacing: 0.2 } }, 'DeepNovel'),
         ),
+        tree?.map ? h(Btn, { title: sidebarOpen ? '隐藏侧栏' : '显示侧栏', onClick: () => setSidebarOpen((value) => !value) }, sidebarOpen ? '☰' : '▤') : null,
         tree?.map ? h('button', {
           type: 'button', title: '点击复制项目路径', onClick: copyPath,
           style: { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left', minWidth: 0, flex: 1, padding: '0 4px' },
@@ -1543,16 +1998,20 @@ window.__ModuleLoader__.load({
           h(Btn, { kind: 'primary', disabled: busy || !command.trim(), onClick: runCommand }, '发送'),
         ) : null,
         tree?.map ? h('span', { style: { ...style.badge, color: 'var(--dsw-alias-brand-primary)', borderColor: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 35%, transparent)' } }, `阶段 · ${stageLabel(tree.map.workflow?.stage ?? tree.map.stage)}`) : null,
-        aiTask ? h('span', { style: style.badge }, `${aiTask.state === 'sending' ? 'AI 发送中' : aiTask.state === 'sent' ? 'AI 已发送' : 'AI 发送失败'}`) : null,
+        aiTask ? h('span', { style: style.badge }, `${aiTask.state === 'sending' ? 'AI 发送中' : aiTask.state === 'sent' ? 'AI 已发送' : aiTask.state === 'cancelled' ? 'AI 已停止' : 'AI 发送失败'}`) : null,
         (lastSessionId || aiTask?.sessionId) ? h(Btn, { onClick: () => {
           const sessionId = aiTask?.sessionId || lastSessionId
           try { uiWorkspace()?.openSession?.(sessionId) } catch (e) { setError(String(e?.message ?? e)) }
         } }, '写作对话') : null,
+        tree?.map && tasks.length ? h(Btn, { onClick: () => setDialog('tasks'), title: '任务记录' }, `任务 ${tasks.filter((item) => item.state === 'failed' || item.state === 'fallback').length || tasks.length}`) : null,
+        doc ? h(Btn, { title: focusMode ? '退出专注模式 (Esc)' : '专注写作', onClick: () => setFocusMode((value) => !value) }, focusMode ? '退出专注' : '专注') : null,
+        (doc || proposals.length) ? h(Btn, { title: inspectorOpen ? '隐藏文档信息' : '显示文档信息', onClick: () => setInspectorOpen((value) => !value) }, inspectorOpen ? '信息 ✓' : '信息') : null,
+        tree?.map && proposals.length ? h(Btn, { onClick: openProposals, title: '待处理写提案' }, `提案 ${proposals.length}`) : null,
         tree?.map ? h(Btn, { title: '项目操作', onClick: () => setDialog('menu') }, '⋯') : null,
       )
 
       if (!root || !tree) {
-        return h('div', { className: 'dn-app' },
+        return h('div', { className: `dn-app${focusMode ? ' dn-focus' : ''}`, 'data-theme': theme },
           header,
           h(Welcome, {
             draft: pathDraft, setDraft: setPathDraft, recent, busy, error, activity, style,
@@ -1587,10 +2046,10 @@ window.__ModuleLoader__.load({
         : -1
       const lines = text ? text.split(/\r?\n/).length : 0
 
-      return h('div', { className: 'dn-app' },
+      return h('div', { className: `dn-app${focusMode ? ' dn-focus' : ''}`, 'data-theme': theme },
         header,
         h('div', { className: 'dn-body' },
-          h(Sidebar, { map, page, doc, onPage: (nextPage) => { if (dirty && !window.confirm('当前修改还没有保存，确定离开？')) return; setPage(nextPage); setDoc(null); setProposal(null) }, onOpen: openNode, style }),
+          sidebarOpen ? h(Sidebar, { map, page, doc, onPage: (nextPage) => { if (dirty && !window.confirm('当前修改还没有保存，确定离开？')) return; setPage(nextPage); setDoc(null); setProposal(null) }, onOpen: openNode, style }) : null,
           h('div', { className: 'dn-stage' },
             h('div', { className: 'dn-stage-inner' },
             !doc ? h(FlowGuide, { map, onAction: runWorkflow, style }) : null,
@@ -1622,8 +2081,15 @@ window.__ModuleLoader__.load({
                   className: editorMode === mode ? 'active' : '',
                 }, mode === 'edit' ? '编辑' : mode === 'split' ? '分栏' : '预览')),
               ) : null,
+              doc.kind !== 'ledger' ? h(Btn, { title: '阅读排版', onClick: () => setDialog('typography') }, `排版 ${readingSize.toUpperCase()}`) : null,
+              h(Btn, { disabled: revisionBusy, onClick: openRevisions }, revisionBusy ? '读取中…' : '历史'),
               h(Btn, { onClick: () => openNode({ kind: doc.kind, id: doc.id }, { force: true }) }, '重新读取'),
               doc.kind !== 'ledger' ? h(Btn, { kind: 'primary', disabled: !dirty || saveState === 'saving', onClick: () => saveDoc(doc, text), title: 'Ctrl/⌘ + S' }, saveState === 'saving' ? '保存中…' : '保存') : null,
+            ) : null,
+            draftNotice ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid var(--dsw-alias-state-warning-primary)', borderRadius: 8, fontSize: 12 } },
+              h('span', { style: { flex: 1 } }, '发现上次未保存的本地草稿。'),
+              h(Btn, { onClick: () => { setText(draftNotice.content); setDraftNotice(null); setActivity('已恢复本地草稿') } }, '恢复草稿'),
+              h(Btn, { onClick: () => { clearDraft(root, doc); setDraftNotice(null) } }, '丢弃'),
             ) : null,
             doc
               ? doc.kind === 'ledger'
@@ -1632,8 +2098,14 @@ window.__ModuleLoader__.load({
                 editorMode !== 'preview' ? h('textarea', {
                   style: style.textarea,
                   value: text,
-                  placeholder: '用 Markdown 编辑。Ctrl/⌘ + Enter 生成修改提案。',
-                  onChange: (event) => { setText(event.target.value); setProposal(null) },
+                  placeholder: '用 Markdown 编辑；停止输入后自动保存，Ctrl/⌘ + S 立即保存。',
+                  onChange: (event) => {
+                    const value = event.target.value
+                    setText(value)
+                    setProposal(null)
+                    setDraftNotice(null)
+                    saveDraft(root, doc, value)
+                  },
                   onKeyDown: (event) => {
                     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
                       event.preventDefault()
@@ -1642,24 +2114,26 @@ window.__ModuleLoader__.load({
                   },
                 }) : null,
                 editorMode !== 'edit' ? h('div', { style: { ...style.previewPane, display: 'block' } },
-                  h(MarkdownPreview, { text, style }),
+                  h(MarkdownPreview, { text, style, size: readingSize, font: readingFont, width: readingWidth }),
                 ) : null,
               )
               : h(PageView, { map, page, style, onOpen: openNode, onTask: openTask, onPlanBook: planBook, onNavigate: setPage,
+              references: map.references ?? [], referenceKind, setReferenceKind, referenceQuery, setReferenceQuery, referenceBusy,
+              onImportReference: importReference, onOpenReference: openReference, onRemoveReference: removeReference,
               onSettings: () => {
                 setForm({ title: map.title, genre: map.genre, language: map.language, notes: map.notes ?? '' })
                 setDialog('settings')
               }, onEditBook: () => openNode({ kind: 'book', id: 'book' }) }),
             h(ErrorBox, { message: error }),
             h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
-              h('span', { style: style.muted }, doc ? `${text.replace(/\s/g, '').length} 字 · ${lines} 行` : '未选择文档'),
+              h('span', { style: style.muted }, doc ? `${visibleTextLength(text)} 字 · ${lines} 行` : '未选择文档'),
               h('span', { style: { flex: 1 } }),
               activity ? h('span', { style: style.muted }, activity) : null,
               busy ? h('span', { style: style.muted }, '处理中…') : null,
             ),
             ),
           ),
-          (proposal || doc) ? h('div', { className: 'dn-inspector' },
+          (proposal || doc) && inspectorOpen ? h('div', { className: 'dn-inspector' },
             proposal
               ? h(ProposalPanel, { proposal, onApply: applyProposal, onDiscard: () => setProposal(null), busy, style })
               : h(DocumentContext, { doc, text, style, onJump: (index) => { setEditorMode('preview'); setTimeout(() => document.getElementById(`dn-heading-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30) } }),
@@ -1670,9 +2144,10 @@ window.__ModuleLoader__.load({
         },
           h('div', { style: { display: 'grid', gap: 6 } },
             h(Btn, { onClick: () => { setDialog(null); setSearchQuery(''); setSearchResults([]); setDialog('search') } }, '搜索项目'),
-            h(Btn, { disabled: busy, onClick: () => { setDialog(null); downloadExport() } }, '导出 Markdown'),
+            h(Btn, { disabled: busy, onClick: () => { setDialog(null); setExportForm({ scope: 'all', volumeId: '', chapterId: '' }); setDialog('export') } }, '导出 Markdown'),
             h(Btn, { onClick: () => { setDialog(null); setForm({ title: tree.map.title, genre: tree.map.genre, language: tree.map.language, notes: tree.map.notes ?? '' }); setDialog('settings') } }, '项目设置'),
             h(Btn, { disabled: busy, onClick: async () => { setDialog(null); await loadTree(root); if (doc) await openNode({ kind: doc.kind, id: doc.id }, { force: true }) } }, '刷新项目'),
+            h(Btn, { onClick: () => { const next = theme === 'paper' ? 'default' : 'paper'; setTheme(next); try { localStorage.setItem('deepnovel.v2.theme', next) } catch {}; setDialog(null) } }, theme === 'paper' ? '切换清爽主题' : '切换暖色主题'),
             h('div', { style: { height: 1, background: 'var(--dsw-alias-border-l1)', margin: '2px 0' } }),
             h(Btn, { onClick: () => { if (dirty && !window.confirm('当前修改未提交，确定换项目？')) return; setRoot(''); setTree(null); setDoc(null); setText(''); setProposal(null); setDialog(null); setActivity('') } }, '换项目'),
           ),
@@ -1704,7 +2179,164 @@ window.__ModuleLoader__.load({
               h('div', { style: { fontSize: 11, fontFamily: 'monospace', opacity: 0.6 } }, `${result.path}:${result.line}`),
               h('div', { style: { fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 } }, result.context),
             )
-          }) : h('div', { style: style.muted }, searchQuery ? '没有结果。' : '输入关键词开始搜索。')),
+          }) : [h('div', { key: 'search-empty', style: style.muted }, searchQuery ? '没有结果。' : '输入关键词开始搜索。')]),
+        ) : null,
+        dialog === 'tasks' ? h(Modal, {
+          title: '任务记录', subtitle: '写作台发送到 DSH 会话的任务；失败可重试。', onClose: () => setDialog(null), width: 720,
+        },
+          tasks.length
+            ? h('div', { style: { display: 'grid', gap: 6, maxHeight: '60vh', overflow: 'auto' } },
+              ...tasks.map((item) => h('div', { key: item.id, className: 'dn-card', style: { gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'center', gap: 8 } },
+                h('div', { style: { minWidth: 0 } },
+                  h('div', { style: { fontWeight: 600, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.title),
+                  h('div', { style: { fontSize: 10, opacity: 0.55 } }, `${item.state === 'sent' ? '已发送' : item.state === 'sending' ? '发送中' : item.state === 'cancelled' ? '已停止' : item.state === 'fallback' ? '已回退预填' : '发送失败'} · ${String(item.createdAt ?? '').replace('T', ' ').slice(0, 16)}`),
+                ),
+                h('div', { style: { display: 'flex', gap: 4 } },
+                  item.state === 'failed' || item.state === 'fallback' ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
+                  item.state === 'sent' || item.state === 'sending' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
+                  item.sessionId ? h(Btn, { onClick: () => { try { uiWorkspace()?.openSession?.(item.sessionId) } catch {} } }, '打开对话') : null,
+                ),
+              )),
+            )
+            : h('div', { style: style.muted }, '还没有任务记录。'),
+        ) : null,
+        dialog === 'proposals' ? h(Modal, {
+          title: '待处理提案', subtitle: 'AI 生成的写提案，确认后才写入项目。', onClose: () => { setDialog(null); setSelectedProposal(null) }, width: 960,
+        },
+          proposals.length
+            ? h('div', { style: { display: 'grid', gridTemplateColumns: '210px minmax(0,1fr)', gap: 12, minHeight: 380 } },
+              h('div', { style: { display: 'grid', gap: 3, alignContent: 'start', maxHeight: '62vh', overflow: 'auto', borderRight: '1px solid var(--dsw-alias-border-l1)', paddingRight: 8 } },
+                ...proposals.map((item) => h('button', {
+                  key: item.id,
+                  type: 'button',
+                  onClick: () => setSelectedProposal(item),
+                  style: {
+                    ...style.treeRow,
+                    textAlign: 'left', padding: '8px 7px', whiteSpace: 'normal',
+                    background: selectedProposal?.id === item.id ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
+                    boxShadow: selectedProposal?.id === item.id ? 'inset 2px 0 0 var(--dsw-alias-brand-primary)' : 'none',
+                  },
+                },
+                  h('div', { style: { fontWeight: 600, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${kindLabel(item.kind)}${item.targetId ? ` · ${item.targetId}` : ''}`),
+                  h('div', { style: { fontSize: 10, opacity: 0.5 } }, item.type === 'create' ? '创建提案' : '修改提案'),
+                )),
+              ),
+              selectedProposal
+                ? h('div', { style: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 } },
+                  h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                    h('div', { style: { minWidth: 0, flex: 1 } },
+                      h('div', { style: { fontWeight: 700, fontSize: 14 } }, `${selectedProposal.type === 'create' ? '创建提案' : '修改提案'} · ${kindLabel(selectedProposal.kind)}`),
+                      h('div', { style: { fontSize: 10, opacity: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, selectedProposal.path ?? selectedProposal.targetId ?? ''),
+                    ),
+                    h(Btn, { kind: 'primary', disabled: proposalBusy, onClick: () => applyPendingProposal(selectedProposal) }, proposalBusy ? '处理中…' : '应用'),
+                    h(Btn, { disabled: proposalBusy, onClick: () => rejectPendingProposal(selectedProposal) }, '拒绝'),
+                  ),
+                  selectedProposal.diff?.changes?.length
+                    ? h(DiffView, { diff: selectedProposal.diff, style })
+                    : h('div', { style: { minHeight: 240, maxHeight: '52vh', overflow: 'auto', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 8, padding: '12px 14px' } },
+                      h('div', { style: { fontSize: 11, opacity: 0.55, marginBottom: 8 } }, '创建提案 · 确认后生成对象和正文'),
+                      h(MarkdownPreview, { text: selectedProposal.contentPreview || '', style }),
+                    ),
+                )
+                : h('div', { style: style.muted }, '选择左侧提案查看内容。'),
+            )
+            : h('div', { style: style.muted }, proposalBusy ? '读取中…' : '没有待处理提案。'),
+        ) : null,
+        dialog === 'revisions' ? h(Modal, {
+          title: '修订历史', subtitle: `${kindLabel(doc?.kind ?? '')} · ${doc?.title ?? ''}`, onClose: () => { setDialog(null); setRevisionDoc(null); setRevisions([]) }, width: 880,
+        },
+          revisions.length
+            ? h('div', { style: { display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 10, minHeight: 320 } },
+              h('div', { style: { display: 'grid', gap: 3, alignContent: 'start', maxHeight: '60vh', overflow: 'auto' } },
+                ...revisions.map((item) => h('button', {
+                  key: item.name,
+                  type: 'button',
+                  onClick: () => openRevision(item),
+                  style: {
+                    ...style.treeRow,
+                    background: revisionDoc?.name === item.name ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
+                  },
+                }, item.stamp))),
+              h('div', { style: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 } },
+                revisionDoc
+                  ? h('div', null,
+                    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                      h('span', { style: style.muted }, revisionDoc.name),
+                      h('span', { style: { flex: 1 } }),
+                      h(Btn, { kind: 'primary', onClick: restoreRevision }, '恢复此版本'),
+                    ),
+                    h('div', { style: { maxHeight: '48vh', overflow: 'auto', borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 8, marginTop: 6 } }, h(MarkdownPreview, { text: revisionDoc.content ?? '', style })),
+                  )
+                  : h('div', { style: style.muted }, '选择左侧修订查看内容。'),
+              ),
+            )
+            : h('div', { style: style.muted }, revisionBusy ? '读取中…' : '还没有修订历史。'),
+        ) : null,
+        dialog === 'reference' && referenceDoc ? h(Modal, {
+          title: referenceDoc.title, subtitle: `${REFERENCE_KINDS.find(([key]) => key === referenceDoc.kind)?.[1] ?? referenceDoc.kind} · ${referenceDoc.chars ?? 0} 字`, onClose: () => { setDialog(null); setReferenceDoc(null) }, width: 840,
+        },
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+            h('span', { style: style.muted }, '资料只读；引用时注明来源。'),
+            h('span', { style: { flex: 1 } }),
+            h(Btn, { onClick: () => removeReference(referenceDoc) }, '删除资料'),
+          ),
+          h('div', { style: { maxHeight: '60vh', overflow: 'auto', paddingTop: 10 } }, h(MarkdownPreview, { text: referenceDoc.content ?? '', style })),
+        ) : null,
+        dialog === 'typography' ? h(Modal, {
+          title: '阅读排版', subtitle: '只影响当前设备的阅读预览。', onClose: () => setDialog(null), width: 420,
+        },
+          h(Field, { label: '字号' },
+            h('select', { style: style.input, value: readingSize, onChange: (e) => { const value = e.target.value; setReadingSize(value); try { localStorage.setItem('deepnovel.v2.readingSize', value) } catch {} } },
+              h('option', { value: 's' }, '小'),
+              h('option', { value: 'm' }, '中'),
+              h('option', { value: 'l' }, '大'),
+            ),
+          ),
+          h(Field, { label: '字体' },
+            h('select', { style: style.input, value: readingFont, onChange: (e) => { const value = e.target.value; setReadingFont(value); try { localStorage.setItem('deepnovel.v2.readingFont', value) } catch {} } },
+              h('option', { value: 'sans' }, '界面字体'),
+              h('option', { value: 'serif' }, '宋体 / 衬线'),
+            ),
+          ),
+          h(Field, { label: '版心宽度' },
+            h('select', { style: style.input, value: readingWidth, onChange: (e) => { const value = e.target.value; setReadingWidth(value); try { localStorage.setItem('deepnovel.v2.readingWidth', value) } catch {} } },
+              h('option', { value: 'narrow' }, '窄'),
+              h('option', { value: 'normal' }, '标准'),
+              h('option', { value: 'wide' }, '宽'),
+            ),
+          ),
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end' } }, h(Btn, { kind: 'primary', onClick: () => setDialog(null) }, '完成')),
+        ) : null,
+        dialog === 'export' ? h(Modal, {
+          title: '导出 Markdown', subtitle: '可按整本、卷或单章导出。', onClose: () => setDialog(null), width: 440,
+        },
+          h(Field, { label: '范围' },
+            h('select', { style: style.input, value: exportForm.scope, onChange: (e) => setExportForm((current) => ({ ...current, scope: e.target.value })) },
+              h('option', { value: 'all' }, '整本'),
+              h('option', { value: 'volume' }, '按卷'),
+              h('option', { value: 'chapter' }, '单章'),
+            ),
+          ),
+          exportForm.scope === 'volume' ? h(Field, { label: '卷' },
+            h('select', { style: style.input, value: exportForm.volumeId, onChange: (e) => setExportForm((current) => ({ ...current, volumeId: e.target.value })) },
+              h('option', { value: '' }, '选择卷'),
+              ...(map?.plot?.volumes ?? []).map((volume) => h('option', { key: volume.id, value: volume.id }, volume.title)),
+            ),
+          ) : null,
+          exportForm.scope === 'chapter' ? h(Field, { label: '章节' },
+            h('select', { style: style.input, value: exportForm.chapterId, onChange: (e) => setExportForm((current) => ({ ...current, chapterId: e.target.value })) },
+              h('option', { value: '' }, '选择章节'),
+              ...(map?.plot?.volumes ?? []).flatMap((volume) => (volume.chapters ?? []).map((chapter) => h('option', { key: chapter.id, value: chapter.id }, `${volume.title} · ${chapter.order}. ${chapter.title}`))),
+            ),
+          ) : null,
+          h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
+            h(Btn, { onClick: () => setDialog(null) }, '取消'),
+            h(Btn, {
+              kind: 'primary',
+              disabled: busy || (exportForm.scope === 'volume' && !exportForm.volumeId) || (exportForm.scope === 'chapter' && !exportForm.chapterId),
+              onClick: () => { const options = { scope: exportForm.scope, volumeId: exportForm.volumeId, chapterId: exportForm.chapterId }; setDialog(null); downloadExport(options) },
+            }, '导出'),
+          ),
         ) : null,
         dialog === 'settings' ? h(Modal, {
           title: '项目设置', subtitle: '文风由 Agent 通过 novel_style 维护；这里改项目元数据和写作要求。', onClose: () => setDialog(null), width: 540,
@@ -1728,7 +2360,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      __test: { App, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, Sidebar, StepRail, PageView, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
+      __test: { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, StepRail, PageView, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
       inject: ['slots'],
       apply(ctx) {
         clientScope = ctx

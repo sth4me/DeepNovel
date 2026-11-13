@@ -132,6 +132,20 @@ export class FileStore {
     }
   }
 
+  async listRevisions(relativePath) {
+    const normalized = String(relativePath ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
+    if (!normalized) return []
+    const suffix = `-${normalized.replace(/[\\/]/g, '__')}`
+    const entries = await readdir(this.path(this.revisionsDir), { withFileTypes: true }).catch(() => [])
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+      .map((entry) => {
+        const stamp = entry.name.slice(0, entry.name.length - suffix.length)
+        return { name: `${this.revisionsDir}/${entry.name}`, file: normalized, stamp, at: stamp.replace(/-/g, ':') }
+      })
+      .sort((left, right) => right.stamp.localeCompare(left.stamp))
+  }
+
   async backup(relativePath, content) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const target = `${this.revisionsDir}/${stamp}-${relativePath.replace(/[\\/]/g, '__')}`

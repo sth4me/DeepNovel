@@ -2,6 +2,7 @@
 import { resolve } from 'node:path'
 import { Project } from './project.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
+import { listReferences, readReference, searchReferences } from './references.js'
 import { withProjectLock } from './locks.js'
 
 function textRender(_args, value) {
@@ -170,6 +171,39 @@ export function registerWritingTools(ctx) {
         }
       }
       return { query, total: results.length, results }
+    },
+  })
+
+  register({
+    name: 'novel_reference',
+    description: '资料库：action=list 列出原作/前作/研究资料；action=search 在资料中检索；action=read 读取一份资料。资料是只读参考，不等于本书正典；写同人或考据时先查资料并标注来源，不要把原文大段抄进正文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'search', 'read'] },
+        query: { type: 'string', description: 'action=search 的检索词' },
+        id: { type: 'string', description: 'action=read 的资料 id' },
+        limit: { type: 'number', description: '检索上限，默认 12，最多 30' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      if (args.action === 'list') {
+        const sources = await listReferences(project)
+        return {
+          total: sources.length,
+          sources: sources.map(({ id, title, kind, chars, tags, importedAt }) => ({ id, title, kind, chars, tags, importedAt })),
+        }
+      }
+      if (args.action === 'search') {
+        const query = String(args.query ?? '').trim()
+        if (!query) throw new Error('query 不能为空')
+        return searchReferences(project, query, { limit: Math.max(1, Math.min(30, Number(args.limit) || 12)) })
+      }
+      if (args.action === 'read') return readReference(project, String(args.id ?? ''))
+      throw new Error('未知 action')
     },
   })
 

@@ -1,6 +1,8 @@
 // 最小 HTTP API：项目树、文档读写、提案/diff、连续性。供可选 UI 使用。
 import { resolve } from 'node:path'
 import { Project } from './project.js'
+import { deleteReference, importReferences, listReferences, readReference, searchReferences, updateReference } from './references.js'
+import { withProjectLock } from './locks.js'
 
 function json(res, status, value) {
   const body = JSON.stringify(value)
@@ -88,12 +90,80 @@ export function registerWritingRoutes(ctx, webServer) {
     return project.search(payload.query, { limit: payload.limit })
   })
 
+  register('/deepnovel/api/references', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const root = projectRoot(url.searchParams.get('projectRoot'))
+    const project = await Project.open(root)
+    return { sources: await listReferences(project) }
+  })
+
+  register('/deepnovel/api/reference', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const root = projectRoot(url.searchParams.get('projectRoot'))
+    const project = await Project.open(root)
+    return readReference(project, url.searchParams.get('id') ?? '')
+  })
+
+  register('/deepnovel/api/references/import', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    return withProjectLock(root, async () => {
+      const project = await Project.open(root)
+      return importReferences(project, payload.sourcePath, { kind: payload.kind, tags: payload.tags })
+    })
+  })
+
+  register('/deepnovel/api/references/delete', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    return withProjectLock(root, async () => {
+      const project = await Project.open(root)
+      return deleteReference(project, payload.id)
+    })
+  })
+
+  register('/deepnovel/api/references/update', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    return withProjectLock(root, async () => {
+      const project = await Project.open(root)
+      return updateReference(project, payload.id, payload)
+    })
+  })
+
+  register('/deepnovel/api/references/search', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    const project = await Project.open(root)
+    return searchReferences(project, payload.query, { limit: payload.limit })
+  })
+
   register('/deepnovel/api/export', async (req) => {
     if (req.method !== 'POST') throw new Error('POST only')
     const payload = await body(req)
     const root = projectRoot(payload.projectRoot)
     const project = await Project.open(root)
-    return project.exportMarkdown()
+    return project.exportMarkdown({ scope: payload.scope, volumeId: payload.volumeId, chapterId: payload.chapterId })
+  })
+
+  register('/deepnovel/api/revisions', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const root = projectRoot(url.searchParams.get('projectRoot'))
+    const kind = url.searchParams.get('kind') ?? ''
+    if (!validKind(kind)) throw new Error(`未知文档类型：${kind}`)
+    const project = await Project.open(root)
+    return project.revisions(kind, url.searchParams.get('id') ?? '')
+  })
+
+  register('/deepnovel/api/revision', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const root = projectRoot(url.searchParams.get('projectRoot'))
+    const project = await Project.open(root)
+    return project.readRevision(url.searchParams.get('name') ?? '')
   })
 
   register('/deepnovel/api/doc', async (req) => {
@@ -121,6 +191,21 @@ export function registerWritingRoutes(ctx, webServer) {
     if (!validKind(payload.kind)) throw new Error(`未知文档类型：${payload.kind}`)
     const project = await Project.open(root)
     return project.proposeWrite(payload.kind, payload.id ?? '', payload.content ?? '')
+  })
+
+  register('/deepnovel/api/proposals', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const root = projectRoot(url.searchParams.get('projectRoot'))
+    const project = await Project.open(root)
+    return { proposals: await project.listProposals() }
+  })
+
+  register('/deepnovel/api/proposals/reject', async (req) => {
+    if (req.method !== 'POST') throw new Error('POST only')
+    const payload = await body(req)
+    const root = projectRoot(payload.projectRoot)
+    const project = await Project.open(root)
+    return project.rejectProposal(payload.id)
   })
 
   register('/deepnovel/api/apply', async (req) => {

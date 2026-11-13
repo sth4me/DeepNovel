@@ -1,6 +1,6 @@
 {
   "name": "@sth4me/deepnovel",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "private": true,
   "type": "module",
   "description": "DSH 长篇小说写作插件：文档驱动工作台、对话写作、diff 审批与连续性账本。",
@@ -35,7 +35,8 @@
     }
   },
   "dependencies": {
-    "@sth4me/deepnovel-ui": "file:./ui"
+    "@sth4me/deepnovel-ui": "file:./ui",
+    "pdf-parse": "^2.4.5"
   },
   "license": "MIT"
 }

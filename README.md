@@ -15,6 +15,7 @@ plot/
   chapters/             章卡
 manuscript/             正文
 continuity/             连续性账本与章节摘要
+references/             原作/前作/研究资料副本与索引
 revisions/              修订与写提案
 ```
 
@@ -30,6 +31,7 @@ revisions/              修订与写提案
 - `novel_project`：查看/初始化项目；
 - `novel_read`：按对象读取文档；
 - `novel_search`：按原文检索；
+- `novel_reference`：检索/读取项目资料库中的原作、前作和研究资料；
 - `novel_create`：生成“元数据 + 正文”的原子创建提案；
 - `novel_write`：对已有文档生成写提案，确认后应用；
 - `novel_stage`：查看当前阶段提示；

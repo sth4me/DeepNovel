@@ -1,12 +1,14 @@
 // 新文档核心：索引、对象创建、读写、提案/diff、连续性账本。
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { deflateRawSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const root = await mkdtemp(join(tmpdir(), 'deepnovel-writing-'))
 const { Project } = await import('../writing/project.js')
 const { MANIFEST_FILE } = await import('../writing/manifest.js')
+const { deleteReference, extractDocxText, importReferences, listReferences, readReference, searchReferences, visibleTextLength } = await import('../writing/references.js')
 
 const project = await Project.init(root, { title: '测试书', genre: '武侠', language: 'zh' })
 assert.equal(project.manifest.title, '测试书')
@@ -93,11 +95,89 @@ await assert.rejects(
   (error) => error.code === 'DOC_CONFLICT',
 )
 
+const beforeProposals = (await opened.listProposals()).length
+const pendingProposal = await opened.proposeWrite('book', 'book', '# 全书主线\n\n待处理提案。\n')
+const pendingList = await opened.listProposals()
+assert.ok(pendingList.some((item) => item.id === pendingProposal.id))
+await opened.rejectProposal(pendingProposal.id)
+assert.equal((await opened.listProposals()).length, beforeProposals)
+
+const revisionList = await opened.revisions('book', 'book')
+assert.ok(revisionList.revisions.length >= 1)
+const revisionRead = await opened.readRevision(revisionList.revisions[0].name)
+assert.ok(revisionRead.content.includes('全书主线'))
+
 const search = await opened.search('角色甲')
 assert.ok(search.total >= 1)
+const volumeExport = await opened.exportMarkdown({ scope: 'volume', volumeId: 'v1' })
+assert.ok(volumeExport.filename.includes('第一卷'))
+const chapterExport = await opened.exportMarkdown({ scope: 'chapter', chapterId: chapter.id })
+assert.ok(chapterExport.content.includes('初雪'))
+
 const exported = await opened.exportMarkdown()
 assert.ok(exported.filename.endsWith('.md'))
 assert.ok(exported.content.includes('测试书'))
+
+function makeDocx(text) {
+  const name = Buffer.from('word/document.xml')
+  const xml = Buffer.from(`<w:document><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`)
+  const data = deflateRawSync(xml)
+  const local = Buffer.alloc(30)
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0, 6)
+  local.writeUInt16LE(8, 8); local.writeUInt32LE(0, 14); local.writeUInt32LE(data.length, 18)
+  local.writeUInt32LE(xml.length, 22); local.writeUInt16LE(name.length, 26); local.writeUInt16LE(0, 28)
+  const central = Buffer.alloc(46)
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6)
+  central.writeUInt16LE(8, 10); central.writeUInt32LE(0, 16); central.writeUInt32LE(data.length, 20)
+  central.writeUInt32LE(xml.length, 24); central.writeUInt16LE(name.length, 28); central.writeUInt16LE(0, 30)
+  central.writeUInt16LE(0, 32); central.writeUInt32LE(0, 42)
+  const body = Buffer.concat([local, name, data])
+  const directory = Buffer.concat([central, name])
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10)
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(body.length, 16)
+  return Buffer.concat([body, directory, end])
+}
+assert.equal(extractDocxText(makeDocx('DOCX 资料')), 'DOCX 资料')
+assert.equal(visibleTextLength('# 标题\n\n**正文** 和 `code`'), 5)
+
+function makePdf(text) {
+  const escaped = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+  const stream = `BT /F1 18 Tf 50 200 Td (${escaped}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n` })
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (let index = 1; index <= objects.length; index += 1) pdf += `${String(offsets[index]).padStart(10, '0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(pdf)
+}
+
+
+const referenceSource = await mkdtemp(join(tmpdir(), 'deepnovel-refs-'))
+await mkdir(join(referenceSource, 'nested'), { recursive: true })
+await writeFile(join(referenceSource, 'canon.md'), '# 原作资料\n\n角色甲的原作设定。\n', 'utf8')
+await writeFile(join(referenceSource, 'nested', 'notes.txt'), '研究笔记：角色甲的时间线。\n', 'utf8')
+await writeFile(join(referenceSource, 'research.pdf'), makePdf('PDF 研究资料'), 'utf8')
+const imported = await importReferences(project, referenceSource, { kind: 'canon', tags: ['原作'] })
+assert.equal(imported.imported, 3)
+const references = await listReferences(project)
+assert.equal(references.length, 3)
+const reference = await readReference(project, references[0].id)
+assert.ok(reference.content.includes('原作资料') || reference.content.includes('研究笔记'))
+const referenceSearch = await searchReferences(project, '角色甲')
+assert.ok(referenceSearch.total >= 2)
+await deleteReference(project, references[0].id)
+assert.equal((await listReferences(project)).length, 2)
+await rm(referenceSource, { recursive: true, force: true })
 
 await rm(root, { recursive: true, force: true })
 console.log('writing core tests passed')
