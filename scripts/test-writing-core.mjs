@@ -156,6 +156,42 @@ assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
 
+const queueModule = await import('../writing/taskqueue.js')
+assert.equal(queueModule.isParallelTask({ title: '检查连续性', role: 'plan' }), true)
+assert.equal(queueModule.isParallelTask({ title: '写正文', role: 'prose' }), false)
+{
+  const started = []
+  const pending = []
+  const queue = queueModule.createTaskQueue({
+    run: (task) => new Promise((resolve) => { started.push(task.title); pending.push(resolve) }),
+    parallelLimit: 2,
+    serialLimit: 1,
+  })
+  queue.enqueue('q1', { title: '写正文A', role: 'prose', prompt: 'a' })
+  queue.enqueue('q1', { title: '写正文B', role: 'prose', prompt: 'b' })
+  assert.deepEqual(started, ['写正文A'])
+  const snapshot = queue.snapshot('q1')
+  assert.equal(snapshot.filter((item) => item.state === 'running').length, 1)
+  assert.equal(snapshot.filter((item) => item.state === 'waiting').length, 1)
+  pending.shift()()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(started, ['写正文A', '写正文B'])
+  pending.shift()()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+{
+  const queue = queueModule.createTaskQueue({ run: () => new Promise(() => {}), parallelLimit: 2, serialLimit: 1 })
+  queue.enqueue('q2', { title: '检查一致性', role: 'plan', prompt: 'x' })
+  queue.enqueue('q2', { title: '检查结构', role: 'plan', prompt: 'y' })
+  queue.enqueue('q2', { title: '检查文风', role: 'plan', prompt: 'z' })
+  const snapshot = queue.snapshot('q2')
+  assert.equal(snapshot.filter((item) => item.state === 'running').length, 2, '并行任务应同时启动两个')
+  assert.equal(snapshot.filter((item) => item.state === 'waiting').length, 1)
+  const duplicate = queue.enqueue('q2', { title: '检查一致性', role: 'plan', prompt: 'x' })
+  assert.equal(duplicate.duplicate, true, '相同任务应去重')
+}
+
+
 
 function makePdf(text) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')

@@ -82,9 +82,14 @@ const runWithoutAgents = await fetch(`${base}/deepnovel/api/run`, {
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ projectRoot: root, role: 'prose', title: 't', prompt: 'p' }),
 })
-assert.equal(runWithoutAgents.status, 400)
-const runError = await runWithoutAgents.json()
-assert.match(runError.error.message, /子代理/)
+assert.equal(runWithoutAgents.status, 200)
+const runQueued = await runWithoutAgents.json()
+assert.ok(runQueued.data.task.id, 'run should enqueue a task')
+await new Promise((resolve) => setTimeout(resolve, 50))
+const tasksAfterRun = await fetch(`${base}/deepnovel/api/tasks?projectRoot=${encodeURIComponent(root)}`)
+const tasksBody = await tasksAfterRun.json()
+assert.ok(Array.isArray(tasksBody.data.tasks))
+assert.match(tasksBody.data.tasks[0].error, /子代理/)
 const runStatus = await fetch(`${base}/deepnovel/api/run/status?sessionIds=`)
 assert.equal(runStatus.status, 200)
 const emptyStatus = await runStatus.json()
@@ -92,7 +97,7 @@ assert.deepEqual(emptyStatus.data.statuses, {})
 const runStop = await fetch(`${base}/deepnovel/api/run/stop`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ sessionId: 'session-x' }),
+  body: JSON.stringify({ projectRoot: root, taskId: 'task-missing' }),
 })
 const stopBody = await runStop.json()
 assert.equal(stopBody.data.stopped, false)

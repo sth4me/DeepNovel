@@ -1298,7 +1298,7 @@ window.__ModuleLoader__.load({
     }
 
     const TASK_STATE_LABELS = {
-      running: '执行中', done: '已完成', stopped: '已停止', failed: '失败',
+      running: '执行中', waiting: '排队中', done: '已完成', stopped: '已停止', failed: '失败',
       sending: '发送中', sent: '已发送', fallback: '已回退', cancelled: '已取消',
     }
 
@@ -1323,8 +1323,8 @@ window.__ModuleLoader__.load({
           h('span', { style: { flex: 1 } }),
           h('span', { style: { fontSize: 10, opacity: 0.6 } }, TASK_STATE_LABELS[task.state] ?? task.state),
           task.sessionId ? h('button', { type: 'button', style: style.addButton, onClick: () => onOpen(task) }, '打开') : null,
-          task.state === 'running' ? h('button', { type: 'button', style: style.addButton, onClick: () => onStop(task) }, '停止') : null,
-          task.state === 'failed' || task.state === 'stopped' ? h('button', { type: 'button', style: style.addButton, onClick: () => onRetry(task) }, '重试') : null,
+          task.state === 'running' || task.state === 'waiting' ? h('button', { type: 'button', style: style.addButton, onClick: () => onStop(task) }, '停止') : null,
+          task.state === 'failed' || task.state === 'stopped' || task.state === 'done' ? h('button', { type: 'button', style: style.addButton, onClick: () => onRetry(task) }, '重试') : null,
         )),
       )
     }
@@ -1498,23 +1498,24 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         if (!root) return undefined
-        const active = tasks.filter((item) => item.state === 'running' && item.sessionId)
-        if (active.length === 0) return undefined
-        const ids = active.map((item) => item.sessionId).join(',')
         let alive = true
         const poll = async () => {
           try {
-            const data = await api(`/deepnovel/api/run/status?sessionIds=${encodeURIComponent(ids)}`)
+            const data = await api(`/deepnovel/api/tasks?projectRoot=${encodeURIComponent(root)}`)
             if (!alive) return
+            const remote = Array.isArray(data.tasks) ? data.tasks : []
             setTasks((current) => {
+              if (remote.length === 0) return current
+              const byId = new Map(remote.map((item) => [item.id, item]))
               let changed = false
               const next = current.map((item) => {
-                if (item.state !== 'running' || !item.sessionId) return item
-                const info = data.statuses?.[item.sessionId]
-                if (!info) return item
-                if (info.live && info.status === 'running') return item
+                const host = byId.get(item.hostId ?? item.id)
+                if (!host) return item
+                const state = host.state
+                const sessionId = host.sessionId || item.sessionId
+                if (state === item.state && sessionId === item.sessionId && (host.route?.model ?? '') === (item.route?.model ?? '')) return item
                 changed = true
-                return { ...item, state: info.live && info.status === 'idle' ? 'done' : 'done', updatedAt: new Date().toISOString() }
+                return { ...item, state, sessionId, route: host.route ?? item.route, error: host.error || item.error }
               })
               if (changed) {
                 try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next)) } catch {}
@@ -1524,10 +1525,10 @@ window.__ModuleLoader__.load({
             })
           } catch {}
         }
-        const timer = setInterval(poll, 4000)
+        const timer = setInterval(poll, 3000)
         void poll()
         return () => { alive = false; clearInterval(timer) }
-      }, [root, tasks.map((item) => `${item.id}:${item.state}`).join('|')])
+      }, [root])
 
       const dispatchTask = async (prompt) => {
         const service = clientScope?.get?.('uiWorkspace') ?? null
@@ -2001,7 +2002,7 @@ window.__ModuleLoader__.load({
 
       const rememberTask = (task) => {
         setTasks((current) => {
-          const next = [task, ...current].slice(0, 20)
+          const next = [task, ...current.filter((item) => item.id !== task.id)].slice(0, 30)
           try { localStorage.setItem(`deepnovel.v2.tasks.${root}`, JSON.stringify(next)) } catch {}
           return next
         })
@@ -2049,7 +2050,7 @@ window.__ModuleLoader__.load({
         try {
           const hostStop = await api('/deepnovel/api/run/stop', {
             method: 'POST',
-            body: JSON.stringify({ sessionId }),
+            body: JSON.stringify({ projectRoot: root, taskId: task.id }),
           }).catch(() => null)
           if (hostStop?.stopped) {
             patchTask(task.id, { state: 'stopped' })
@@ -2093,29 +2094,45 @@ window.__ModuleLoader__.load({
 
       const openTask = (title, body, options = {}) => {
         const role = options.role ?? roleOfTask(title, body)
-        const taskId = `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-        const task = { id: taskId, title, body, role, state: 'running', createdAt: new Date().toISOString() }
-        rememberTask(task)
         setError('')
-        setActivity(`已开始任务：${title}`)
+        setActivity(`已提交任务：${title}`)
         setAiTask({ state: 'running', title })
         runBackgroundTask(title, body, role).then((data) => {
-          patchTask(taskId, { state: 'running', sessionId: data.sessionId, route: data.route, prompt: data.prompt })
-          setAiTask({ state: 'running', title, sessionId: data.sessionId })
-          setActivity(`任务执行中：${title}${data.route?.model ? `（${data.route.model}）` : ''}`)
+          const task = data.task ?? {}
+          rememberTask({
+            id: task.id ?? `task-${Date.now().toString(36)}`,
+            title: task.title ?? title,
+            body,
+            role,
+            state: task.state ?? 'waiting',
+            sessionId: task.sessionId ?? '',
+            route: task.route ?? null,
+            prompt: data.prompt,
+            createdAt: task.createdAt ?? new Date().toISOString(),
+          })
+          setAiTask({ state: task.state ?? 'waiting', title: task.title ?? title, sessionId: task.sessionId })
+          setActivity(task.state === 'waiting' ? `任务已排队：${title}` : `任务执行中：${title}${task.route?.model ? `（${task.route.model}）` : ''}`)
         }).catch((error) => {
           const message = String(error?.message ?? error)
-          // 宿主不支持后台子代理时，回退到原来的会话发送路径。
           const prompt = buildTaskPrompt(title, root, body)
+          // 宿主不支持后台队列时，回退到原来的会话发送路径。
           dispatchTask(prompt).then((sessionId) => {
             setLastSessionId(sessionId)
             try { localStorage.setItem(`deepnovel.v2.session.${root}`, sessionId) } catch {}
-            patchTask(taskId, { state: 'sent', sessionId, prompt })
+            rememberTask({
+              id: `task-${Date.now().toString(36)}`,
+              title, body, role, state: 'sent', sessionId, prompt,
+              createdAt: new Date().toISOString(),
+            })
             setAiTask({ state: 'sent', title, sessionId })
             setActivity('任务已发送到写作对话')
           }).catch((fallbackError) => {
             const fallbackMessage = String(fallbackError?.message ?? fallbackError)
-            patchTask(taskId, { state: 'failed', error: `${message}；${fallbackMessage}`, prompt })
+            rememberTask({
+              id: `task-${Date.now().toString(36)}`,
+              title, body, role, state: 'failed', error: `${message}；${fallbackMessage}`, prompt,
+              createdAt: new Date().toISOString(),
+            })
             setAiTask({ state: 'failed', title, error: fallbackMessage })
             setError(`无法执行任务：${message}；${fallbackMessage}`)
             try { navigator.clipboard?.writeText(prompt) } catch {}
@@ -2386,7 +2403,7 @@ window.__ModuleLoader__.load({
                 ),
                 h('div', { style: { display: 'flex', gap: 4 } },
                   item.state === 'failed' || item.state === 'fallback' || item.state === 'stopped' || item.state === 'done' ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
-                  item.state === 'sent' || item.state === 'sending' || item.state === 'running' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
+                  item.state === 'sent' || item.state === 'sending' || item.state === 'running' || item.state === 'waiting' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
                   item.sessionId ? h(Btn, { onClick: () => { try { uiWorkspace()?.openSession?.(item.sessionId) } catch {} } }, '打开对话') : null,
                 ),
               )),
