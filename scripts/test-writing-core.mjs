@@ -60,6 +60,15 @@ assert.equal(identical.unchanged, true, '提案内容与当前文档一致时必
 assert.equal(identical.id, undefined, '内容没变时不应生成提案 id')
 await assert.rejects(() => opened.applyProposal(undefined, { confirm: true }), /不存在|过期/)
 
+const deadContent = (await opened.read('chapter', chapter.id)).content
+const deadHash = (await import('../writing/storage.js')).contentHash(deadContent)
+await opened.store.writeJson('revisions/proposals/edit-dead-test.json', {
+  id: 'edit-dead-test', kind: 'chapter', targetId: chapter.id, path: `plot/chapters/${chapter.id}.md`,
+  content: deadContent, beforeHash: deadHash, afterHash: deadHash, diff: { changes: [] }, createdAt: new Date().toISOString(),
+})
+const listedAfterDead = await opened.listProposals()
+assert.equal(listedAfterDead.some((item) => item.id === 'edit-dead-test'), false, '死提案不应出现在列表里')
+
 const stale = await opened.proposeWrite('chapter', chapter.id, '新内容')
 await opened.write('chapter', chapter.id, '别人改过的内容')
 const rejected = await opened.applyProposal(stale.id, { confirm: true })

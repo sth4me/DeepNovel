@@ -489,6 +489,14 @@ export class Project {
         await this.store.remove(entry.path).catch(() => {})
         continue
       }
+      // 死提案：内容与当前文件相同（应用也不会有任何改动），或基准已失效（应用必然冲突）。
+      const currentText = await this.store.readTextOrNull(String(proposal.path ?? '')) ?? ''
+      const currentHash = contentHash(currentText)
+      if (proposal.afterHash === currentHash || (proposal.beforeHash && proposal.beforeHash !== currentHash)) {
+        await this.store.remove(entry.path).catch(() => {})
+        this.proposals.delete(String(proposal.id ?? id))
+        continue
+      }
       const { content: _content, ...visible } = proposal
       proposals.push({
         ...visible,

@@ -283,11 +283,11 @@ export function registerWritingTools(ctx) {
 
   register({
     name: 'novel_write',
-    description: '写文档/应用提案。action=propose 返回 diff/提案，不写盘；内容与当前文档一致时返回 unchanged:true，此时不要 apply。action=apply 需 proposalId + confirm:true，应用前校验正文未变；返回 applied:false + reason=no-change 表示没有写入任何字，需要真正修改正文再提交。novel_create 的原子创建提案也用 action=apply 应用。',
+    description: '写文档/应用提案。action=list 列出待处理提案（含 id）；action=propose 返回 diff/提案，不写盘；内容与当前文档一致时直接报错并且不生成提案。action=apply 需 proposalId + confirm:true，应用前校验正文未变；返回 applied:false + reason=no-change 表示没有写入任何字，需要真正修改正文再提交。novel_create 的原子创建提案也用 action=apply 应用。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['propose', 'apply'] },
+        action: { type: 'string', enum: ['list', 'propose', 'apply'] },
         kind: { type: 'string', enum: ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary'] },
         id: { type: 'string', description: '目标对象 id；book 可省略' },
         content: { type: 'string', description: 'propose 时的新正文' },
@@ -298,6 +298,11 @@ export function registerWritingTools(ctx) {
       additionalProperties: false,
     },
     async execute(args, exec) {
+      if (args.action === 'list') {
+        const project = await openProject(ctx, exec.agent)
+        const proposals = await project.listProposals()
+        return { proposals, total: proposals.length }
+      }
       if (args.action === 'propose') {
         if (!args.kind) throw new Error('propose 需要 kind')
         const project = await openProject(ctx, exec.agent)
@@ -310,10 +315,13 @@ export function registerWritingTools(ctx) {
           const previous = unchangedProposals.get(key)
           const count = previous && previous.hash === result.afterHash ? previous.count + 1 : 1
           unchangedProposals.set(key, { hash: result.afterHash, count })
-          const size = result.beforeChars ?? 0
-          throw new Error(count >= 2
-            ? `已连续 ${count} 次提交与当前正文完全相同的文本，没有任何字被修改。停止重复提交；先读当前正文（${size} 字符），实际写出更长的正文后再提交。`
-            : `提案内容与当前正文完全相同，没有生成提案，也没有任何字被修改。先读当前正文（${size} 字符），写出真正不同、更长的内容再提交。`)
+          const progress = stats && stats.target
+            ? `当前净字数 ${stats.beforeNet}，章卡目标 ${stats.target.min}–${stats.target.max}，还差 ${stats.remaining} 字。`
+            : `当前 ${result.beforeChars ?? 0} 字符。`
+          const hint = count >= 2
+            ? `已连续 ${count} 次提交与当前正文完全相同的文本，没有任何字被修改。停止重复提交并重新规划；${progress}`
+            : `提案内容与当前正文完全相同，没有生成提案，也没有任何字被修改。${progress}先读当前正文，按场景补写新段落再提交。`
+          throw new Error(hint)
         }
         unchangedProposals.delete(key)
         return stats ? { ...result, stats } : result
