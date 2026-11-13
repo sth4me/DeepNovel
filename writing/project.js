@@ -391,6 +391,29 @@ export class Project {
     if (['chapter', 'manuscript', 'summary'].includes(kind) && !this.findChapter(id)) throw new Error(`找不到章节：${id}`)
     const file = fileFor(kind === 'manuscript' ? 'manuscript' : kind === 'summary' ? 'summary' : kind, id)
     const preview = await this.store.previewWrite(file, content)
+    if (preview.beforeHash === preview.afterHash) {
+      return {
+        kind,
+        targetId: id,
+        path: file,
+        beforeHash: preview.beforeHash,
+        afterHash: preview.afterHash,
+        diff: preview.diff,
+        unchanged: true,
+        changed: false,
+        beforeChars: preview.bytesBefore,
+        afterChars: preview.bytesAfter,
+        hint: '提案内容与当前文档完全相同，没有生成提案；要真正修改请写出不同的正文。',
+      }
+    }
+    const pending = [...this.proposals.values(), ...await this.pendingProposalsFromDisk()]
+    for (const existing of pending) {
+      if (existing.expiresAt && existing.expiresAt < Date.now()) continue
+      if (existing.path !== file || existing.afterHash !== preview.afterHash) continue
+      this.proposals.set(existing.id, { ...existing, expiresAt: existing.expiresAt ?? Date.now() + 30 * 60 * 1000 })
+      const { content: _existingContent, ...visibleExisting } = existing
+      return { ...visibleExisting, unchanged: false, changed: true, reuse: true, hint: '已存在相同内容的待处理提案，直接复用它，不要重复提交。' }
+    }
     const proposal = {
       id: `edit-${Date.now().toString(36)}-${randomUUID().slice(0, 6)}`,
       kind,
@@ -405,11 +428,7 @@ export class Project {
     this.proposals.set(proposal.id, { ...proposal, expiresAt: Date.now() + 30 * 60 * 1000 })
     await this.store.writeJson(`revisions/proposals/${proposal.id}.json`, proposal, { revision: false })
     const { content: _content, ...visible } = proposal
-    return {
-      ...visible,
-      unchanged: preview.beforeHash === preview.afterHash,
-      ...(preview.beforeHash === preview.afterHash ? { hint: '提案内容与当前文档一致，应用也不会改动任何字；需要真正修改后再提交。' } : {}),
-    }
+    return { ...visible, unchanged: false, changed: true }
   }
 
   async applyCreateProposal(key, proposal) {
@@ -486,6 +505,17 @@ export class Project {
     this.proposals.delete(id)
     await this.store.remove(`revisions/proposals/${id}.json`).catch(() => {})
     return { rejected: true, id }
+  }
+
+  async pendingProposalsFromDisk() {
+    const files = await this.store.listFiles('revisions/proposals')
+    const pending = []
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue
+      const value = await this.store.readJson(file, null)
+      if (value && typeof value === 'object' && value.type !== 'create') pending.push(value)
+    }
+    return pending
   }
 
   async applyProposal(proposalId, { confirm = false } = {}) {

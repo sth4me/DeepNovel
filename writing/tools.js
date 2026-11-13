@@ -29,6 +29,8 @@ function errorResult(tool, error) {
 }
 
 const activeRoots = new Map()
+// 同一会话对同一文档连续提交相同内容的次数，用于阻止无意义的重复提案。
+const unchangedProposals = new Map()
 
 function rootKey(ctx, agent) {
   return String(agent?.id ?? ctx.sessionId ?? 'default')
@@ -279,7 +281,19 @@ export function registerWritingTools(ctx) {
       if (args.action === 'propose') {
         if (!args.kind) throw new Error('propose 需要 kind')
         const project = await openProject(ctx, exec.agent)
-        return project.proposeWrite(args.kind, args.id ?? '', args.content ?? '')
+        const result = await project.proposeWrite(args.kind, args.id ?? '', args.content ?? '')
+        const key = `${exec.agent?.id ?? 'unknown'}:${args.kind}:${args.id ?? ''}`
+        if (result.unchanged) {
+          const previous = unchangedProposals.get(key)
+          const count = previous && previous.hash === result.afterHash ? previous.count + 1 : 1
+          unchangedProposals.set(key, { hash: result.afterHash, count })
+          const size = result.beforeChars ?? 0
+          throw new Error(count >= 2
+            ? `已连续 ${count} 次提交与当前正文完全相同的文本，没有任何字被修改。停止重复提交；先读当前正文（${size} 字符），实际写出更长的正文后再提交。`
+            : `提案内容与当前正文完全相同，没有生成提案，也没有任何字被修改。先读当前正文（${size} 字符），写出真正不同、更长的内容再提交。`)
+        }
+        unchangedProposals.delete(key)
+        return result
       }
       if (args.action === 'apply') {
         return withWriteLock(ctx, exec.agent, async () => {

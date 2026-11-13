@@ -132,6 +132,14 @@ export class FileStore {
     }
   }
 
+  async listFiles(relativeDir) {
+    const dir = this.path(relativeDir)
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${String(relativeDir).replace(/\\/g, '/').replace(/\/+$/, '')}/${entry.name}`)
+  }
+
   async listRevisions(relativePath) {
     const normalized = String(relativePath ?? '').replace(/\\/g, '/').replace(/^\/+/, '')
     if (!normalized) return []
