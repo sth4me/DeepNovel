@@ -755,8 +755,8 @@ window.__ModuleLoader__.load({
       const groupOpen = (key) => query ? true : (collapsed[key] === undefined ? key === activeGroup : collapsed[key])
       const toggleGroup = (key) => setCollapsed((current) => ({ ...current, [key]: !groupOpen(key) }))
       const volumeOpen = (id) => query ? true : (openVolumes[id] ?? id === activeVolumeId)
-      const row = (kind, id, label, hint, depth = 0) => h('button', {
-        key: `${kind}:${id}`,
+      const row = (kind, id, label, hint, depth = 0, keyTag = '') => h('button', {
+        key: `${keyTag}${kind}:${id}`,
         type: 'button',
         title: hint || label,
         onClick: () => onOpen({ kind, id }),
@@ -818,7 +818,17 @@ window.__ModuleLoader__.load({
               ),
               open ? h('div', { style: { display: 'grid', gap: 1, paddingLeft: 14 } },
                 ...arcItems.map((arc) => row('arc', arc.id, arc.title, '剧情点', 1)),
-                ...chapterItems.map((chapter) => row('chapter', chapter.id, `${chapter.order}. ${chapter.title}`, chapter.hasManuscript ? '✓' : '○', 1)),
+                ...chapterItems.flatMap((chapter) => {
+                  const inChapter = ['chapter', 'manuscript', 'summary'].includes(doc?.kind) && doc?.id === chapter.id
+                  const open = Boolean(query) || inChapter
+                  const head = row('chapter', chapter.id, `${chapter.order}. ${chapter.title}`, chapter.hasManuscript ? '正文 ✓' : '待写', 1)
+                  if (!open) return [head]
+                  return [
+                    head,
+                    row('manuscript', chapter.id, chapter.hasManuscript ? '正文' : '正文（空）', '', 2, 'sub:'),
+                    row('summary', chapter.id, chapter.hasSummary ? '摘要' : '摘要（空）', '', 2, 'sub:'),
+                  ]
+                }),
               ) : null,
             ]
           })),
@@ -990,6 +1000,11 @@ window.__ModuleLoader__.load({
       tone: '基调', pov: '视角', tense: '时态', voice: '叙述声音', diction: '用词', pacing: '节奏',
       dialogueStyle: '对白', sensoryFocus: '感官重点', must: '必须', never: '禁止', adjust: '调整', notes: '备注',
     }
+    const ROUTE_ROLES = [
+      ['plan', '规划 / 检查', '开书、设定、人物、大纲、资料整理、一致性检查'],
+      ['prose', '写正文', '写正文、润色、局部改写'],
+    ]
+    const ROUTE_EFFORT_LABELS = { '': '跟随会话', off: '关闭', minimal: '最少', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' }
     const STYLE_VALUE_LABELS = {
       pov: { 'third-limited': '第三人称限知', 'third-omniscient': '第三人称全知', first: '第一人称', 'first-person': '第一人称', second: '第二人称', 'second-person': '第二人称' },
       tense: { past: '过去时', present: '现在时', future: '未来时' },
@@ -1221,10 +1236,16 @@ window.__ModuleLoader__.load({
           ? null
           : h('div', { style: style.card },
             ...chapters.map((chapter) => h('div', { key: chapter.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--dsw-alias-border-l1)' } },
-              h('button', { type: 'button', style: { ...style.treeRow, flex: 1 }, onClick: () => onOpen({ kind: 'chapter', id: chapter.id }) }, `${chapter.order}. ${chapter.title}`),
+              h('button', {
+                type: 'button', style: { ...style.treeRow, flex: 1 },
+                title: chapter.hasManuscript ? '打开本章正文' : '打开章卡',
+                onClick: () => onOpen({ kind: chapter.hasManuscript ? 'manuscript' : 'chapter', id: chapter.id }),
+              }, `${chapter.order}. ${chapter.title}`),
               h('span', { style: { ...style.badge, opacity: chapter.hasManuscript ? 0.9 : 0.5 } }, chapter.hasManuscript ? '正文 ✓' : '正文 ○'),
               h('span', { style: { ...style.badge, opacity: chapter.hasSummary ? 0.9 : 0.5 } }, chapter.hasSummary ? '摘要 ✓' : '摘要 ○'),
+              h('button', { type: 'button', style: style.addButton, onClick: () => onOpen({ kind: 'chapter', id: chapter.id }) }, '章卡'),
               chapter.hasManuscript ? h('button', { type: 'button', style: style.addButton, onClick: () => onOpen({ kind: 'manuscript', id: chapter.id }) }, '正文') : null,
+              chapter.hasSummary ? h('button', { type: 'button', style: style.addButton, onClick: () => onOpen({ kind: 'summary', id: chapter.id }) }, '摘要') : null,
             )),
           ),
       )
@@ -1382,6 +1403,8 @@ window.__ModuleLoader__.load({
       const [exportForm, setExportForm] = useState({ scope: 'all', volumeId: '', chapterId: '' })
       const [tasks, setTasks] = useState([])
       const [aiTask, setAiTask] = useState(null)
+      const [routing, setRouting] = useState(null)
+      const [routeOptions, setRouteOptions] = useState({ providers: [] })
       const [lastSessionId, setLastSessionId] = useState('')
       const [command, setCommand] = useState('')
       const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1396,6 +1419,25 @@ window.__ModuleLoader__.load({
       const dirty = Boolean(doc && text !== (doc.content ?? ''))
       const map = tree?.map ?? null
       const allowed = (key) => map?.workflow?.allowed?.[key] !== false
+
+      useEffect(() => {
+        if (dialog !== 'settings' || !root) return undefined
+        let alive = true
+        void (async () => {
+          try {
+            const [route, models] = await Promise.all([
+              api(`/deepnovel/api/routing?projectRoot=${encodeURIComponent(root)}`),
+              api('/deepnovel/api/models'),
+            ])
+            if (!alive) return
+            setRouting(route.routing ?? null)
+            setRouteOptions(models ?? { providers: [] })
+          } catch (e) {
+            if (alive) setError(String(e?.message ?? e))
+          }
+        })()
+        return () => { alive = false }
+      }, [dialog, root])
 
       useEffect(() => {
         if (!activity) return undefined
@@ -1635,6 +1677,50 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const routeRow = (role, label, hint) => {
+        const value = routing?.[role] ?? { provider: '', model: '', reasoningEffort: '' }
+        const providers = routeOptions?.providers ?? []
+        const provider = providers.find((item) => item.id === value.provider)
+        const models = provider?.models ?? []
+        const model = models.find((item) => item.id === value.model)
+        const efforts = model?.efforts ?? []
+        const update = (patch) => setRouting((current) => ({ ...(current ?? {}), [role]: { ...value, ...patch } }))
+        return h('div', { key: role, style: { display: 'grid', gap: 6, borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: 8 } },
+          h('div', null,
+            h('div', { style: { fontSize: 12, fontWeight: 600 } }, label),
+            h('div', { style: { fontSize: 10, opacity: 0.55 } }, hint),
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr 96px', gap: 6 } },
+            h('select', {
+              style: { ...style.input, fontSize: 12 },
+              value: value.provider,
+              onChange: (e) => update({ provider: e.target.value, model: '', reasoningEffort: '' }),
+            },
+              h('option', { value: '' }, '跟随会话'),
+              ...providers.map((item) => h('option', { key: item.id, value: item.id }, item.name ?? item.id)),
+            ),
+            h('select', {
+              style: { ...style.input, fontSize: 12 },
+              value: value.model,
+              disabled: !value.provider,
+              onChange: (e) => update({ model: e.target.value, reasoningEffort: '' }),
+            },
+              h('option', { value: '' }, value.provider ? '选择模型' : '—'),
+              ...models.map((item) => h('option', { key: item.id, value: item.id }, item.name ?? item.id)),
+            ),
+            h('select', {
+              style: { ...style.input, fontSize: 12 },
+              value: value.reasoningEffort,
+              onChange: (e) => update({ reasoningEffort: e.target.value }),
+            },
+              ...Object.entries(ROUTE_EFFORT_LABELS)
+                .filter(([key]) => key === '' || efforts.length === 0 || efforts.includes(key))
+                .map(([key, text]) => h('option', { key, value: key }, text)),
+            ),
+          ),
+        )
+      }
+
       const saveMeta = async () => {
         setBusy(true)
         setError('')
@@ -1643,6 +1729,12 @@ window.__ModuleLoader__.load({
             method: 'POST',
             body: JSON.stringify({ projectRoot: root, title: form.title, genre: form.genre, language: form.language, notes: form.notes }),
           })
+          if (routing) {
+            await api('/deepnovel/api/routing', {
+              method: 'POST',
+              body: JSON.stringify({ projectRoot: root, routing }),
+            })
+          }
           await loadTree(root)
           setDialog(null)
           setActivity('项目设置已保存')
@@ -2349,6 +2441,15 @@ window.__ModuleLoader__.load({
               value: form.notes ?? '',
               onChange: (e) => setForm((c) => ({ ...c, notes: e.target.value })),
             }),
+          ),
+          h('div', { style: { display: 'grid', gap: 8, marginTop: 4 } },
+            h('div', null,
+              h('div', { style: { fontSize: 12, fontWeight: 600 } }, '任务模型'),
+              h('div', { style: { fontSize: 10, opacity: 0.55, lineHeight: 1.6 } }, '按任务类型指定模型与思考档；留空跟随当前会话。也可以用对话里的 novel_route 修改。'),
+            ),
+            routing
+              ? h('div', { style: { display: 'grid', gap: 10 } }, ...ROUTE_ROLES.map(([role, label, hint]) => routeRow(role, label, hint)))
+              : h('div', { style: style.muted }, '读取中…'),
           ),
           h(ErrorBox, { message: error }),
           h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },

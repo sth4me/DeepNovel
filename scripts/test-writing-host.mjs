@@ -77,6 +77,22 @@ const importResponse = await fetch(`${base}/deepnovel/api/references/import`, {
 const importPayload = await importResponse.json()
 assert.equal(importPayload.ok, true)
 assert.equal(importPayload.data.imported, 2)
+const routingGet = await fetch(`${base}/deepnovel/api/routing?projectRoot=${encodeURIComponent(root)}`)
+assert.equal(routingGet.status, 200)
+const routingBody = await routingGet.json()
+assert.equal(routingBody.ok, true)
+assert.equal(routingBody.data.routing.prose.provider, '')
+const routingPost = await fetch(`${base}/deepnovel/api/routing`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ projectRoot: root, routing: { prose: { provider: 'opencode-go', model: 'mimo-v2.6-flash', reasoningEffort: 'off' } } }),
+})
+const routingSaved = await routingPost.json()
+assert.equal(routingSaved.data.routing.prose.model, 'mimo-v2.6-flash')
+assert.equal(routingSaved.data.routing.prose.reasoningEffort, 'off')
+const modelsResponse = await fetch(`${base}/deepnovel/api/models`)
+assert.equal(modelsResponse.status, 200)
+
 const referencesResponse = await fetch(`${base}/deepnovel/api/references?projectRoot=${encodeURIComponent(root)}`)
 const referencesPayload = await referencesResponse.json()
 assert.equal(referencesPayload.data.sources.length, 2)

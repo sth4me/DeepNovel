@@ -15,6 +15,7 @@ import {
 } from './manifest.js'
 import { FileStore, contentHash, lineDiff } from './storage.js'
 import { listReferences } from './references.js'
+import { normalizeRouting } from './routing.js'
 
 const DEFAULT_LEDGER = {
   version: 1,
@@ -174,6 +175,19 @@ export class Project {
     if (!path.startsWith('revisions/') || path.includes('..')) throw new Error('非法修订路径')
     const content = await this.store.readText(path)
     return { name: path, content }
+  }
+
+  routing() {
+    return normalizeRouting(this.manifest.routing)
+  }
+
+  async setRouting(patch) {
+    const current = this.routing()
+    const next = normalizeRouting({ ...current, ...(patch && typeof patch === 'object' ? patch : {}) })
+    this.manifest.routing = next
+    this.manifest.updatedAt = new Date().toISOString()
+    await this.save()
+    return next
   }
 
   async setStyle(style) {

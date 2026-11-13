@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { Project } from './project.js'
 import { deleteReference, importReferences, listReferences, readReference, searchReferences, updateReference } from './references.js'
 import { withProjectLock } from './locks.js'
+import { ROUTE_ROLES, normalizeRouting } from './routing.js'
 
 function json(res, status, value) {
   const body = JSON.stringify(value)
@@ -164,6 +165,44 @@ export function registerWritingRoutes(ctx, webServer) {
     const root = projectRoot(url.searchParams.get('projectRoot'))
     const project = await Project.open(root)
     return project.readRevision(url.searchParams.get('name') ?? '')
+  })
+
+  register('/deepnovel/api/routing', async (req) => {
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const payload = req.method === 'POST' ? await body(req) : {}
+    const root = projectRoot(url.searchParams.get('projectRoot') ?? payload.projectRoot)
+    const project = await Project.open(root)
+    if (req.method === 'POST') {
+      const patch = payload.routing ?? payload
+      return { routing: await withProjectLock(root, () => project.setRouting(patch)), roles: ROUTE_ROLES }
+    }
+    return { routing: project.routing(), roles: ROUTE_ROLES }
+  })
+
+  register('/deepnovel/api/models', async () => {
+    const llm = typeof ctx.get === 'function' ? ctx.get('llm') : undefined
+    if (!llm) return { providers: [] }
+    const providers = []
+    for (const provider of llm.listProviders()) {
+      try {
+        const models = await llm.listModels(provider.id)
+        const rows = []
+        for (const model of models) {
+          let efforts = []
+          try {
+            const info = await llm.resolveModelInfo(provider.id, model.id)
+            efforts = (info.reasoning?.efforts ?? []).map((effort) => String(effort.id))
+          } catch {
+            efforts = []
+          }
+          rows.push({ id: model.id, name: model.name ?? model.id, efforts })
+        }
+        providers.push({ id: provider.id, name: provider.name, models: rows })
+      } catch {
+        // 单个 provider 失败不影响其他路由
+      }
+    }
+    return { providers }
   })
 
   register('/deepnovel/api/doc', async (req) => {

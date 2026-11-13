@@ -140,6 +140,22 @@ function makeDocx(text) {
 }
 assert.equal(extractDocxText(makeDocx('DOCX 资料')), 'DOCX 资料')
 assert.equal(visibleTextLength('# 标题\n\n**正文** 和 `code`'), 5)
+const routingModule = await import('../writing/routing.js')
+assert.equal(routingModule.pickEffort(['low', 'high'], 'off'), 'low')
+assert.equal(routingModule.pickEffort(['off', 'high'], 'off'), 'off')
+assert.equal(routingModule.pickEffort([], 'high'), '')
+const inheritedRoute = routingModule.resolveRoute({}, 'prose', { provider: 'p', model: 'm', efforts: ['off', 'high'] })
+assert.equal(inheritedRoute.inherited, true)
+assert.equal(inheritedRoute.reasoningEffort, '')
+const configuredRoute = routingModule.resolveRoute(
+  { prose: { provider: 'opencode-go', model: 'mimo-v2.6-flash', reasoningEffort: 'off' } },
+  'prose',
+  { provider: 'p', model: 'm', efforts: ['low', 'high'] },
+)
+assert.equal(configuredRoute.reasoningEffort, 'low')
+assert.match(configuredRoute.note, /回落/)
+assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
+
 
 function makePdf(text) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')

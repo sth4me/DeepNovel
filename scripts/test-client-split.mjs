@@ -26,6 +26,8 @@ assert.ok(client.includes("label: '构思'"), '核心工作流应包含构思页
 assert.ok(client.includes("label: '资料'"), '写作台应包含资料库页')
 assert.ok(client.includes('/deepnovel/api/references/import'), '资料库应支持目录导入')
 assert.ok(client.includes('search-empty'), '搜索空结果必须是可展开数组元素')
+assert.ok(client.includes("row('manuscript', chapter.id"), '文档树必须提供正文入口')
+assert.ok(client.includes("kind: chapter.hasManuscript ? 'manuscript' : 'chapter'"), '章节页默认打开正文')
 assert.ok(!client.includes("}) : h('div', { style: style.muted }, searchQuery"), '搜索空结果不能直接 spread 单个元素')
 assert.ok(client.includes('/deepnovel/api/revisions'), '文档页应能查看修订历史')
 assert.ok(client.includes('/deepnovel/api/proposals'), '写作台应能查看待处理提案')

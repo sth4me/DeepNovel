@@ -4,6 +4,7 @@ import { Project } from './project.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
 import { listReferences, readReference, searchReferences } from './references.js'
 import { withProjectLock } from './locks.js'
+import { ROUTE_ROLES, normalizeRouting, routeIsEmpty } from './routing.js'
 
 function textRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
@@ -312,6 +313,46 @@ export function registerWritingTools(ctx) {
   })
 
   register({
+    name: 'novel_route',
+    description: '任务模型路由：按任务类型记录执行时使用的 provider/model/思考档。action=get 读取；action=set 合并写入某个任务类型。留空表示跟随当前会话。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'] },
+        role: { type: 'string', enum: ROUTE_ROLES.map((item) => item.id) },
+        provider: { type: 'string' },
+        model: { type: 'string' },
+        reasoningEffort: { type: 'string' },
+        clear: { type: 'boolean', description: 'set 时清空该任务类型的路由，恢复跟随当前会话' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const project = await openProject(ctx, exec.agent)
+      if (args.action === 'get') return { routing: project.routing(), roles: ROUTE_ROLES }
+      if (args.action !== 'set') throw new Error(`未知路由操作：${args.action}`)
+      if (!ROUTE_ROLES.some((item) => item.id === args.role)) throw new Error(`未知任务类型：${args.role}`)
+      return withWriteLock(ctx, exec.agent, async () => {
+        const current = await openProject(ctx, exec.agent)
+        const routes = current.routing()
+        const next = args.clear
+          ? { ...routes, [args.role]: { provider: '', model: '', reasoningEffort: '' } }
+          : {
+            ...routes,
+            [args.role]: {
+              provider: args.provider ?? routes[args.role].provider,
+              model: args.model ?? routes[args.role].model,
+              reasoningEffort: args.reasoningEffort ?? routes[args.role].reasoningEffort,
+            },
+          }
+        const routing = await current.setRouting(next)
+        return { routing, applied: Object.fromEntries(ROUTE_ROLES.map((item) => [item.id, !routeIsEmpty(routing[item.id])])) }
+      })
+    },
+  })
+
+  register({
     name: 'novel_stage',
     description: '查看当前阶段、阶段提示和下一步建议。阶段由项目实际文档推导，不是硬流程；讨论和跨阶段读取不受限制。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -353,7 +394,7 @@ export function registerWritingTools(ctx) {
   })
 
   return {
-    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity'],
+    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route'],
     stages: Object.keys(STAGE_GUIDES),
   }
 }
