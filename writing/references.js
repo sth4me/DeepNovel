@@ -22,19 +22,9 @@ export function emptyReferenceIndex() {
   return { version: 1, updatedAt: null, sources: [] }
 }
 
-export function visibleTextLength(text) {
-  const plain = String(text ?? '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`[^`]*`/g, ' ')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*\]\([^)]*\)/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/[*_~]/g, '')
-  const cjk = (plain.match(/[\u3400-\u9fff]/g) ?? []).length
-  const words = (plain.match(/[A-Za-z0-9]+/g) ?? []).length
-  return cjk + words
-}
+import { visibleTextLength } from './textstats.js'
+
+export { visibleTextLength }
 
 export function kindLabel(kind) {
   return REFERENCE_KIND_LABELS[kind] ?? REFERENCE_KIND_LABELS.research

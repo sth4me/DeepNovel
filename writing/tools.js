@@ -7,6 +7,8 @@ import { withProjectLock } from './locks.js'
 import { ROUTE_ROLES, normalizeRouting, resolveRoute, routeIsEmpty } from './routing.js'
 import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
+import { countText, COUNT_RULE } from './textstats.js'
+import { countProject } from './count.js'
 
 function textRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
@@ -360,6 +362,33 @@ export function registerWritingTools(ctx) {
   })
 
   register({
+    name: 'novel_count',
+    description: `统计字数。scope=chapter/volume/project 统计正文（也可用 kind=chapter/summary 看章卡或摘要），scope=text 统计给定文本。口径：${COUNT_RULE} 另附字符总数、去空白字符数、行数、段落数和引号数，便于和外部脚本核对。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['chapter', 'volume', 'project', 'text'] },
+        kind: { type: 'string', enum: ['manuscript', 'chapter', 'summary'] },
+        chapterId: { type: 'string' },
+        volumeId: { type: 'string' },
+        text: { type: 'string', description: 'scope=text 时统计这段文本，不再读项目文件' },
+      },
+      required: ['scope'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      if (args.scope === 'text') return countText(args.text ?? '')
+      const project = await openProject(ctx, exec.agent)
+      return countProject(project, {
+        scope: args.scope,
+        kind: args.kind ?? 'manuscript',
+        chapterId: args.chapterId ?? '',
+        volumeId: args.volumeId ?? '',
+      })
+    },
+  })
+
+  register({
     name: 'novel_task',
     description: '把写作任务交给后台队列：子代理执行，按文件作用域排队，不冲突的并行、冲突的排队。action=list 查看队列；action=run 提交任务；action=cancel 停止任务。对话里让我改正文、补设定时用它，避免和正在跑的任务抢同一个文件。',
     parameters: {
@@ -466,7 +495,7 @@ export function registerWritingTools(ctx) {
   })
 
   return {
-    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route', 'novel_task'],
+    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route', 'novel_task', 'novel_count'],
     stages: Object.keys(STAGE_GUIDES),
   }
 }
