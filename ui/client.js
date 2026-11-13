@@ -1196,7 +1196,7 @@ window.__ModuleLoader__.load({
                     type: 'button', style: style.addButton,
                     disabled: !chapter.hasManuscript && !allowed('manuscript'),
                     title: !chapter.hasManuscript ? gateReason('manuscript') : '',
-                    onClick: () => chapter.hasManuscript ? onOpen({ kind: 'manuscript', id: chapter.id }) : onTask('写下一章正文', `读取第 ${chapter.order} 章的章卡、出场人物、上一章交接和连续性；写本章正文提案。`),
+                    onClick: () => chapter.hasManuscript ? onOpen({ kind: 'manuscript', id: chapter.id }) : onTask('写下一章正文', `读取第 ${chapter.order} 章的章卡、出场人物、上一章交接和连续性；写本章正文提案。`, { chapterId: chapter.id, role: 'prose' }),
                   }, chapter.hasManuscript ? '看正文' : '让 AI 写'),
                 )),
               ) : h('div', { style: style.muted }, '还没有章卡。'),
@@ -1219,7 +1219,7 @@ window.__ModuleLoader__.load({
         : allowed('chapter')
       const nextAction = () => {
         if (!nextChapter) return onTask('规划第一章章卡', '当前没有章卡；先读构思与设定，提出第一卷和前三章章卡方案，确认后原子创建。')
-        if (missingManuscript) return onTask('写下一章正文', `读取第 ${nextChapter.order} 章的章卡、出场人物、上一章交接和连续性；写本章正文提案。`)
+        if (missingManuscript) return onTask('写下一章正文', `读取第 ${nextChapter.order} 章的章卡、出场人物、上一章交接和连续性；写本章正文提案。`, { chapterId: nextChapter.id, role: 'prose' })
         if (missingSummary) return onTask('补章节摘要', `读取第 ${nextChapter.order} 章正文，补摘要和下一章交接，写提案供确认。`)
         return onOpen({ kind: 'summary', id: nextChapter.id })
       }
@@ -2083,11 +2083,11 @@ window.__ModuleLoader__.load({
         return /写正文|正文|润色|改写|续写|写下一章/.test(text) && !/章卡|大纲|规划/.test(text) ? 'prose' : 'plan'
       }
 
-      const runBackgroundTask = async (title, body, role) => {
+      const runBackgroundTask = async (title, body, role, options = {}) => {
         const prompt = buildTaskPrompt(title, root, body)
         const data = await api('/deepnovel/api/run', {
           method: 'POST',
-          body: JSON.stringify({ projectRoot: root, role, title, prompt, parentSessionId: lastSessionId }),
+          body: JSON.stringify({ projectRoot: root, role, title, prompt, parentSessionId: lastSessionId, chapterId: options?.chapterId ?? '', access: options?.access }),
         })
         return { ...data, prompt }
       }
@@ -2097,7 +2097,7 @@ window.__ModuleLoader__.load({
         setError('')
         setActivity(`已提交任务：${title}`)
         setAiTask({ state: 'running', title })
-        runBackgroundTask(title, body, role).then((data) => {
+        runBackgroundTask(title, body, role, options).then((data) => {
           const task = data.task ?? {}
           rememberTask({
             id: task.id ?? `task-${Date.now().toString(36)}`,

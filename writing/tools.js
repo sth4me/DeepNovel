@@ -4,7 +4,9 @@ import { Project } from './project.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
 import { listReferences, readReference, searchReferences } from './references.js'
 import { withProjectLock } from './locks.js'
-import { ROUTE_ROLES, normalizeRouting, routeIsEmpty } from './routing.js'
+import { ROUTE_ROLES, normalizeRouting, resolveRoute, routeIsEmpty } from './routing.js'
+import { configureTaskHub, taskHub } from './taskhub.js'
+import { accessForTask } from './scopes.js'
 
 function textRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
@@ -57,6 +59,7 @@ async function withWriteLock(ctx, agent, run) {
 const KINDS = ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary', 'ledger']
 
 export function registerWritingTools(ctx) {
+  configureTaskHub(() => ({ agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined }))
   const register = (tool) => ctx.tools.register({
     ...tool,
     output: jsonOutput,
@@ -353,6 +356,71 @@ export function registerWritingTools(ctx) {
   })
 
   register({
+    name: 'novel_task',
+    description: '把写作任务交给后台队列：子代理执行，按文件作用域排队，不冲突的并行、冲突的排队。action=list 查看队列；action=run 提交任务；action=cancel 停止任务。对话里让我改正文、补设定时用它，避免和正在跑的任务抢同一个文件。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'run', 'cancel'] },
+        taskId: { type: 'string' },
+        title: { type: 'string', description: '任务标题，用于展示和去重' },
+        prompt: { type: 'string', description: '交给子代理的完整任务说明' },
+        role: { type: 'string', enum: ['plan', 'prose'] },
+        chapterId: { type: 'string', description: '写正文时目标章节 id' },
+        write: { type: 'array', items: { type: 'string' }, description: '该任务会写的文件或目录前缀；不填按标题推断，未知任务按整项目写处理' },
+        read: { type: 'array', items: { type: 'string' }, description: '该任务会读的文件或目录前缀' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const root = await projectRoot(ctx, exec.agent)
+      const hub = taskHub().queue
+      if (args.action === 'list') return { tasks: hub.snapshot(root) }
+      if (args.action === 'cancel') {
+        if (!args.taskId) throw new Error('cancel 需要 taskId')
+        return hub.cancel(root, String(args.taskId))
+      }
+      if (args.action !== 'run') throw new Error(`未知任务操作：${args.action}`)
+      if (!args.prompt || !String(args.prompt).trim()) throw new Error('run 需要任务说明')
+      const project = await Project.open(root)
+      const llm = typeof ctx.get === 'function' ? ctx.get('llm') : undefined
+      const base = exec.agent?.model?.current?.() ?? null
+      let efforts = []
+      if (llm && base?.provider && base?.model) {
+        try {
+          const info = await llm.resolveModelInfo(base.provider, base.model)
+          efforts = (info.reasoning?.efforts ?? []).map((effort) => String(effort.id))
+        } catch {
+          efforts = []
+        }
+      }
+      const role = args.role === 'prose' ? 'prose' : 'plan'
+      const route = resolveRoute(project.routing(), role, {
+        provider: base?.provider ?? '',
+        model: base?.model ?? '',
+        efforts,
+      })
+      const access = accessForTask({
+        title: args.title ?? '',
+        chapterId: args.chapterId ?? '',
+        access: Array.isArray(args.write) || Array.isArray(args.read) || args.writeAll
+          ? { write: args.write ?? [], read: args.read ?? [], writeAll: args.writeAll === true }
+          : undefined,
+      })
+      return hub.enqueue(root, {
+        title: args.title ?? String(args.prompt).slice(0, 40),
+        role,
+        prompt: String(args.prompt),
+        parentSessionId: String(exec.agent?.id ?? ''),
+        route,
+        access,
+        root,
+      })
+    },
+  })
+
+  register({
     name: 'novel_stage',
     description: '查看当前阶段、阶段提示和下一步建议。阶段由项目实际文档推导，不是硬流程；讨论和跨阶段读取不受限制。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -394,7 +462,7 @@ export function registerWritingTools(ctx) {
   })
 
   return {
-    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route'],
+    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route', 'novel_task'],
     stages: Object.keys(STAGE_GUIDES),
   }
 }

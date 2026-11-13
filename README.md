@@ -36,6 +36,7 @@ revisions/              修订与写提案
 - `novel_write`：对已有文档生成写提案，确认后应用；
 - `novel_stage`：查看当前阶段提示；
 - `novel_route`：按任务类型查看或设置执行模型与思考档；
+- `novel_task`：在对话里查看队列、提交带文件作用域的后台任务、取消任务；
 - `novel_continuity`：读取/提交连续性。
 
 Agent 先读项目地图和相关文档，再写作；不会把整本书塞进上下文。

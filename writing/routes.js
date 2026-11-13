@@ -5,7 +5,8 @@ import { Project } from './project.js'
 import { deleteReference, importReferences, listReferences, readReference, searchReferences, updateReference } from './references.js'
 import { withProjectLock } from './locks.js'
 import { ROUTE_ROLES, normalizeRouting, resolveRoute } from './routing.js'
-import { createTaskQueue } from './taskqueue.js'
+import { configureTaskHub, taskHub } from './taskhub.js'
+import { accessForTask } from './scopes.js'
 
 function json(res, status, value) {
   const body = JSON.stringify(value)
@@ -182,39 +183,7 @@ export function registerWritingRoutes(ctx, webServer) {
     source: { kind: 'user' },
   })
 
-  const taskQueue = createTaskQueue({
-    async run(task, control) {
-      const { agents } = agentServices()
-      if (!agents?.create) throw new Error('当前宿主不支持后台子代理执行')
-      const parent = task.parentSessionId ? agents.get(task.parentSessionId) : undefined
-      const sessionId = `session-${randomUUID()}`
-      const agentOptions = {}
-      if (task.route?.provider) agentOptions.provider = task.route.provider
-      if (task.route?.model) agentOptions.model = task.route.model
-      if (task.route?.reasoningEffort) agentOptions.reasoningEffort = task.route.reasoningEffort
-      const handle = await agents.create({
-        sessionId,
-        ...(parent ? { parentAgent: parent } : {}),
-        meta: {
-          cwd: task.root,
-          ...(task.parentSessionId ? { parentSession: task.parentSessionId } : {}),
-          ...(parent ? { origin: 'subagent', delegationDepth: 1 } : {}),
-          agentPreset: 'novel-writer',
-        },
-        agentOptions,
-      })
-      control.setSession(sessionId)
-      handle.agent.followup(taskMessage(task.prompt))
-      await handle.agent.whenIdle()
-    },
-    cancelRun(task) {
-      const { agents } = agentServices()
-      const agent = task.sessionId ? agents?.get?.(task.sessionId) : undefined
-      try { agent?.cancel?.({ kind: 'user' }) } catch {
-        // 会话已结束时无需再取消
-      }
-    },
-  })
+  configureTaskHub(() => agentServices())
 
   register('/deepnovel/api/run', async (req) => {
     if (req.method !== 'POST') throw new Error('POST only')
@@ -241,12 +210,18 @@ export function registerWritingRoutes(ctx, webServer) {
       model: base?.model ?? '',
       efforts,
     })
-    const queued = taskQueue.enqueue(root, {
+    const access = accessForTask({
+      title: String(payload.title ?? ''),
+      chapterId: String(payload.chapterId ?? ''),
+      access: payload.access,
+    })
+    const queued = taskHub().queue.enqueue(root, {
       title: payload.title,
       role,
       prompt: String(payload.prompt ?? ''),
       parentSessionId,
       route,
+      access,
       root,
     })
     return queued
@@ -255,7 +230,7 @@ export function registerWritingRoutes(ctx, webServer) {
   register('/deepnovel/api/tasks', async (req) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const root = projectRoot(url.searchParams.get('projectRoot'))
-    return { tasks: taskQueue.snapshot(root) }
+    return { tasks: taskHub().queue.snapshot(root) }
   })
 
   register('/deepnovel/api/run/stop', async (req) => {
@@ -264,7 +239,7 @@ export function registerWritingRoutes(ctx, webServer) {
     const root = projectRoot(payload.projectRoot)
     const taskId = String(payload.taskId ?? '')
     if (!taskId) return { stopped: false, reason: '缺少 taskId' }
-    const result = taskQueue.cancel(root, taskId)
+    const result = taskHub().queue.cancel(root, taskId)
     return { stopped: Boolean(result.cancelled), running: Boolean(result.running), task: result.task }
   })
 

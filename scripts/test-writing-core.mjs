@@ -156,42 +156,47 @@ assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
 
+const accessModule = await import('../writing/access.js')
+const scopesModule = await import('../writing/scopes.js')
 const queueModule = await import('../writing/taskqueue.js')
-assert.equal(queueModule.isParallelTask({ title: '检查连续性', role: 'plan' }), true)
-assert.equal(queueModule.isParallelTask({ title: '写正文', role: 'prose' }), false)
+
+assert.equal(accessModule.conflicts({ write: ['manuscript/ch1.md'] }, { write: ['manuscript/ch1.md'] }), true, '同文件写写冲突')
+assert.equal(accessModule.conflicts({ write: ['manuscript/ch1.md'] }, { write: ['manuscript/ch2.md'] }), false, '不同文件写写可并行')
+assert.equal(accessModule.conflicts({ write: ['plot/chapters/'] }, { read: ['plot/chapters/ch1.md'] }), true, '目录前缀覆盖读写冲突')
+assert.equal(accessModule.conflicts({ readAll: true }, { write: ['world/'] }), true, '只读任务与写任务冲突')
+assert.equal(accessModule.conflicts({ readAll: true }, { readAll: true }), false, '只读任务之间可并行')
+
+assert.equal(scopesModule.scopeForTask({ title: '检查连续性' }).readAll, true)
+assert.deepEqual(scopesModule.scopeForTask({ title: '写正文', chapterId: 'ch1' }).write, ['manuscript/ch1.md'])
+assert.deepEqual(scopesModule.scopeForTask({ title: '补人物' }).write, ['characters/'])
+assert.equal(scopesModule.scopeForTask({ title: '未知任务' }).writeAll, true, '未知任务按整项目写处理')
+
 {
   const started = []
   const pending = []
   const queue = queueModule.createTaskQueue({
     run: (task) => new Promise((resolve) => { started.push(task.title); pending.push(resolve) }),
-    parallelLimit: 2,
-    serialLimit: 1,
+    maxConcurrent: 3,
   })
-  queue.enqueue('q1', { title: '写正文A', role: 'prose', prompt: 'a' })
-  queue.enqueue('q1', { title: '写正文B', role: 'prose', prompt: 'b' })
-  assert.deepEqual(started, ['写正文A'])
-  const snapshot = queue.snapshot('q1')
-  assert.equal(snapshot.filter((item) => item.state === 'running').length, 1)
-  assert.equal(snapshot.filter((item) => item.state === 'waiting').length, 1)
+  queue.enqueue('q1', { title: '写ch1', role: 'prose', prompt: 'a', access: { write: ['manuscript/ch1.md'] } })
+  queue.enqueue('q1', { title: '写ch1续', role: 'prose', prompt: 'b', access: { write: ['manuscript/ch1.md'] } })
+  assert.deepEqual(started, ['写ch1'], '同文件任务必须排队')
+  queue.enqueue('q1', { title: '写ch2', role: 'prose', prompt: 'c', access: { write: ['manuscript/ch2.md'] } })
+  assert.deepEqual(started, ['写ch1', '写ch2'], '不同文件任务可以并行')
+  assert.equal(queue.snapshot('q1').filter((item) => item.state === 'waiting').length, 1)
   pending.shift()()
   await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.deepEqual(started, ['写正文A', '写正文B'])
-  pending.shift()()
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(started, ['写ch1', '写ch2', '写ch1续'], '前一任务结束后排队任务开始')
+  pending.forEach((resolve) => resolve())
 }
 {
-  const queue = queueModule.createTaskQueue({ run: () => new Promise(() => {}), parallelLimit: 2, serialLimit: 1 })
-  queue.enqueue('q2', { title: '检查一致性', role: 'plan', prompt: 'x' })
-  queue.enqueue('q2', { title: '检查结构', role: 'plan', prompt: 'y' })
-  queue.enqueue('q2', { title: '检查文风', role: 'plan', prompt: 'z' })
-  const snapshot = queue.snapshot('q2')
-  assert.equal(snapshot.filter((item) => item.state === 'running').length, 2, '并行任务应同时启动两个')
-  assert.equal(snapshot.filter((item) => item.state === 'waiting').length, 1)
-  const duplicate = queue.enqueue('q2', { title: '检查一致性', role: 'plan', prompt: 'x' })
+  const queue = queueModule.createTaskQueue({ run: () => new Promise(() => {}), maxConcurrent: 3 })
+  queue.enqueue('q2', { title: '检查', role: 'plan', prompt: 'x', access: { readAll: true } })
+  queue.enqueue('q2', { title: '写', role: 'prose', prompt: 'y', access: { write: ['manuscript/ch1.md'] } })
+  assert.equal(queue.snapshot('q2').filter((item) => item.state === 'waiting').length, 1, '只读任务挡住写任务')
+  const duplicate = queue.enqueue('q2', { title: '检查', role: 'plan', prompt: 'x', access: { readAll: true } })
   assert.equal(duplicate.duplicate, true, '相同任务应去重')
 }
-
-
 
 function makePdf(text) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
