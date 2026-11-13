@@ -1,13 +1,14 @@
 // 通用写作工具：项目地图、读、搜、创建对象、写提案/应用、连续性。
 import { resolve } from 'node:path'
 import { Project } from './project.js'
+import { fileFor } from './manifest.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
 import { listReferences, readReference, searchReferences } from './references.js'
 import { withProjectLock } from './locks.js'
 import { ROUTE_ROLES, normalizeRouting, resolveRoute, routeIsEmpty } from './routing.js'
 import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
-import { countText, COUNT_RULE } from './textstats.js'
+import { countText, COUNT_RULE, parseTarget, progressOf } from './textstats.js'
 import { countProject } from './count.js'
 
 function textRender(_args, value) {
@@ -61,6 +62,25 @@ async function withWriteLock(ctx, agent, run) {
 }
 
 const KINDS = ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary', 'ledger']
+
+/** 提案正文与当前正文的净字数对比，附带章卡目标与差额。 */
+async function manuscriptStats(project, chapterId, content) {
+  const card = await project.store.readTextOrNull(fileFor('chapter', chapterId)) ?? ''
+  const before = await project.store.readTextOrNull(fileFor('manuscript', chapterId)) ?? ''
+  const beforeNet = countText(before).netChars
+  const afterNet = countText(content).netChars
+  const target = parseTarget(card)
+  const delta = afterNet - beforeNet
+  return {
+    beforeNet,
+    afterNet,
+    delta,
+    target,
+    remaining: target ? Math.max(0, target.min - afterNet) : null,
+    progress: target ? progressOf(afterNet, target) : null,
+    ...(delta <= 0 ? { warning: '净字数没有增加：这轮扩写无效，需要真正补写内容再提交。' } : {}),
+  }
+}
 
 export function registerWritingTools(ctx) {
   configureTaskHub(() => ({ agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined }))
@@ -282,6 +302,9 @@ export function registerWritingTools(ctx) {
         if (!args.kind) throw new Error('propose 需要 kind')
         const project = await openProject(ctx, exec.agent)
         const result = await project.proposeWrite(args.kind, args.id ?? '', args.content ?? '')
+        const stats = args.kind === 'manuscript' && args.id
+          ? await manuscriptStats(project, args.id, args.content ?? '')
+          : null
         const key = `${exec.agent?.id ?? 'unknown'}:${args.kind}:${args.id ?? ''}`
         if (result.unchanged) {
           const previous = unchangedProposals.get(key)
@@ -293,7 +316,7 @@ export function registerWritingTools(ctx) {
             : `提案内容与当前正文完全相同，没有生成提案，也没有任何字被修改。先读当前正文（${size} 字符），写出真正不同、更长的内容再提交。`)
         }
         unchangedProposals.delete(key)
-        return result
+        return stats ? { ...result, stats } : result
       }
       if (args.action === 'apply') {
         return withWriteLock(ctx, exec.agent, async () => {

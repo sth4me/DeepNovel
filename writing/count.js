@@ -25,6 +25,8 @@ async function chapterRow(project, chapter, volume, kind) {
     lines: stats.lines,
     quotes: stats.quotes.straight + stats.quotes.curly + stats.quotes.corner,
     target,
+    remaining: target ? Math.max(0, target.min - stats.netChars) : null,
+    over: target ? stats.netChars > target.max : null,
     progress: progressOf(stats.netChars, target),
   }
 }
