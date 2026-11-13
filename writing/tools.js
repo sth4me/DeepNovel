@@ -1,6 +1,6 @@
 // 通用写作工具：项目地图、读、搜、创建对象、写提案/应用、连续性。
 import { resolve } from 'node:path'
-import { Project } from './project.js'
+import { Project, appendText, patchText } from './project.js'
 import { fileFor } from './manifest.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
 import { listReferences, readReference, searchReferences } from './references.js'
@@ -283,14 +283,17 @@ export function registerWritingTools(ctx) {
 
   register({
     name: 'novel_write',
-    description: '写文档/应用提案。action=list 列出待处理提案（含 id）；action=propose 返回 diff/提案，不写盘；内容与当前文档一致时直接报错并且不生成提案。action=apply 需 proposalId + confirm:true，应用前校验正文未变；返回 applied:false + reason=no-change 表示没有写入任何字，需要真正修改正文再提交。novel_create 的原子创建提案也用 action=apply 应用。',
+    description: '写文档/应用提案。action=list 列出待处理提案（含 id）；action=propose 用完整新正文生成提案；action=append 只提交追加的段落；action=patch 用 find/replace 改局部；三者都不写盘，内容无变化会直接报错。action=apply 需 proposalId + confirm:true，应用前校验正文未变；返回 applied:false + reason=no-change 表示没有写入任何字，需要真正修改正文再提交。novel_create 的原子创建提案也用 action=apply 应用。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'propose', 'apply'] },
+        action: { type: 'string', enum: ['list', 'propose', 'append', 'patch', 'apply'] },
         kind: { type: 'string', enum: ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary'] },
         id: { type: 'string', description: '目标对象 id；book 可省略' },
-        content: { type: 'string', description: 'propose 时的新正文' },
+        content: { type: 'string', description: 'propose 的完整新正文；append 时只写要追加的段落' },
+        find: { type: 'string', description: 'patch 时要被替换的原文片段，必须唯一命中' },
+        replace: { type: 'string', description: 'patch 替换后的文本' },
+        separator: { type: 'string', description: 'append 时与原文之间的分隔符，默认两个换行' },
         proposalId: { type: 'string', description: 'apply 时由 propose 返回' },
         confirm: { type: 'boolean', description: 'apply 必须为 true' },
       },
@@ -302,6 +305,23 @@ export function registerWritingTools(ctx) {
         const project = await openProject(ctx, exec.agent)
         const proposals = await project.listProposals()
         return { proposals, total: proposals.length }
+      }
+      if (args.action === 'append' || args.action === 'patch') {
+        if (!args.kind || !args.id) throw new Error(`${args.action} 需要 kind 和 id`)
+        const project = await openProject(ctx, exec.agent)
+        const current = await project.read(args.kind, args.id)
+        const finalText = args.action === 'append'
+          ? appendText(current.content, args.content ?? '', args.separator ?? '\n\n')
+          : patchText(current.content, args.find ?? '', args.replace ?? '')
+        const result = args.action === 'append'
+          ? await project.proposeAppend(args.kind, args.id, args.content ?? '', args.separator ?? '\n\n')
+          : await project.proposePatch(args.kind, args.id, args.find ?? '', args.replace ?? '')
+        const stats = args.kind === 'manuscript'
+          ? await manuscriptStats(project, args.id, finalText)
+          : null
+        const key = `${exec.agent?.id ?? 'unknown'}:${args.kind}:${args.id ?? ''}`
+        unchangedProposals.delete(key)
+        return stats ? { ...result, stats } : result
       }
       if (args.action === 'propose') {
         if (!args.kind) throw new Error('propose 需要 kind')

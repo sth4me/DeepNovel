@@ -45,6 +45,25 @@ function compactText(text, max = 2400) {
   return value.length > max ? `${value.slice(0, max)}…` : value
 }
 
+/** 追加文本；空内容拒绝，原文为空时不加分隔符。 */
+export function appendText(current, extra, separator = '\n\n') {
+  const addition = String(extra ?? '')
+  if (!addition.trim()) throw new Error('append 需要非空内容')
+  const base = String(current ?? '')
+  return base && base.trim() ? `${base}${separator}${addition}` : addition
+}
+
+/** 局部替换；find 必须唯一命中。 */
+export function patchText(current, find, replace) {
+  const text = String(current ?? '')
+  const needle = String(find ?? '')
+  if (!needle) throw new Error('patch 需要 find 文本')
+  const first = text.indexOf(needle)
+  if (first < 0) throw new Error('patch 的 find 没有在文档里找到')
+  if (text.indexOf(needle, first + needle.length) >= 0) throw new Error('patch 的 find 命中了多处，请写更长的上下文')
+  return `${text.slice(0, first)}${String(replace ?? '')}${text.slice(first + needle.length)}`
+}
+
 export class Project {
   constructor(root, manifest, store) {
     this.root = root
@@ -429,6 +448,18 @@ export class Project {
     await this.store.writeJson(`revisions/proposals/${proposal.id}.json`, proposal, { revision: false })
     const { content: _content, ...visible } = proposal
     return { ...visible, unchanged: false, changed: true }
+  }
+
+  /** 追加内容：只写新增部分，避免整章重发。 */
+  async proposeAppend(kind, id, content, separator = '\n\n') {
+    const current = await this.read(kind, kind === 'book' || kind === 'ledger' ? '' : id)
+    return this.proposeWrite(kind, id, appendText(current.content, content, separator))
+  }
+
+  /** 局部替换：find 必须唯一命中，replace 为新文本。 */
+  async proposePatch(kind, id, find, replace) {
+    const current = await this.read(kind, kind === 'book' || kind === 'ledger' ? '' : id)
+    return this.proposeWrite(kind, id, patchText(current.content, find, replace))
   }
 
   async applyCreateProposal(key, proposal) {

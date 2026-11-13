@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.1.38
+
+- novel_write 增加 action=append：只提交新增段落，避免扩写时整章重发。
+- novel_write 增加 action=patch：用 find/replace 改局部，find 必须唯一命中。
+- append/patch 同样生成提案并返回字数统计，净字数没有增加会给出警告。
+- 提示词明确：扩写用 append、局部修改用 patch，只有整章重写才用 propose。
+
 ## 0.1.37
 
 - 提案列表自动清理死提案：内容与当前文件相同、或基准已失效的提案会被移除，不再堆积在收件箱。
