@@ -54,6 +54,13 @@ const applied = await opened.applyProposal(proposal.id, { confirm: true })
 assert.equal(applied.applied, true)
 assert.ok((await opened.read('chapter', chapter.id)).content.includes('连夜出山'))
 
+const sameContent = (await opened.read('chapter', chapter.id)).content
+const identical = await opened.proposeWrite('chapter', chapter.id, sameContent)
+assert.equal(identical.unchanged, true, '提案内容与当前文档一致时必须标记 unchanged')
+const identicalApply = await opened.applyProposal(identical.id, { confirm: true })
+assert.equal(identicalApply.applied, false, '内容没变时 apply 不能报成功')
+assert.equal(identicalApply.reason, 'no-change')
+
 const stale = await opened.proposeWrite('chapter', chapter.id, '新内容')
 await opened.write('chapter', chapter.id, '别人改过的内容')
 const rejected = await opened.applyProposal(stale.id, { confirm: true })

@@ -259,7 +259,7 @@ export function registerWritingTools(ctx) {
 
   register({
     name: 'novel_write',
-    description: '写文档/应用提案。action=propose 返回 diff/提案，不写盘；action=apply 需 proposalId + confirm:true，应用前校验正文未变。novel_create 的原子创建提案也用 action=apply 应用，确认后一次性创建对象和正文。',
+    description: '写文档/应用提案。action=propose 返回 diff/提案，不写盘；内容与当前文档一致时返回 unchanged:true，此时不要 apply。action=apply 需 proposalId + confirm:true，应用前校验正文未变；返回 applied:false + reason=no-change 表示没有写入任何字，需要真正修改正文再提交。novel_create 的原子创建提案也用 action=apply 应用。',
     parameters: {
       type: 'object',
       properties: {
@@ -282,7 +282,11 @@ export function registerWritingTools(ctx) {
       if (args.action === 'apply') {
         return withWriteLock(ctx, exec.agent, async () => {
           const project = await openProject(ctx, exec.agent)
-          return project.applyProposal(args.proposalId, { confirm: args.confirm === true })
+          const result = await project.applyProposal(args.proposalId, { confirm: args.confirm === true })
+          if (result.applied === false && result.reason === 'no-change') {
+            return { ...result, ok: false }
+          }
+          return result
         })
       }
       throw new Error(`未知写入操作：${args.action}`)

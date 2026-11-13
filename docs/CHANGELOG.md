@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.1.33
+
+- 修复「内容没变也报成功」：propose 时若新正文与当前文档完全一致，返回 unchanged:true 并提示不要 apply。
+- apply 遇到相同内容不再写盘，返回 applied:false、reason=no-change 并说明没有写入任何字。
+- novel_write 工具在 no-change 时返回 ok:false，避免 AI 以为已经改完而反复提交同一份正文。
+
 ## 0.1.32
 
 - 并行判定改为文件作用域：两个任务只要不写同一文件、也不形成读写冲突，就可以并行。

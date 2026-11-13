@@ -405,7 +405,11 @@ export class Project {
     this.proposals.set(proposal.id, { ...proposal, expiresAt: Date.now() + 30 * 60 * 1000 })
     await this.store.writeJson(`revisions/proposals/${proposal.id}.json`, proposal, { revision: false })
     const { content: _content, ...visible } = proposal
-    return visible
+    return {
+      ...visible,
+      unchanged: preview.beforeHash === preview.afterHash,
+      ...(preview.beforeHash === preview.afterHash ? { hint: '提案内容与当前文档一致，应用也不会改动任何字；需要真正修改后再提交。' } : {}),
+    }
   }
 
   async applyCreateProposal(key, proposal) {
@@ -500,6 +504,17 @@ export class Project {
     if (proposal.type === 'create') return this.applyCreateProposal(key, proposal)
     const current = await this.store.readTextOrNull(proposal.path) ?? ''
     if (contentHash(current) !== proposal.beforeHash) return { applied: false, reason: 'content-changed' }
+    if (contentHash(String(proposal.content ?? '')) === proposal.beforeHash) {
+      this.proposals.delete(key)
+      await this.store.remove(`revisions/proposals/${key}.json`)
+      return {
+        applied: false,
+        reason: 'no-change',
+        unchanged: true,
+        path: proposal.path,
+        hint: '提案内容和当前文档完全相同，没有写入任何字。要扩写或改写，需要给出不同的正文。',
+      }
+    }
     const written = await this.store.writeText(proposal.path, proposal.content)
     this.proposals.delete(key)
     await this.store.remove(`revisions/proposals/${key}.json`)
