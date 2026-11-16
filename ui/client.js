@@ -257,8 +257,20 @@ window.__ModuleLoader__.load({
       return nodes
     }
 
+    const READING_SIZE_PX = { s: 14, m: 16, l: 19 }
+    const READING_WIDTH_PX = { narrow: 720, normal: 880, wide: 1080 }
+    const READING_FONTS = {
+      sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
+      serif: "'Songti SC', 'SimSun', 'Noto Serif SC', 'Source Han Serif SC', Georgia, serif",
+    }
+
     function MarkdownPreview({ text, style, size = 'm', font = 'sans', width = 'normal' }) {
       const source = String(text ?? '')
+      const baseSize = READING_SIZE_PX[size] ?? READING_SIZE_PX.m
+      const scale = baseSize / READING_SIZE_PX.m
+      const scaleFont = (value) => Math.round(value * scale)
+      const readingWidth = READING_WIDTH_PX[width] ?? READING_WIDTH_PX.normal
+      const fontFamily = READING_FONTS[font] ?? READING_FONTS.sans
       if (!source.trim()) return h('div', { style: style.muted }, '（空文档）')
       const blocks = []
       let headingIndex = 0
@@ -287,7 +299,7 @@ window.__ModuleLoader__.load({
           flush()
           const level = heading[1].length
           const headingId = `dn-heading-${headingIndex++}`
-          blocks.push(h(`h${Math.min(level, 4)}`, { key: `h${blocks.length}`, id: headingId, style: { margin: '18px 0 8px', fontSize: level === 1 ? 24 : level === 2 ? 19 : 16, fontWeight: 600, lineHeight: 1.45, scrollMarginTop: 12 } }, heading[2]))
+          blocks.push(h(`h${Math.min(level, 4)}`, { key: `h${blocks.length}`, id: headingId, style: { margin: '18px 0 8px', fontSize: scaleFont(level === 1 ? 24 : level === 2 ? 19 : 16), fontWeight: 600, lineHeight: 1.45, scrollMarginTop: 12 } }, heading[2]))
           return
         }
         const bullet = line.match(/^\s*[-*]\s+(.*)$/)
@@ -314,7 +326,7 @@ window.__ModuleLoader__.load({
       })
       flush()
       if (code !== null) blocks.push(h('pre', { key: `pre${blocks.length}`, style: { overflow: 'auto', padding: 10, borderRadius: 7, background: 'var(--dsw-alias-bg-layer-2)', fontSize: 12 } }, code.join('\n')))
-      return h('div', { style: { lineHeight: 1.85, fontSize: 14, maxWidth: 980, margin: '0 auto' } }, ...blocks)
+      return h('div', { 'data-reading-size': size, 'data-reading-font': font, 'data-reading-width': width, style: { lineHeight: 1.85, fontSize: baseSize, fontFamily, maxWidth: readingWidth, margin: '0 auto' } }, ...blocks)
     }
 
     function docFromPath(path) {
@@ -2300,7 +2312,12 @@ window.__ModuleLoader__.load({
                 ? h(LedgerView, { text, style, allowed, onTask: openTask })
                 : h('div', { style: { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: editorMode === 'split' ? 'minmax(0,1fr) minmax(0,1fr)' : '1fr', gridTemplateRows: 'minmax(0,1fr)', gap: 8 } },
                 editorMode !== 'preview' ? h('textarea', {
-                  style: style.textarea,
+                  style: {
+                    ...style.textarea,
+                    fontSize: READING_SIZE_PX[readingSize] ?? READING_SIZE_PX.m,
+                    fontFamily: READING_FONTS[readingFont] ?? READING_FONTS.sans,
+                    lineHeight: 1.8,
+                  },
                   value: text,
                   placeholder: '用 Markdown 编辑；停止输入后自动保存，Ctrl/⌘ + S 立即保存。',
                   onChange: (event) => {

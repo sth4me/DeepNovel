@@ -1,6 +1,6 @@
 {
   "name": "@sth4me/deepnovel",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "private": true,
   "type": "module",
   "description": "DSH 长篇小说写作插件：文档驱动工作台、对话写作、diff 审批与连续性账本。",

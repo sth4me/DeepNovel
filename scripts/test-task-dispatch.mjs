@@ -41,6 +41,13 @@ assert.ok(Sidebar({ map: treeMap, page: 'bible', doc: null, onPage: () => {}, on
 assert.ok(DocumentContext({ doc: { kind: 'world', id: 'w1', title: '示例' }, text: '# 标题\n\n正文', style: { badge: {}, treeRow: {} }, onJump: () => {} }), 'DocumentContext should render TOC')
 assert.ok(LedgerView({ text: JSON.stringify({ facts: ['事实'], knowledge: [], foreshadow: [], timeline: [], handoffs: [] }), style: { badge: {}, muted: {}, card: {}, addButton: {} }, onTask: () => {}, allowed: () => true }), 'LedgerView should render structured ledger')
 assert.ok(ReferencePage({ references: [], kind: 'all', setKind: () => {}, query: '', setQuery: () => {}, busy: false, onImport: () => {}, onOpen: () => {}, onRemove: () => {}, style: { input: {}, badge: {}, card: {}, muted: {}, addButton: {} } }), 'ReferencePage should render')
+const previewSmall = MarkdownPreview({ text: '正文一段。', style: { muted: {} }, size: 's' })
+const previewLarge = MarkdownPreview({ text: '正文一段。', style: { muted: {} }, size: 'l', font: 'serif', width: 'narrow' })
+assert.equal(previewSmall.props.style.fontSize, 14, '小号正文应为 14px')
+assert.equal(previewLarge.props.style.fontSize, 19, '大号正文应为 19px')
+assert.ok(String(previewLarge.props.style.fontFamily).includes('Songti'), '衬线字体应生效')
+assert.equal(previewLarge.props.style.maxWidth, 720, '窄版心应生效')
+
 assert.ok(DiffView({ diff: { linesAdded: 1, linesRemoved: 1, changes: [{ line: 1, before: '旧', after: '新' }] }, style: { muted: {} } }), 'DiffView should render')
 assert.ok(TaskDock({ tasks: [{ id: 't1', title: '写正文', state: 'running', sessionId: 's1', route: { model: 'm', reasoningEffort: 'off' } }], onOpen: () => {}, onStop: () => {}, onRetry: () => {}, onAll: () => {}, style: { addButton: {} } }), 'TaskDock should render')
 for (const page of ['project', 'premise', 'style', 'bible', 'outline', 'chapters']) {
