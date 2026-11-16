@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.1.40
+
+- 新增 novel_style_check：检查「不是…是…」对照句、短句开段比例、总结/感悟式表达和自定义禁用句式，返回行号与样例。
+- 提示词要求写正文提案前先跑文风检查，对照句与总结句必须为 0，短句开段不超过 25%。
+- 文风检查只报告不改写，命中项由模型改写后再提案。
+
 ## 0.1.39
 
 - 写作 Agent 增加写文件守卫：用 write/edit/apply_patch 或命令行直接改 manuscript、plot、world、characters、continuity、revisions、references、deepnovel.json 会被拒绝。

@@ -10,6 +10,7 @@ import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
 import { countText, COUNT_RULE, parseTarget, progressOf } from './textstats.js'
 import { countProject } from './count.js'
+import { checkStyle } from './stylecheck.js'
 
 function textRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
@@ -427,6 +428,34 @@ export function registerWritingTools(ctx) {
   })
 
   register({
+    name: 'novel_style_check',
+    description: '检查正文里的 AI 腔：不是…是…对照句、短句开段比例、总结/感悟式表达，以及自定义禁用句式。只报告不改写；写正文提案前先跑一次，对照句和总结句必须为 0。',
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['chapter', 'text'] },
+        chapterId: { type: 'string' },
+        text: { type: 'string', description: 'scope=text 时检查这段文本' },
+        patterns: { type: 'array', items: { type: 'string' }, description: '项目自定义禁用句式（正则源）' },
+        shortOpenerRatio: { type: 'number', description: '短句开段比例上限，默认 0.25' },
+      },
+      required: ['scope'],
+      additionalProperties: false,
+    },
+    async execute(args, exec) {
+      const options = {
+        patterns: Array.isArray(args.patterns) ? args.patterns : [],
+        ...(typeof args.shortOpenerRatio === 'number' ? { shortOpenerRatio: args.shortOpenerRatio } : {}),
+      }
+      if (args.scope === 'text') return checkStyle(args.text ?? '', options)
+      if (!args.chapterId) throw new Error('scope=chapter 需要 chapterId')
+      const project = await openProject(ctx, exec.agent)
+      const text = await project.store.readTextOrNull(fileFor('manuscript', args.chapterId)) ?? ''
+      return { chapterId: args.chapterId, ...checkStyle(text, options) }
+    },
+  })
+
+  register({
     name: 'novel_count',
     description: `统计字数。scope=chapter/volume/project 统计正文（也可用 kind=chapter/summary 看章卡或摘要），scope=text 统计给定文本。口径：${COUNT_RULE} 另附字符总数、去空白字符数、行数、段落数和引号数，便于和外部脚本核对。`,
     parameters: {
@@ -560,7 +589,7 @@ export function registerWritingTools(ctx) {
   })
 
   return {
-    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route', 'novel_task', 'novel_count'],
+    tools: ['novel_project', 'novel_read', 'novel_search', 'novel_create', 'novel_write', 'novel_style', 'novel_stage', 'novel_continuity', 'novel_route', 'novel_task', 'novel_count', 'novel_style_check'],
     stages: Object.keys(STAGE_GUIDES),
   }
 }

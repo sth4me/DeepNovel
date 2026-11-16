@@ -171,6 +171,16 @@ assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
 
+const styleModule = await import('../writing/stylecheck.js')
+const styleSample = '不是取东西，是带人。\n\n然后他才开门。他把门推开，屋里比外头黑，眼睛适应了几秒才往里走，地上有水。'
+const styleChecked = styleModule.checkStyle(styleSample)
+assert.equal(styleChecked.verdict, 'needs-revision')
+assert.equal(styleChecked.issues.find((item) => item.kind === 'contrast').count, 1)
+assert.ok(styleChecked.issues.find((item) => item.kind === 'short-opener'), '短句开段应被检出')
+const styleClean = styleModule.checkStyle('他把门推开，屋里比外头黑，眼睛适应了几秒才往里走，地上有水，走一步粘一下鞋底。')
+assert.equal(styleClean.verdict, 'clean')
+assert.equal(styleModule.checkStyle('这是一段文本。', { patterns: ['文本'] }).issues.some((item) => item.kind === 'custom'), true)
+
 const guardModule = await import('../writing/guard.js')
 assert.ok(guardModule.directWriteGuard({ name: 'write', arguments: { path: 'manuscript/ch1.md', content: 'x' } }), '原生 write 写正文必须被阻止')
 assert.ok(guardModule.directWriteGuard({ name: 'edit', arguments: { file_path: '%ROOT%/plot/book.md' } }), '原生 edit 写大纲必须被阻止')
