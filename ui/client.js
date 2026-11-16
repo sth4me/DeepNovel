@@ -1412,6 +1412,43 @@ window.__ModuleLoader__.load({
       return h(DeskErrorBoundary, null, h('style', null, DESIGN_CSS), h(App, props))
     }
 
+    function TaskBadge() {
+      const [running, setRunning] = useState(0)
+      useEffect(() => {
+        let alive = true
+        const poll = async () => {
+          try {
+            const response = await fetch('/deepnovel/api/tasks/all')
+            const payload = await response.json()
+            if (!alive) return
+            setRunning(Number(payload?.data?.running ?? 0))
+          } catch {}
+        }
+        const timer = setInterval(poll, 4000)
+        void poll()
+        return () => { alive = false; clearInterval(timer) }
+      }, [])
+      if (!running) return null
+      return h('button', {
+        type: 'button',
+        title: '打开写作台查看任务',
+        onClick: () => {
+          try { clientScope?.get?.('layout')?.selectPanel?.(MAIN_ID) } catch {}
+        },
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 999,
+          background: 'var(--dsw-alias-bg-layer-2)', color: 'inherit',
+          padding: '3px 9px', fontSize: 11, cursor: 'pointer',
+        },
+      },
+        h('span', {
+          style: { width: 6, height: 6, borderRadius: 3, background: 'var(--dsw-alias-brand-primary)' },
+        }),
+        `任务 ${running}`,
+      )
+    }
+
     function App(props) {
       const style = useStyles()
       const workspaceItems = props && typeof props.useWorkspaces === 'function'
@@ -1446,6 +1483,7 @@ window.__ModuleLoader__.load({
       const [draftNotice, setDraftNotice] = useState(null)
       const [exportForm, setExportForm] = useState({ scope: 'all', volumeId: '', chapterId: '' })
       const [tasks, setTasks] = useState([])
+      const [hostTasks, setHostTasks] = useState([])
       const [aiTask, setAiTask] = useState(null)
       const [routing, setRouting] = useState(null)
       const [dialogue, setDialogue] = useState({ proseInline: false })
@@ -1518,6 +1556,7 @@ window.__ModuleLoader__.load({
             const data = await api(`/deepnovel/api/tasks?projectRoot=${encodeURIComponent(root)}`)
             if (!alive) return
             const remote = Array.isArray(data.tasks) ? data.tasks : []
+            setHostTasks(remote)
             setTasks((current) => {
               if (remote.length === 0) return current
               const byId = new Map(remote.map((item) => [item.id, item]))
@@ -2256,6 +2295,30 @@ window.__ModuleLoader__.load({
         )
       }
 
+      const mergedTasks = (() => {
+        const byId = new Map()
+        for (const item of [...hostTasks, ...tasks]) {
+          if (!item?.id) continue
+          const previous = byId.get(item.id) ?? {}
+          byId.set(item.id, {
+            ...previous,
+            ...item,
+            state: item.state ?? previous.state,
+            sessionId: item.sessionId || previous.sessionId || '',
+            route: item.route ?? previous.route ?? null,
+          })
+        }
+        const order = { running: 0, waiting: 0, sending: 1, sent: 1, failed: 2, stopped: 3, cancelled: 3, done: 4 }
+        return [...byId.values()]
+          .filter((item) => item.title || item.id)
+          .sort((left, right) => {
+            const rank = (order[left.state] ?? 5) - (order[right.state] ?? 5)
+            if (rank !== 0) return rank
+            return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''))
+          })
+          .slice(0, 12)
+      })()
+
       const flatChapters = (map?.plot?.volumes ?? []).flatMap((volume) => volume.chapters ?? [])
       const chapterIndex = doc && ['chapter', 'manuscript', 'summary'].includes(doc.kind)
         ? flatChapters.findIndex((chapter) => chapter.id === doc.id)
@@ -2353,7 +2416,7 @@ window.__ModuleLoader__.load({
               busy ? h('span', { style: style.muted }, '处理中…') : null,
             ),
             h(TaskDock, {
-              tasks,
+              tasks: mergedTasks,
               style,
               onAll: () => setDialog('tasks'),
               onOpen: (task) => { try { uiWorkspace()?.openSession?.(task.sessionId) } catch {} },
@@ -2413,15 +2476,15 @@ window.__ModuleLoader__.load({
         dialog === 'tasks' ? h(Modal, {
           title: '任务记录', subtitle: '写作台发送到 DSH 会话的任务；失败可重试。', onClose: () => setDialog(null), width: 720,
         },
-          tasks.length
+          mergedTasks.length
             ? h('div', { style: { display: 'grid', gap: 6, maxHeight: '60vh', overflow: 'auto' } },
-              ...tasks.map((item) => h('div', { key: item.id, className: 'dn-card', style: { gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'center', gap: 8 } },
+              ...mergedTasks.map((item) => h('div', { key: item.id, className: 'dn-card', style: { gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'center', gap: 8 } },
                 h('div', { style: { minWidth: 0 } },
                   h('div', { style: { fontWeight: 600, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, item.title),
                   h('div', { style: { fontSize: 10, opacity: 0.55 } }, `${TASK_STATE_LABELS[item.state] ?? item.state}${item.route?.model ? ` · ${item.route.model}${item.route.reasoningEffort ? ` / ${item.route.reasoningEffort}` : ''}` : ''} · ${String(item.createdAt ?? '').replace('T', ' ').slice(0, 16)}`),
                 ),
                 h('div', { style: { display: 'flex', gap: 4 } },
-                  item.state === 'failed' || item.state === 'fallback' || item.state === 'stopped' || item.state === 'done' ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
+                  (item.state === 'failed' || item.state === 'fallback' || item.state === 'stopped' || item.state === 'done') && (item.prompt || item.body) ? h(Btn, { onClick: () => retryTask(item) }, '重试') : null,
                   item.state === 'sent' || item.state === 'sending' || item.state === 'running' || item.state === 'waiting' ? h(Btn, { onClick: () => cancelTask(item) }, '停止') : null,
                   item.sessionId ? h(Btn, { onClick: () => { try { uiWorkspace()?.openSession?.(item.sessionId) } catch {} } }, '打开对话') : null,
                 ),
@@ -2621,7 +2684,11 @@ window.__ModuleLoader__.load({
               ctx.effect(() => {
                 const disposeIcon = slots.register({ name: 'sidebar.panellist', id: MAIN_ID, order: 8, label: '写作台' }, WritingIcon)
                 const disposeMain = slots.register({ name: 'main', key: MAIN_ID }, DeskRoot)
-                return () => { disposeIcon(); disposeMain() }
+                let disposeBadge = () => {}
+                try {
+                  disposeBadge = slots.register({ name: 'conversation.input.right', id: 'deepnovel-task-badge', order: 40, label: '任务' }, TaskBadge)
+                } catch {}
+                return () => { disposeIcon(); disposeMain(); disposeBadge() }
               })
               return
             } catch {

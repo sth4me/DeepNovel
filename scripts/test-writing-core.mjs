@@ -273,6 +273,11 @@ assert.equal(scopesModule.scopeForTask({ title: '未知任务' }).writeAll, true
   assert.equal(queue.snapshot('q2').filter((item) => item.state === 'waiting').length, 1, '只读任务挡住写任务')
   const duplicate = queue.enqueue('q2', { title: '检查', role: 'plan', prompt: 'x', access: { readAll: true } })
   assert.equal(duplicate.duplicate, true, '相同任务应去重')
+  const all = queue.snapshotAll()
+  assert.equal(all.length, 1)
+  assert.equal(all[0].root, 'q2')
+  assert.equal(all[0].active, 2)
+  assert.equal(all[0].tasks.filter((item) => item.state === 'running').length, 1)
 }
 
 function makePdf(text) {

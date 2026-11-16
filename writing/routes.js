@@ -233,6 +233,12 @@ export function registerWritingRoutes(ctx, webServer) {
     return { tasks: taskHub().queue.snapshot(root) }
   })
 
+  register('/deepnovel/api/tasks/all', async () => {
+    const scopes = taskHub().queue.snapshotAll()
+    const running = scopes.reduce((total, item) => total + item.active, 0)
+    return { scopes, running }
+  })
+
   register('/deepnovel/api/run/stop', async (req) => {
     if (req.method !== 'POST') throw new Error('POST only')
     const payload = await body(req)

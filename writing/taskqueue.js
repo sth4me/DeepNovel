@@ -128,5 +128,16 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
     return { cancelled: false, running: false, task: history ?? null }
   }
 
-  return { enqueue, snapshot, cancel }
+  function snapshotAll() {
+    const result = []
+    for (const [root, state] of scopes.entries()) {
+      const tasks = snapshot(root)
+      const active = tasks.filter((task) => task.state === 'running' || task.state === 'waiting')
+      if (active.length === 0 && state.history.length === 0) continue
+      result.push({ root, active: active.length, tasks: tasks.slice(0, 20) })
+    }
+    return result
+  }
+
+  return { enqueue, snapshot, snapshotAll, cancel }
 }
