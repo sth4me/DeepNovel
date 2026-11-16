@@ -233,6 +233,17 @@ assert.equal(statsModule.parseTarget('没有目标'), null)
   await rm(root2, { recursive: true, force: true })
 }
 
+const hubModule = await import('../writing/taskhub.js')
+const noticeText = hubModule.taskNotice({ title: '扩写第一章', state: 'done', sessionId: 'session-1', route: { model: 'mimo-v2.6-flash', reasoningEffort: 'off' } })
+assert.match(noticeText, /后台任务完成/)
+assert.match(noticeText, /扩写第一章/)
+assert.match(noticeText, /mimo-v2\.6-flash/)
+assert.match(noticeText, /汇报/)
+assert.match(noticeText, /不要自行开始新的任务/)
+const failNotice = hubModule.taskNotice({ title: '写正文', state: 'failed', error: '模型不可用' })
+assert.match(failNotice, /失败/)
+assert.match(failNotice, /模型不可用/)
+
 const accessModule = await import('../writing/access.js')
 const scopesModule = await import('../writing/scopes.js')
 const queueModule = await import('../writing/taskqueue.js')

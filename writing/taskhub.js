@@ -69,24 +69,39 @@ export async function ensureTaskRoot(root) {
   queue.hydrate(key, await loadPersisted(key))
 }
 
+/** 通知文本：给主会话的汇报请求，明确不要自行继续开新任务。 */
+export function taskNotice(task) {
+  const label = task.state === 'failed' ? '失败' : task.state === 'stopped' ? '已停止' : '完成'
+  const model = task.route?.model
+    ? `（${task.route.model}${task.route.reasoningEffort ? ` · ${task.route.reasoningEffort}` : ''}）`
+    : ''
+  const parts = [
+    `【后台任务${label}】${task.title}${model}`,
+    task.sessionId ? `会话：${task.sessionId}` : '',
+    task.error ? `错误：${task.error}` : '',
+    `请向用户简短汇报这个结果：任务、状态、用到的模型、结果概要（可打开会话查看），以及建议的下一步。不要自行开始新的任务或继续修改正文，等用户决定。`,
+  ]
+  return parts.filter(Boolean).join('\n')
+}
+
 async function notifyParent(task) {
   const { agents } = services() ?? {}
   const parentId = task.parentSessionId
   if (!parentId || !agents?.get) return
   const parent = agents.get(parentId)
-  if (!parent?.inject) return
-  const label = task.state === 'failed' ? '失败' : task.state === 'stopped' ? '已停止' : '完成'
-  const model = task.route?.model ? `（${task.route.model}${task.route.reasoningEffort ? ` · ${task.route.reasoningEffort}` : ''}）` : ''
+  if (!parent) return
+  const message = {
+    id: `msg-${randomUUID()}`,
+    role: 'user',
+    content: [{ type: 'text', text: taskNotice(task) }],
+    source: { kind: 'user' },
+  }
   try {
-    parent.inject({
-      id: `msg-${randomUUID()}`,
-      role: 'user',
-      content: [{
-        type: 'text',
-        text: `【后台任务${label}】${task.title}${model}${task.sessionId ? ` · 会话 ${task.sessionId}` : ''}${task.error ? ` · ${task.error}` : ''}`,
-      }],
-      source: { kind: 'user' },
-    })
+    if (typeof parent.followup === 'function') {
+      parent.followup(message)
+      return
+    }
+    parent.inject?.(message)
   } catch {
     // 父会话已结束时忽略通知
   }
