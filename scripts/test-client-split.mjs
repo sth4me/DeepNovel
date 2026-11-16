@@ -27,6 +27,7 @@ assert.ok(client.includes('novel_project'), 'AI 任务必须显式打开项目�
 assert.ok(client.includes("label: '构思'"), '核心工作流应包含构思页')
 assert.ok(client.includes("label: '资料'"), '写作台应包含资料库页')
 assert.ok(client.includes('/deepnovel/api/references/import'), '资料库应支持目录导入')
+assert.ok(client.includes('对话内直接改正文'), '项目设置应提供对话内正文开关')
 assert.ok(client.includes('search-empty'), '搜索空结果必须是可展开数组元素')
 assert.ok(client.includes("row('manuscript', chapter.id"), '文档树必须提供正文入口')
 assert.ok(client.includes("kind: chapter.hasManuscript ? 'manuscript' : 'chapter'"), '章节页默认打开正文')

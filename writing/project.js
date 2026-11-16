@@ -16,6 +16,7 @@ import {
 import { FileStore, contentHash, lineDiff } from './storage.js'
 import { listReferences } from './references.js'
 import { normalizeRouting } from './routing.js'
+import { normalizeDialogue } from './dialogue.js'
 
 const DEFAULT_LEDGER = {
   version: 1,
@@ -198,6 +199,17 @@ export class Project {
 
   routing() {
     return normalizeRouting(this.manifest.routing)
+  }
+
+  dialogue() {
+    return normalizeDialogue(this.manifest.dialogue)
+  }
+
+  async setDialogue(patch) {
+    this.manifest.dialogue = normalizeDialogue({ ...this.dialogue(), ...(patch && typeof patch === 'object' ? patch : {}) })
+    this.manifest.updatedAt = new Date().toISOString()
+    await this.save()
+    return this.manifest.dialogue
   }
 
   async setRouting(patch) {

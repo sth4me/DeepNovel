@@ -11,6 +11,8 @@ import { accessForTask } from './scopes.js'
 import { countText, COUNT_RULE, parseTarget, progressOf } from './textstats.js'
 import { countProject } from './count.js'
 import { checkStyle } from './stylecheck.js'
+import { inlineProseBlock } from './dialogue.js'
+import { isQueuedSession } from './taskhub.js'
 
 function textRender(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
@@ -310,6 +312,8 @@ export function registerWritingTools(ctx) {
       if (args.action === 'append' || args.action === 'patch') {
         if (!args.kind || !args.id) throw new Error(`${args.action} 需要 kind 和 id`)
         const project = await openProject(ctx, exec.agent)
+        const blocked = inlineProseBlock({ kind: args.kind, action: args.action, agent: exec.agent, dialogue: project.dialogue(), isQueuedSession })
+        if (blocked) throw new Error(blocked)
         const current = await project.read(args.kind, args.id)
         const finalText = args.action === 'append'
           ? appendText(current.content, args.content ?? '', args.separator ?? '\n\n')
@@ -327,6 +331,8 @@ export function registerWritingTools(ctx) {
       if (args.action === 'propose') {
         if (!args.kind) throw new Error('propose 需要 kind')
         const project = await openProject(ctx, exec.agent)
+        const blocked = inlineProseBlock({ kind: args.kind, action: 'propose', agent: exec.agent, dialogue: project.dialogue(), isQueuedSession })
+        if (blocked) throw new Error(blocked)
         const result = await project.proposeWrite(args.kind, args.id ?? '', args.content ?? '')
         const stats = args.kind === 'manuscript' && args.id
           ? await manuscriptStats(project, args.id, args.content ?? '')
@@ -399,13 +405,14 @@ export function registerWritingTools(ctx) {
         model: { type: 'string' },
         reasoningEffort: { type: 'string' },
         clear: { type: 'boolean', description: 'set 时清空该任务类型的路由，恢复跟随当前会话' },
+        dialogueProseInline: { type: 'boolean', description: '是否允许对话模型直接改正文；默认 false，正文交给 novel_task 的正文模型' },
       },
       required: ['action'],
       additionalProperties: false,
     },
     async execute(args, exec) {
       const project = await openProject(ctx, exec.agent)
-      if (args.action === 'get') return { routing: project.routing(), roles: ROUTE_ROLES }
+      if (args.action === 'get') return { routing: project.routing(), dialogue: project.dialogue(), roles: ROUTE_ROLES }
       if (args.action !== 'set') throw new Error(`未知路由操作：${args.action}`)
       if (!ROUTE_ROLES.some((item) => item.id === args.role)) throw new Error(`未知任务类型：${args.role}`)
       return withWriteLock(ctx, exec.agent, async () => {
@@ -422,7 +429,10 @@ export function registerWritingTools(ctx) {
             },
           }
         const routing = await current.setRouting(next)
-        return { routing, applied: Object.fromEntries(ROUTE_ROLES.map((item) => [item.id, !routeIsEmpty(routing[item.id])])) }
+        const dialogue = typeof args.dialogueProseInline === 'boolean'
+          ? await current.setDialogue({ proseInline: args.dialogueProseInline })
+          : current.dialogue()
+        return { routing, dialogue, applied: Object.fromEntries(ROUTE_ROLES.map((item) => [item.id, !routeIsEmpty(routing[item.id])])) }
       })
     },
   })

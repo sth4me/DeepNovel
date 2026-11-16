@@ -4,6 +4,11 @@ import { createTaskQueue } from './taskqueue.js'
 
 let services = () => ({})
 let configured = false
+const queuedSessions = new Set()
+
+export function isQueuedSession(sessionId) {
+  return queuedSessions.has(String(sessionId ?? ''))
+}
 
 /** 宿主上下文变化时更新服务解析器；幂等。 */
 export function configureTaskHub(resolveServices) {
@@ -41,6 +46,7 @@ const queue = createTaskQueue({
       },
       agentOptions,
     })
+    queuedSessions.add(sessionId)
     control.setSession(sessionId)
     handle.agent.followup(userMessage(String(task.prompt ?? '')))
     await handle.agent.whenIdle()

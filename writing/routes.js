@@ -262,9 +262,13 @@ export function registerWritingRoutes(ctx, webServer) {
     const project = await Project.open(root)
     if (req.method === 'POST') {
       const patch = payload.routing ?? payload
-      return { routing: await withProjectLock(root, () => project.setRouting(patch)), roles: ROUTE_ROLES }
+      const routing = await withProjectLock(root, () => project.setRouting(patch))
+      const dialogue = payload.dialogue
+        ? await withProjectLock(root, () => project.setDialogue(payload.dialogue))
+        : project.dialogue()
+      return { routing, dialogue, roles: ROUTE_ROLES }
     }
-    return { routing: project.routing(), roles: ROUTE_ROLES }
+    return { routing: project.routing(), dialogue: project.dialogue(), roles: ROUTE_ROLES }
   })
 
   register('/deepnovel/api/models', async () => {

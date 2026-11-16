@@ -171,6 +171,15 @@ assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
 
+const dialogueModule = await import('../writing/dialogue.js')
+assert.deepEqual(dialogueModule.normalizeDialogue({}), { proseInline: false })
+assert.deepEqual(dialogueModule.normalizeDialogue({ proseInline: true }), { proseInline: true })
+assert.ok(dialogueModule.inlineProseBlock({ kind: 'manuscript', action: 'append', agent: { id: 's1', options: {} }, dialogue: {} }), '默认对话内正文写入应被拦截')
+assert.equal(dialogueModule.inlineProseBlock({ kind: 'manuscript', action: 'append', agent: { id: 's1', options: {} }, dialogue: { proseInline: true } }), undefined, '开关打开后允许')
+assert.equal(dialogueModule.inlineProseBlock({ kind: 'manuscript', action: 'append', agent: { id: 'q1', options: {} }, dialogue: {}, isQueuedSession: (id) => id === 'q1' }), undefined, '队列子代理允许')
+assert.equal(dialogueModule.inlineProseBlock({ kind: 'chapter', action: 'append', agent: { id: 's1', options: {} }, dialogue: {} }), undefined, '章卡不受限')
+assert.equal(dialogueModule.inlineProseBlock({ kind: 'manuscript', action: 'apply', agent: { id: 's1', options: {} }, dialogue: {} }), undefined, '应用提案不受限')
+
 const styleModule = await import('../writing/stylecheck.js')
 const styleSample = '不是取东西，是带人。\n\n然后他才开门。他把门推开，屋里比外头黑，眼睛适应了几秒才往里走，地上有水。'
 const styleChecked = styleModule.checkStyle(styleSample)

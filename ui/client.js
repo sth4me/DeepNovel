@@ -1436,6 +1436,7 @@ window.__ModuleLoader__.load({
       const [tasks, setTasks] = useState([])
       const [aiTask, setAiTask] = useState(null)
       const [routing, setRouting] = useState(null)
+      const [dialogue, setDialogue] = useState({ proseInline: false })
       const [routeOptions, setRouteOptions] = useState({ providers: [] })
       const [lastSessionId, setLastSessionId] = useState('')
       const [command, setCommand] = useState('')
@@ -1463,6 +1464,7 @@ window.__ModuleLoader__.load({
             ])
             if (!alive) return
             setRouting(route.routing ?? null)
+            setDialogue(route.dialogue ?? { proseInline: false })
             setRouteOptions(models ?? { providers: [] })
           } catch (e) {
             if (alive) setError(String(e?.message ?? e))
@@ -1798,7 +1800,7 @@ window.__ModuleLoader__.load({
           if (routing) {
             await api('/deepnovel/api/routing', {
               method: 'POST',
-              body: JSON.stringify({ projectRoot: root, routing }),
+              body: JSON.stringify({ projectRoot: root, routing, dialogue }),
             })
           }
           await loadTree(root)
@@ -2568,6 +2570,17 @@ window.__ModuleLoader__.load({
             routing
               ? h('div', { style: { display: 'grid', gap: 10 } }, ...ROUTE_ROLES.map(([role, label, hint]) => routeRow(role, label, hint)))
               : h('div', { style: style.muted }, '读取中…'),
+            h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 12 } },
+              h('input', {
+                type: 'checkbox',
+                checked: Boolean(dialogue.proseInline),
+                onChange: (event) => setDialogue({ proseInline: event.target.checked }),
+              }),
+              h('span', null, '对话内直接改正文'),
+            ),
+            h('div', { style: { fontSize: 10, opacity: 0.55, lineHeight: 1.6 } },
+              '关闭时：对话只做编排，正文生成交给 novel_task 的正文模型。打开后：对话模型可以直接写正文。',
+            ),
           ),
           h(ErrorBox, { message: error }),
           h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
