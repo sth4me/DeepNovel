@@ -86,7 +86,10 @@ async function manuscriptStats(project, chapterId, content) {
 }
 
 export function registerWritingTools(ctx) {
-  configureTaskHub(() => ({ agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined }))
+  configureTaskHub(() => ({
+    agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined,
+    subagents: typeof ctx.get === 'function' ? ctx.get('subagents') : undefined,
+  }))
   const register = (tool) => ctx.tools.register({
     ...tool,
     output: jsonOutput,

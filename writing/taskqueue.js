@@ -67,10 +67,13 @@ export function createTaskQueue({ run, cancelRun, onFailed, maxConcurrent = DEFA
         await run(task, { setSession: (sessionId) => { task.sessionId = sessionId } })
         task.state = 'done'
       } catch (error) {
-        task.state = 'failed'
-        task.error = String(error?.message ?? error)
-        try { await onFailed?.(task) } catch {
-          // 通知失败不影响调度
+        const stopped = task.state === 'stopped'
+        task.state = stopped ? 'stopped' : 'failed'
+        if (!stopped) {
+          task.error = String(error?.message ?? error)
+          try { await onFailed?.(task) } catch {
+            // 通知失败不影响调度
+          }
         }
       } finally {
         task.finishedAt = nowIso()

@@ -107,44 +107,69 @@ async function notifyParent(task) {
   }
 }
 
+const controllers = new Map()
+const resumedParents = new Map()
+
+async function resolveParent(agentId) {
+  const { agents } = services() ?? {}
+  if (!agentId || !agents) return undefined
+  const live = agents.get?.(agentId)
+  if (live) return live
+  if (!agents.resume) return undefined
+  if (!resumedParents.has(agentId)) {
+    resumedParents.set(agentId, agents
+      .resume({ resumeSessionId: agentId })
+      .then((handle) => handle.agent)
+      .catch(() => undefined))
+  }
+  return resumedParents.get(agentId)
+}
+
 const queue = createTaskQueue({
   onChange(root, tasks) {
     scheduleSave(root, tasks)
   },
   async run(task, control) {
-    const { agents } = services() ?? {}
-    if (!agents?.create) throw new Error('当前宿主不支持后台子代理执行')
-    const parent = task.parentSessionId ? agents.get?.(task.parentSessionId) : undefined
-    const sessionId = `session-${randomUUID()}`
+    const { subagents } = services() ?? {}
+    if (!subagents?.startActivation) throw new Error('当前宿主不支持后台子代理执行')
+    const parent = await resolveParent(task.parentSessionId)
+    if (!parent) throw new Error('找不到发起任务的会话：请先打开或继续那个对话，再提交任务')
+    const controller = new AbortController()
+    controllers.set(task.id, controller)
     const agentOptions = {}
     if (task.route?.provider) agentOptions.provider = task.route.provider
     if (task.route?.model) agentOptions.model = task.route.model
     if (task.route?.reasoningEffort) agentOptions.reasoningEffort = task.route.reasoningEffort
-    const handle = await agents.create({
-      sessionId,
-      ...(parent ? { parentAgent: parent } : {}),
-      meta: {
+    try {
+      const activation = await subagents.startActivation({
+        provider: 'spawn',
+        label: task.title,
+        delivery: 'caller',
+        signal: controller.signal,
+        parent,
+        prompt: [{ type: 'text', text: String(task.prompt ?? '') }],
         cwd: task.root,
-        ...(task.parentSessionId ? { parentSession: task.parentSessionId } : {}),
-        ...(parent ? { origin: 'subagent', delegationDepth: 1 } : {}),
         agentPreset: 'novel-writer',
-      },
-      agentOptions,
-    })
-    queuedSessions.add(sessionId)
-    control.setSession(sessionId)
-    handle.agent.followup(userMessage(String(task.prompt ?? '')))
-    await handle.agent.whenIdle()
-    await notifyParent({ ...task, state: 'done', sessionId })
+        ...(Object.keys(agentOptions).length ? { agentOptions } : {}),
+      })
+      queuedSessions.add(String(activation.childId))
+      control.setSession(String(activation.childId))
+      const result = await activation.result
+      const stop = String(result?.stopReason ?? '')
+      if (stop && stop !== 'completed') {
+        throw new Error(result?.diagnostic || `子代理未完成：${stop}`)
+      }
+    } finally {
+      controllers.delete(task.id)
+    }
   },
   async onFailed(task) {
     await notifyParent({ ...task, state: 'failed' })
   },
   cancelRun(task) {
-    const { agents } = services() ?? {}
-    const agent = task.sessionId ? agents?.get?.(task.sessionId) : undefined
-    try { agent?.cancel?.({ kind: 'user' }) } catch {
-      // 会话已结束时无需再取消
+    const controller = controllers.get(task.id)
+    try { controller?.abort(new Error('任务已停止')) } catch {
+      // 已经结束
     }
   },
 })

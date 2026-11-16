@@ -249,6 +249,22 @@ const scopesModule = await import('../writing/scopes.js')
 const queueModule = await import('../writing/taskqueue.js')
 
 {
+  let rejectRun
+  const queue = queueModule.createTaskQueue({
+    run: () => new Promise((_resolve, reject) => { rejectRun = reject }),
+    cancelRun: () => {},
+    maxConcurrent: 1,
+  })
+  const queued = queue.enqueue('q5', { title: '写正文', role: 'prose', prompt: 'x', access: { write: ['manuscript/ch1.md'] } })
+  queue.cancel('q5', queued.task.id)
+  rejectRun(new Error('aborted'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const stopped = queue.snapshot('q5').find((item) => item.id === queued.task.id)
+  assert.equal(stopped.state, 'stopped', '停止后的任务不能被失败覆盖')
+}
+
+
+{
   const events = []
   const queue = queueModule.createTaskQueue({ run: () => new Promise(() => {}), maxConcurrent: 2, onChange: (root, tasks) => events.push({ root, count: tasks.length }) })
   queue.enqueue('q3', { title: '写', role: 'prose', prompt: 'a', access: { write: ['manuscript/ch1.md'] } })

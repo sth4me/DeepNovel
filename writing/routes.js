@@ -172,6 +172,7 @@ export function registerWritingRoutes(ctx, webServer) {
 
   const agentServices = () => ({
     agents: typeof ctx.get === 'function' ? ctx.get('agents') : undefined,
+    subagents: typeof ctx.get === 'function' ? ctx.get('subagents') : undefined,
     llm: typeof ctx.get === 'function' ? ctx.get('llm') : undefined,
     defaultModel: typeof ctx.get === 'function' ? ctx.get('agentDefaultModel') : undefined,
   })
