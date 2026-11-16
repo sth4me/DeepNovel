@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { recentAgentError } from './diagnostics.js'
 import { createTaskQueue } from './taskqueue.js'
 
 let services = () => ({})
@@ -140,6 +141,7 @@ const queue = createTaskQueue({
     if (task.route?.provider) agentOptions.provider = task.route.provider
     if (task.route?.model) agentOptions.model = task.route.model
     if (task.route?.reasoningEffort) agentOptions.reasoningEffort = task.route.reasoningEffort
+    let childId = ''
     try {
       const activation = await subagents.startActivation({
         provider: 'spawn',
@@ -152,12 +154,16 @@ const queue = createTaskQueue({
         agentPreset: 'novel-writer',
         ...(Object.keys(agentOptions).length ? { agentOptions } : {}),
       })
-      queuedSessions.add(String(activation.childId))
-      control.setSession(String(activation.childId))
+      childId = String(activation.childId)
+      queuedSessions.add(childId)
+      control.setSession(childId)
       const result = await activation.result
       const stop = String(result?.stopReason ?? '')
       if (stop && stop !== 'completed') {
-        throw new Error(result?.diagnostic || `子代理未完成：${stop}`)
+        const detail = result?.diagnostic || recentAgentError()
+        throw new Error(detail
+          ? `子代理未完成（${stop}，会话 ${childId}）：${detail}`
+          : `子代理未完成（${stop}，会话 ${childId}）：没有拿到错误详情，请查看该会话日志`)
       }
     } finally {
       controllers.delete(task.id)

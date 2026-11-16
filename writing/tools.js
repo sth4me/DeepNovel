@@ -5,7 +5,7 @@ import { fileFor } from './manifest.js'
 import { STAGE_GUIDES, stageGuide } from './prompts.js'
 import { listReferences, readReference, searchReferences } from './references.js'
 import { withProjectLock } from './locks.js'
-import { ROUTE_ROLES, normalizeRouting, resolveRoute, routeIsEmpty } from './routing.js'
+import { ROUTE_ROLES, normalizeRouting, resolveTaskRoute, routeIsEmpty } from './routing.js'
 import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
 import { countText, COUNT_RULE, parseTarget, progressOf } from './textstats.js'
@@ -536,10 +536,16 @@ export function registerWritingTools(ctx) {
         }
       }
       const role = args.role === 'prose' ? 'prose' : 'plan'
-      const route = resolveRoute(project.routing(), role, {
-        provider: base?.provider ?? '',
-        model: base?.model ?? '',
-        efforts,
+      const route = await resolveTaskRoute({
+        routing: project.routing(),
+        role,
+        base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts },
+        resolveEfforts: llm
+          ? async (provider, model) => {
+            const info = await llm.resolveModelInfo(provider, model)
+            return (info.reasoning?.efforts ?? []).map((effort) => String(effort.id))
+          }
+          : undefined,
       })
       const access = accessForTask({
         title: args.title ?? '',

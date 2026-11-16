@@ -91,6 +91,27 @@ export function resolveRoute(routing, role, fallback = {}) {
   }
 }
 
+/**
+ * 解析任务实际使用的路由。可用档位必须来自最终生效的 provider/model，
+ * 否则会出现「把基座模型支持的档位传给另一个模型」的非法组合。
+ */
+export async function resolveTaskRoute({ routing, role, base = {}, resolveEfforts }) {
+  const configured = normalizeRoute(routing?.[role])
+  const provider = configured.provider || base.provider || ''
+  const model = configured.model || base.model || ''
+  let efforts = Array.isArray(base.efforts) ? base.efforts : []
+  if (typeof resolveEfforts === 'function' && provider && model) {
+    try {
+      const resolved = await resolveEfforts(provider, model)
+      if (Array.isArray(resolved)) efforts = resolved
+    } catch {
+      // 目标模型不可用时清空档位，交给执行阶段报出原始错误
+      efforts = []
+    }
+  }
+  return resolveRoute(routing, role, { provider, model, efforts })
+}
+
 export function describeRoute(route) {
   const value = normalizeRoute(route)
   if (!value.provider && !value.model) return '跟随当前会话'

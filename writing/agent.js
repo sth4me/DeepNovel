@@ -2,6 +2,7 @@
 import { LEAD_SYSTEM_PROMPT } from './prompts.js'
 import { registerWritingTools } from './tools.js'
 import { installDirectWriteGuard } from './guard.js'
+import { recordAgentError } from './diagnostics.js'
 
 export const name = '@sth4me/deepnovel/agent'
 
@@ -18,6 +19,13 @@ function optionalService(ctx, name) {
 export function apply(ctx) {
   registerWritingTools(ctx)
   installDirectWriteGuard(ctx)
+  try {
+    ctx.on?.('agent/error', (event) => {
+      recordAgentError(event?.error ?? event)
+    })
+  } catch {
+    // 事件不可用时忽略诊断
+  }
   const systemPrompt = optionalService(ctx, 'systemPrompt')
   if (systemPrompt?.section) {
     systemPrompt.section({

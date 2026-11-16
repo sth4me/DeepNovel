@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { Project } from './project.js'
 import { deleteReference, importReferences, listReferences, readReference, searchReferences, updateReference } from './references.js'
 import { withProjectLock } from './locks.js'
-import { ROUTE_ROLES, normalizeRouting, resolveRoute } from './routing.js'
+import { ROUTE_ROLES, normalizeRouting, resolveTaskRoute } from './routing.js'
 import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
 
@@ -206,10 +206,16 @@ export function registerWritingRoutes(ctx, webServer) {
       }
     }
     const role = payload.role === 'prose' ? 'prose' : 'plan'
-    const route = resolveRoute(project.routing(), role, {
-      provider: base?.provider ?? '',
-      model: base?.model ?? '',
-      efforts,
+    const route = await resolveTaskRoute({
+      routing: project.routing(),
+      role,
+      base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts },
+      resolveEfforts: llm
+        ? async (provider, model) => {
+          const info = await llm.resolveModelInfo(provider, model)
+          return (info.reasoning?.efforts ?? []).map((effort) => String(effort.id))
+        }
+        : undefined,
     })
     const access = accessForTask({
       title: String(payload.title ?? ''),
