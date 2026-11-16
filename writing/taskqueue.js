@@ -8,7 +8,7 @@ function nowIso() {
   return new Date().toISOString()
 }
 
-export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CONCURRENT }) {
+export function createTaskQueue({ run, cancelRun, onFailed, maxConcurrent = DEFAULT_MAX_CONCURRENT, onChange }) {
   const scopes = new Map()
 
   const scope = (root) => {
@@ -18,6 +18,12 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
       scopes.set(root, value)
     }
     return value
+  }
+
+  const notify = (root) => {
+    try { onChange?.(root, snapshot(root)) } catch {
+      // 持久化失败不影响调度
+    }
   }
 
   const publicTask = (task, state) => ({
@@ -55,6 +61,7 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
     task.state = 'running'
     task.startedAt = nowIso()
     state.running.push(task)
+    notify(root)
     void (async () => {
       try {
         await run(task, { setSession: (sessionId) => { task.sessionId = sessionId } })
@@ -62,12 +69,16 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
       } catch (error) {
         task.state = 'failed'
         task.error = String(error?.message ?? error)
+        try { await onFailed?.(task) } catch {
+          // 通知失败不影响调度
+        }
       } finally {
         task.finishedAt = nowIso()
         const index = state.running.indexOf(task)
         if (index >= 0) state.running.splice(index, 1)
         state.history.unshift(publicTask(task))
         if (state.history.length > HISTORY_LIMIT) state.history.length = HISTORY_LIMIT
+        notify(root)
         pump(root)
       }
     })()
@@ -96,6 +107,7 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
     }
     state.waiting.push(task)
     pump(root)
+    notify(root)
     return { task: publicTask(task), duplicate: false, tasks: snapshot(root) }
   }
 
@@ -113,6 +125,7 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
       task.state = 'stopped'
       task.finishedAt = nowIso()
       state.history.unshift(publicTask(task, 'stopped'))
+      notify(root)
       return { cancelled: true, running: false, task: publicTask(task, 'stopped') }
     }
     const running = state.running.find((task) => task.id === taskId)
@@ -122,10 +135,32 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
       try { cancelRun?.(running) } catch {
         // 会话已结束时无需再取消
       }
+      notify(root)
       return { cancelled: true, running: true, task: publicTask(running, 'stopped') }
     }
     const history = state.history.find((task) => task.id === taskId)
     return { cancelled: false, running: false, task: history ?? null }
+  }
+
+  /** 从持久化记录恢复历史；重启时未完成的任务标记为中断。 */
+  function hydrate(root, tasks) {
+    const state = scope(root)
+    if (state.hydrated) return
+    state.hydrated = true
+    const list = Array.isArray(tasks) ? tasks : []
+    for (const item of list.slice(-HISTORY_LIMIT * 2)) {
+      if (!item?.id) continue
+      const state_ = item.state === 'running' || item.state === 'waiting' ? 'stopped' : item.state
+      state.history.push({
+        ...item,
+        state: state_,
+        ...(state_ === 'stopped' && (item.state === 'running' || item.state === 'waiting')
+          ? { error: item.error || '宿主重启，任务已中断' }
+          : {}),
+      })
+    }
+    state.history.sort((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
+    if (state.history.length > HISTORY_LIMIT) state.history.length = HISTORY_LIMIT
   }
 
   function snapshotAll() {
@@ -139,5 +174,5 @@ export function createTaskQueue({ run, cancelRun, maxConcurrent = DEFAULT_MAX_CO
     return result
   }
 
-  return { enqueue, snapshot, snapshotAll, cancel }
+  return { enqueue, snapshot, snapshotAll, cancel, hydrate }
 }

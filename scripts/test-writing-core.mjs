@@ -237,6 +237,25 @@ const accessModule = await import('../writing/access.js')
 const scopesModule = await import('../writing/scopes.js')
 const queueModule = await import('../writing/taskqueue.js')
 
+{
+  const events = []
+  const queue = queueModule.createTaskQueue({ run: () => new Promise(() => {}), maxConcurrent: 2, onChange: (root, tasks) => events.push({ root, count: tasks.length }) })
+  queue.enqueue('q3', { title: '写', role: 'prose', prompt: 'a', access: { write: ['manuscript/ch1.md'] } })
+  assert.ok(events.length >= 1, '入队应触发 onChange')
+  assert.equal(events[0].root, 'q3')
+  queue.hydrate('q4', [
+    { id: 'old-1', title: '旧的正文任务', role: 'prose', state: 'running', createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'old-2', title: '旧的已完成', role: 'plan', state: 'done', createdAt: '2026-01-02T00:00:00.000Z' },
+  ])
+  const hydrated = queue.snapshot('q4')
+  assert.equal(hydrated.find((item) => item.id === 'old-1').state, 'stopped', '重启后未完成任务标记为中断')
+  assert.match(hydrated.find((item) => item.id === 'old-1').error, /中断/)
+  assert.equal(hydrated.find((item) => item.id === 'old-2').state, 'done')
+  queue.hydrate('q4', [{ id: 'ignored', title: 'x', state: 'done' }])
+  assert.equal(queue.snapshot('q4').some((item) => item.id === 'ignored'), false, '重复 hydrate 应被忽略')
+}
+
+
 assert.equal(accessModule.conflicts({ write: ['manuscript/ch1.md'] }, { write: ['manuscript/ch1.md'] }), true, '同文件写写冲突')
 assert.equal(accessModule.conflicts({ write: ['manuscript/ch1.md'] }, { write: ['manuscript/ch2.md'] }), false, '不同文件写写可并行')
 assert.equal(accessModule.conflicts({ write: ['plot/chapters/'] }, { read: ['plot/chapters/ch1.md'] }), true, '目录前缀覆盖读写冲突')

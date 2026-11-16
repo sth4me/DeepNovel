@@ -1,7 +1,7 @@
 // 新宿主/Agent 接入测试：工具注册、HTTP API、写提案。
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -101,6 +101,12 @@ const runStop = await fetch(`${base}/deepnovel/api/run/stop`, {
 })
 const stopBody = await runStop.json()
 assert.equal(stopBody.data.stopped, false)
+
+await new Promise((resolve) => setTimeout(resolve, 400))
+const tasksFile = join(root, '.dsh-writing', 'tasks.json')
+const persisted = JSON.parse(await readFile(tasksFile, 'utf8').catch(() => '{"tasks":[]}'))
+assert.ok(Array.isArray(persisted.tasks), '任务记录应写入 .dsh-writing/tasks.json')
+assert.ok(persisted.tasks.some((item) => item.title === 't'), '任务记录应包含已提交的任务')
 
 const routingGet = await fetch(`${base}/deepnovel/api/routing?projectRoot=${encodeURIComponent(root)}`)
 assert.equal(routingGet.status, 200)

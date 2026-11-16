@@ -215,6 +215,7 @@ export function registerWritingRoutes(ctx, webServer) {
       chapterId: String(payload.chapterId ?? ''),
       access: payload.access,
     })
+    await taskHub().ensureRoot(root)
     const queued = taskHub().queue.enqueue(root, {
       title: payload.title,
       role,
@@ -230,6 +231,7 @@ export function registerWritingRoutes(ctx, webServer) {
   register('/deepnovel/api/tasks', async (req) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const root = projectRoot(url.searchParams.get('projectRoot'))
+    await taskHub().ensureRoot(root)
     return { tasks: taskHub().queue.snapshot(root) }
   })
 

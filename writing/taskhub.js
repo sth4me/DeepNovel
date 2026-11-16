@@ -1,5 +1,7 @@
 // 任务枢纽：路由和工具共用同一个队列，runner 用宿主服务执行子代理。
 import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createTaskQueue } from './taskqueue.js'
 
 let services = () => ({})
@@ -25,7 +27,75 @@ function userMessage(text) {
   }
 }
 
+const TASKS_DIR = '.dsh-writing'
+const TASKS_FILE = 'tasks.json'
+const loadedRoots = new Set()
+const saveTimers = new Map()
+
+function tasksPath(root) {
+  return join(String(root), TASKS_DIR, TASKS_FILE)
+}
+
+async function loadPersisted(root) {
+  try {
+    const raw = await readFile(tasksPath(root), 'utf8')
+    const data = JSON.parse(raw)
+    return Array.isArray(data?.tasks) ? data.tasks : []
+  } catch {
+    return []
+  }
+}
+
+function scheduleSave(root, tasks) {
+  const previous = saveTimers.get(root)
+  if (previous) clearTimeout(previous)
+  saveTimers.set(root, setTimeout(() => {
+    saveTimers.delete(root)
+    void (async () => {
+      try {
+        await mkdir(join(String(root), TASKS_DIR), { recursive: true })
+        await writeFile(tasksPath(root), JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), tasks }, null, 2), 'utf8')
+      } catch {
+        // 项目目录不可写时静默失败，不影响队列
+      }
+    })()
+  }, 250))
+}
+
+export async function ensureTaskRoot(root) {
+  const key = String(root ?? '')
+  if (!key || loadedRoots.has(key)) return
+  loadedRoots.add(key)
+  queue.hydrate(key, await loadPersisted(key))
+}
+
+async function notifyParent(task) {
+  const { agents } = services() ?? {}
+  const parentId = task.parentSessionId
+  if (!parentId || !agents?.get) return
+  const parent = agents.get(parentId)
+  if (!parent?.inject) return
+  const label = task.state === 'failed' ? '失败' : task.state === 'stopped' ? '已停止' : '完成'
+  const model = task.route?.model ? `（${task.route.model}${task.route.reasoningEffort ? ` · ${task.route.reasoningEffort}` : ''}）` : ''
+  try {
+    parent.inject({
+      id: `msg-${randomUUID()}`,
+      role: 'user',
+      content: [{
+        type: 'text',
+        text: `【后台任务${label}】${task.title}${model}${task.sessionId ? ` · 会话 ${task.sessionId}` : ''}${task.error ? ` · ${task.error}` : ''}`,
+      }],
+      source: { kind: 'user' },
+    })
+  } catch {
+    // 父会话已结束时忽略通知
+  }
+}
+
 const queue = createTaskQueue({
+  onChange(root, tasks) {
+    scheduleSave(root, tasks)
+  },
   async run(task, control) {
     const { agents } = services() ?? {}
     if (!agents?.create) throw new Error('当前宿主不支持后台子代理执行')
@@ -50,6 +120,10 @@ const queue = createTaskQueue({
     control.setSession(sessionId)
     handle.agent.followup(userMessage(String(task.prompt ?? '')))
     await handle.agent.whenIdle()
+    await notifyParent({ ...task, state: 'done', sessionId })
+  },
+  async onFailed(task) {
+    await notifyParent({ ...task, state: 'failed' })
   },
   cancelRun(task) {
     const { agents } = services() ?? {}
@@ -61,5 +135,5 @@ const queue = createTaskQueue({
 })
 
 export function taskHub() {
-  return { queue, configured: () => configured }
+  return { queue, ensureRoot: ensureTaskRoot, configured: () => configured }
 }

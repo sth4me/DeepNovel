@@ -1314,30 +1314,101 @@ window.__ModuleLoader__.load({
       sending: '发送中', sent: '已发送', fallback: '已回退', cancelled: '已取消',
     }
 
-    function TaskDock({ tasks, onOpen, onStop, onRetry, onAll, style }) {
-      if (!tasks.length) return null
-      return h('div', { style: { display: 'grid', gap: 2, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, padding: '6px 8px', background: 'var(--dsw-alias-bg-layer-1)' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 } },
+    const TASK_WINDOW_KEY = 'deepnovel.v2.taskWindow'
+
+    function TaskWindow() {
+      const [open, setOpen] = useState(() => { try { return localStorage.getItem(TASK_WINDOW_KEY) === 'open' } catch { return false } })
+      const [scopes, setScopes] = useState([])
+      const [busy, setBusy] = useState('')
+
+      const toggle = (next) => {
+        setOpen((current) => {
+          const value = typeof next === 'boolean' ? next : !current
+          try { localStorage.setItem(TASK_WINDOW_KEY, value ? 'open' : 'closed') } catch {}
+          return value
+        })
+      }
+
+      useEffect(() => {
+        let alive = true
+        const poll = async () => {
+          try {
+            const response = await fetch('/deepnovel/api/tasks/all')
+            const payload = await response.json()
+            if (!alive) return
+            setScopes(Array.isArray(payload?.data?.scopes) ? payload.data.scopes : [])
+          } catch {}
+        }
+        const timer = setInterval(poll, 3000)
+        void poll()
+        const onToggle = () => toggle()
+        window.addEventListener('deepnovel:task-window', onToggle)
+        return () => { alive = false; clearInterval(timer); window.removeEventListener('deepnovel:task-window', onToggle) }
+      }, [])
+
+      const rows = scopes.flatMap((scope) => (scope.tasks ?? []).map((task) => ({ ...task, root: scope.root })))
+      const order = { running: 0, waiting: 0, sending: 1, sent: 1, failed: 2, stopped: 3, cancelled: 3, done: 4 }
+      rows.sort((left, right) => {
+        const rank = (order[left.state] ?? 5) - (order[right.state] ?? 5)
+        if (rank !== 0) return rank
+        return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''))
+      })
+      const running = rows.filter((item) => item.state === 'running').length
+      const waiting = rows.filter((item) => item.state === 'waiting').length
+
+      const stop = async (task) => {
+        setBusy(task.id)
+        try {
+          await fetch('/deepnovel/api/run/stop', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ projectRoot: task.root, taskId: task.id }),
+          })
+        } catch {}
+        setBusy('')
+      }
+      const openSession = (task) => {
+        try { clientScope?.get?.('uiWorkspace')?.openSession?.(task.sessionId) } catch {}
+      }
+
+      if (!open) return null
+      return h('div', {
+        style: {
+          position: 'fixed', right: 16, bottom: 16, width: 400, height: 300,
+          minWidth: 300, minHeight: 180, resize: 'both', overflow: 'auto', zIndex: 900,
+          background: 'var(--dsw-alias-bg-layer-2)', color: 'inherit',
+          border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12,
+          boxShadow: '0 18px 50px rgba(0,0,0,.35)', display: 'grid', gridTemplateRows: 'auto 1fr',
+        },
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--dsw-alias-border-l1)', fontSize: 12 } },
           h('strong', null, '任务'),
-          h('span', { className: 'dn-tree-count' }, String(tasks.filter((item) => item.state === 'running').length || tasks.length)),
+          h('span', { style: { fontSize: 10, opacity: 0.6 } }, `${running} 执行中${waiting ? ` · ${waiting} 排队` : ''}`),
           h('span', { style: { flex: 1 } }),
-          h('button', { type: 'button', style: style.addButton, onClick: onAll }, '全部'),
+          h('button', { type: 'button', onClick: () => toggle(false), style: { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 12 } }, '收起'),
         ),
-        ...tasks.slice(0, 3).map((task) => h('div', { key: task.id, style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '2px 0' } },
-          h('span', {
-            style: {
-              width: 6, height: 6, borderRadius: 3, flex: '0 0 auto',
-              background: task.state === 'running' ? 'var(--dsw-alias-brand-primary)' : task.state === 'done' ? 'var(--dsw-alias-state-success-primary)' : task.state === 'failed' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
-            },
-          }),
-          h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 } }, task.title),
-          task.route?.model ? h('span', { style: { fontSize: 10, opacity: 0.5 } }, `${task.route.model}${task.route.reasoningEffort ? ` · ${task.route.reasoningEffort}` : ''}`) : null,
-          h('span', { style: { flex: 1 } }),
-          h('span', { style: { fontSize: 10, opacity: 0.6 } }, TASK_STATE_LABELS[task.state] ?? task.state),
-          task.sessionId ? h('button', { type: 'button', style: style.addButton, onClick: () => onOpen(task) }, '打开') : null,
-          task.state === 'running' || task.state === 'waiting' ? h('button', { type: 'button', style: style.addButton, onClick: () => onStop(task) }, '停止') : null,
-          task.state === 'failed' || task.state === 'stopped' || task.state === 'done' ? h('button', { type: 'button', style: style.addButton, onClick: () => onRetry(task) }, '重试') : null,
-        )),
+        h('div', { style: { overflow: 'auto', padding: '4px 6px 8px' } },
+          rows.length === 0
+            ? h('div', { style: { padding: 10, fontSize: 11, opacity: 0.6 } }, '没有任务。写作台按钮或对话里用 novel_task 提交后会出现在这里。')
+            : rows.slice(0, 30).map((task) => h('div', { key: `${task.root}:${task.id}`, style: { display: 'flex', alignItems: 'center', gap: 6, padding: '5px 4px', fontSize: 11, borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
+              h('span', {
+                style: {
+                  width: 6, height: 6, borderRadius: 3, flex: '0 0 auto',
+                  background: task.state === 'running' ? 'var(--dsw-alias-brand-primary)' : task.state === 'waiting' ? 'var(--dsw-alias-label-secondary)' : task.state === 'failed' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-success-primary)',
+                },
+              }),
+              h('div', { style: { minWidth: 0, flex: 1, display: 'grid', gap: 1 } },
+                h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, task.title || task.id),
+                h('div', { style: { fontSize: 10, opacity: 0.55, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                  `${task.state === 'running' ? '执行中' : task.state === 'waiting' ? `排队 ${task.position ?? ''}` : task.state === 'failed' ? '失败' : task.state === 'stopped' ? '已停止' : '已完成'}${task.route?.model ? ` · ${task.route.model}` : ''}${task.route?.reasoningEffort ? ` / ${task.route.reasoningEffort}` : ''}`,
+                ),
+              ),
+              task.sessionId ? h('button', { type: 'button', onClick: () => openSession(task), style: { border: 0, background: 'transparent', color: 'var(--dsw-alias-brand-primary)', cursor: 'pointer', fontSize: 11 } }, '打开') : null,
+              task.state === 'running' || task.state === 'waiting'
+                ? h('button', { type: 'button', disabled: busy === task.id, onClick: () => stop(task), style: { border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 11, opacity: 0.7 } }, busy === task.id ? '停止中' : '停止')
+                : null,
+            )),
+        ),
       )
     }
 
@@ -1433,6 +1504,7 @@ window.__ModuleLoader__.load({
         type: 'button',
         title: '打开写作台查看任务',
         onClick: () => {
+          try { window.dispatchEvent(new Event('deepnovel:task-window')) } catch {}
           try { clientScope?.get?.('layout')?.selectPanel?.(MAIN_ID) } catch {}
         },
         style: {
@@ -2415,14 +2487,6 @@ window.__ModuleLoader__.load({
               activity ? h('span', { style: style.muted }, activity) : null,
               busy ? h('span', { style: style.muted }, '处理中…') : null,
             ),
-            h(TaskDock, {
-              tasks: mergedTasks,
-              style,
-              onAll: () => setDialog('tasks'),
-              onOpen: (task) => { try { uiWorkspace()?.openSession?.(task.sessionId) } catch {} },
-              onStop: (task) => { void cancelTask(task) },
-              onRetry: (task) => { void retryTask(task) },
-            }),
             ),
           ),
           (proposal || doc) && inspectorOpen ? h('div', { className: 'dn-inspector' },
@@ -2438,6 +2502,7 @@ window.__ModuleLoader__.load({
             h(Btn, { onClick: () => { setDialog(null); setSearchQuery(''); setSearchResults([]); setDialog('search') } }, '搜索项目'),
             h(Btn, { disabled: busy, onClick: () => { setDialog(null); setExportForm({ scope: 'all', volumeId: '', chapterId: '' }); setDialog('export') } }, '导出 Markdown'),
             h(Btn, { onClick: () => { setDialog(null); setForm({ title: tree.map.title, genre: tree.map.genre, language: tree.map.language, notes: tree.map.notes ?? '' }); setDialog('settings') } }, '项目设置'),
+            h(Btn, { onClick: () => setDialog('tasks') }, '任务记录'),
             h(Btn, { disabled: busy, onClick: async () => { setDialog(null); await loadTree(root); if (doc) await openNode({ kind: doc.kind, id: doc.id }, { force: true }) } }, '刷新项目'),
             h(Btn, { onClick: () => { const next = theme === 'paper' ? 'default' : 'paper'; setTheme(next); try { localStorage.setItem('deepnovel.v2.theme', next) } catch {}; setDialog(null) } }, theme === 'paper' ? '切换清爽主题' : '切换暖色主题'),
             h('div', { style: { height: 1, background: 'var(--dsw-alias-border-l1)', margin: '2px 0' } }),
@@ -2672,7 +2737,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      __test: { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, StepRail, PageView, TaskDock, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
+      __test: { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, StepRail, PageView, TaskBadge, TaskWindow, Welcome, nextAction, normalizeWorkspacePath, findWorkspaceForPath, buildTaskPrompt, withTimeout, sendTaskToSessionWith, dispatchTaskWith },
       inject: ['slots'],
       apply(ctx) {
         clientScope = ctx
@@ -2685,10 +2750,14 @@ window.__ModuleLoader__.load({
                 const disposeIcon = slots.register({ name: 'sidebar.panellist', id: MAIN_ID, order: 8, label: '写作台' }, WritingIcon)
                 const disposeMain = slots.register({ name: 'main', key: MAIN_ID }, DeskRoot)
                 let disposeBadge = () => {}
+                let disposeWindow = () => {}
                 try {
                   disposeBadge = slots.register({ name: 'conversation.input.right', id: 'deepnovel-task-badge', order: 40, label: '任务' }, TaskBadge)
                 } catch {}
-                return () => { disposeIcon(); disposeMain(); disposeBadge() }
+                try {
+                  disposeWindow = slots.register({ name: 'shell.overlay', id: 'deepnovel-task-window', order: 60, label: '任务窗口' }, TaskWindow)
+                } catch {}
+                return () => { disposeIcon(); disposeMain(); disposeBadge(); disposeWindow() }
               })
               return
             } catch {

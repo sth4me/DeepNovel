@@ -28,7 +28,7 @@ globalThis.localStorage = globalThis.window.localStorage
 
 await import('../ui/client.js')
 assert.ok(plugin?.__test, 'client plugin should expose test helpers')
-const { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, PageView, TaskDock, buildTaskPrompt, findWorkspaceForPath, normalizeWorkspacePath, sendTaskToSessionWith, dispatchTaskWith } = plugin.__test
+const { App, DiffView, DocTree, DocumentContext, FlowGuide, LedgerView, MarkdownPreview, ReferencePage, Sidebar, PageView, buildTaskPrompt, findWorkspaceForPath, normalizeWorkspacePath, sendTaskToSessionWith, dispatchTaskWith } = plugin.__test
 
 const emptyMap = { title: '渲染测试', genre: '', notes: '', readiness: { ready: false, missing: ['题材', '写作要求/核心方向'] }, style: {}, world: [], characters: [], plot: { book: { title: '全书主线' }, volumes: [] }, continuity: { ledger: 'continuity/ledger.json' } }
 assert.ok(App({}), 'App should render without crashing')
@@ -49,7 +49,7 @@ assert.ok(String(previewLarge.props.style.fontFamily).includes('Songti'), '衬�
 assert.equal(previewLarge.props.style.maxWidth, 720, '窄版心应生效')
 
 assert.ok(DiffView({ diff: { linesAdded: 1, linesRemoved: 1, changes: [{ line: 1, before: '旧', after: '新' }] }, style: { muted: {} } }), 'DiffView should render')
-assert.ok(TaskDock({ tasks: [{ id: 't1', title: '写正文', state: 'running', sessionId: 's1', route: { model: 'm', reasoningEffort: 'off' } }], onOpen: () => {}, onStop: () => {}, onRetry: () => {}, onAll: () => {}, style: { addButton: {} } }), 'TaskDock should render')
+
 for (const page of ['project', 'premise', 'style', 'bible', 'outline', 'chapters']) {
   const output = PageView({ map: emptyMap, page, style: {}, onOpen: () => {}, onTask: () => {}, onSettings: () => {}, onEditBook: () => {}, onPlanBook: () => {} })
   assert.ok(output, `PageView ${page} should render`)
