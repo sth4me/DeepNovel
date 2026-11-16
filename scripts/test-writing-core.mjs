@@ -233,6 +233,24 @@ assert.equal(statsModule.parseTarget('没有目标'), null)
   await rm(root2, { recursive: true, force: true })
 }
 
+{
+  const briefRoot = await mkdtemp(join(tmpdir(), 'deepnovel-brief-'))
+  const bp = await Project.init(briefRoot, { title: '简报书', genre: '科幻' })
+  await bp.createVolume({ id: 'v1', title: '卷一' })
+  await bp.createChapter({ id: 'ch1', title: '第一章', volumeId: 'v1' })
+  await bp.write('chapter', 'ch1', '# 章卡\n\n篇幅目标：3,500–4,200 字\n')
+  await bp.write('manuscript', 'ch1', '已有正文。'.repeat(20))
+  const briefModule = await import('../writing/brief.js')
+  const brief = await briefModule.buildTaskBrief(bp, { role: 'prose', chapterId: 'ch1' })
+  assert.match(brief, /任务简报/)
+  assert.match(brief, /简报书/)
+  assert.match(brief, /第一章/)
+  assert.match(brief, /3,500/)
+  assert.match(brief, /不要为了“了解一下”去全项目搜索|不要为了/)
+  assert.match(brief, /action=append/)
+  await rm(briefRoot, { recursive: true, force: true })
+}
+
 const hubModule = await import('../writing/taskhub.js')
 const noticeText = hubModule.taskNotice({ title: '扩写第一章', state: 'done', sessionId: 'session-1', route: { model: 'mimo-v2.6-flash', reasoningEffort: 'off' } })
 assert.match(noticeText, /后台任务完成/)

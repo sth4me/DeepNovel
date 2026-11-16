@@ -11,6 +11,7 @@ import { accessForTask } from './scopes.js'
 import { countText, COUNT_RULE, parseTarget, progressOf } from './textstats.js'
 import { countProject } from './count.js'
 import { checkStyle } from './stylecheck.js'
+import { buildTaskBrief } from './brief.js'
 import { inlineProseBlock } from './dialogue.js'
 import { isQueuedSession } from './taskhub.js'
 
@@ -554,10 +555,18 @@ export function registerWritingTools(ctx) {
           ? { write: args.write ?? [], read: args.read ?? [], writeAll: args.writeAll === true }
           : undefined,
       })
+      let brief = ''
+      if (role === 'prose' || args.chapterId) {
+        try {
+          brief = await buildTaskBrief(project, { role, chapterId: String(args.chapterId ?? '') })
+        } catch {
+          brief = ''
+        }
+      }
       return hub.enqueue(root, {
         title: args.title ?? String(args.prompt).slice(0, 40),
         role,
-        prompt: String(args.prompt),
+        prompt: brief ? `${String(args.prompt)}\n\n${brief}` : String(args.prompt),
         parentSessionId: String(exec.agent?.id ?? ''),
         route,
         access,

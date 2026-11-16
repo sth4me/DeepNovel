@@ -108,6 +108,7 @@ async function notifyParent(task) {
   }
 }
 
+const TASK_TIMEOUT_MS = 20 * 60 * 1000
 const controllers = new Map()
 const resumedParents = new Map()
 
@@ -157,7 +158,17 @@ const queue = createTaskQueue({
       childId = String(activation.childId)
       queuedSessions.add(childId)
       control.setSession(childId)
-      const result = await activation.result
+      let timer
+      const timeout = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          try { controller.abort(new Error('任务超时')) } catch {
+            // 已结束
+          }
+          reject(new Error(`任务超时（${Math.round(TASK_TIMEOUT_MS / 60000)} 分钟），已自动停止`))
+        }, TASK_TIMEOUT_MS)
+        timer.unref?.()
+      })
+      const result = await Promise.race([activation.result, timeout]).finally(() => clearTimeout(timer))
       const stop = String(result?.stopReason ?? '')
       if (stop && stop !== 'completed') {
         const detail = result?.diagnostic || recentAgentError()
@@ -177,6 +188,7 @@ const queue = createTaskQueue({
     try { controller?.abort(new Error('任务已停止')) } catch {
       // 已经结束
     }
+    void notifyParent({ ...task, state: 'stopped' })
   },
 })
 

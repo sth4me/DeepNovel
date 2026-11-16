@@ -7,6 +7,7 @@ import { withProjectLock } from './locks.js'
 import { ROUTE_ROLES, normalizeRouting, resolveTaskRoute } from './routing.js'
 import { configureTaskHub, taskHub } from './taskhub.js'
 import { accessForTask } from './scopes.js'
+import { buildTaskBrief } from './brief.js'
 
 function json(res, status, value) {
   const body = JSON.stringify(value)
@@ -223,10 +224,21 @@ export function registerWritingRoutes(ctx, webServer) {
       access: payload.access,
     })
     await taskHub().ensureRoot(root)
+    const taskPrompt = String(payload.prompt ?? '')
+    let brief = ''
+    if (role === 'prose' || payload.chapterId) {
+      try {
+        brief = await buildTaskBrief(project, { role, chapterId: String(payload.chapterId ?? '') })
+      } catch {
+        brief = ''
+      }
+    }
     const queued = taskHub().queue.enqueue(root, {
       title: payload.title,
       role,
-      prompt: String(payload.prompt ?? ''),
+      prompt: brief ? `${taskPrompt}
+
+${brief}` : taskPrompt,
       parentSessionId,
       route,
       access,
