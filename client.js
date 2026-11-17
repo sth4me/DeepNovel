@@ -293,6 +293,8 @@ window.__ModuleLoader__.load({
 .nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:10px;cursor:pointer;padding:0 2px}
 .nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
+.nw-filetree + div .nw-workbench{grid-template-columns:minmax(0,1fr)}
+.nw-filetree + div .nw-list{display:none}
 .nw-filetree-chapter.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .nw-filetree-open{border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
 .nw-filetree-open:hover{color:var(--dsw-alias-brand-primary)}
@@ -345,6 +347,9 @@ window.__ModuleLoader__.load({
 .nw-stage{flex:1;min-width:0;overflow:auto;padding:24px 30px;scrollbar-width:thin}
 .nw-stage-inner{max-width:1120px;margin:0 auto}
 .nw-inspector{width:330px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
+.nw-insp-section{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.nw-insp-divider{height:1px;background:var(--dsw-alias-border-l1);margin:6px 0}
+.nw-inspector-embedded{width:auto;flex:none;border:none;padding:0;position:static;max-height:none;overflow:visible;background:transparent}
 .nw-insp-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:6;background:transparent}
 .nw-insp-resizer:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent)}
 .nw-insp-tabs{display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto}
@@ -373,9 +378,6 @@ window.__ModuleLoader__.load({
 .nw-sticky-actions .nw-btn{min-height:29px;padding:4px 10px;font-size:11px;flex:0 0 auto}
 .nw-sticky-actions-note{font-size:10px;color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .nw-sticky-sep{width:1px;height:18px;background:var(--dsw-alias-border-l1);margin:0 2px;flex:0 0 auto}
-.nw-workspace-switch{display:inline-flex;gap:3px;padding:3px;margin:0 0 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
-.nw-workspace-tab{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;padding:5px 14px;border-radius:7px;cursor:pointer}
-.nw-workspace-tab.active{background:var(--dsw-alias-brand-primary);color:#fff;font-weight:600}
 .nw-chapter-sticky .nw-more{position:relative}
 .nw-sticky-more{position:absolute;right:0;top:calc(100% + 6px);z-index:30;display:flex;flex-direction:column;gap:4px;min-width:150px;padding:6px;border:1px solid var(--dsw-alias-border-l2);border-radius:9px;background:var(--dsw-alias-bg-overlay);box-shadow:0 12px 30px rgba(0,0,0,.28)}
 .nw-sticky-more .nw-btn{justify-content:flex-start;width:100%}
@@ -2545,7 +2547,15 @@ window.__ModuleLoader__.load({
 
       const inspector = h('div', { className: 'nw-inspector', style: { width: `${inspWidth}px` } },
         h('div', { className: 'nw-insp-resizer', onMouseDown: startInspResize, title: '拖动调整面板宽度' }),
-        h('div', { className: 'nw-insp-body' }, flowInspector),
+        h('div', { className: 'nw-insp-body' },
+          (tab === 'outline' || tab === 'chapters')
+            ? h('div', { className: 'nw-insp-section' },
+                h(ChapterInspector, { state, root, mode: tab, focusChapter, setTab, embedded: true }),
+                h('div', { className: 'nw-insp-divider' }),
+              )
+            : null,
+          flowInspector,
+        ),
       )
 
       const taskEntries = Object.entries(running)
@@ -3478,7 +3488,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterInspector({ state, root, mode, focusChapter, setTab }) {
+    function ChapterInspector({ state, root, mode, focusChapter, setTab, embedded }) {
       const [detail, setDetail] = useState(null)
       const [previous, setPrevious] = useState(null)
       const [loading, setLoading] = useState(false)
@@ -3515,8 +3525,9 @@ window.__ModuleLoader__.load({
         return () => { alive = false }
       }, [root, number, valid])
 
+      const shellClass = `nw-inspector${embedded ? ' nw-inspector-embedded' : ''}`
       if (!valid || !chapter) {
-        return h('div', { className: 'nw-inspector' },
+        return h('div', { className: shellClass },
           h('div', { className: 'nw-inspector-title' }, '本章对照'),
           h('div', { className: 'nw-muted', style: { padding: '6px 4px', fontSize: '12px' } }, '在左侧目录选择一章，这里会显示章卡与正文的对照信息。'),
         )
@@ -3530,7 +3541,7 @@ window.__ModuleLoader__.load({
       const plant = Array.isArray(chapter.plant) ? chapter.plant : []
       const payoff = Array.isArray(chapter.payoff) ? chapter.payoff : []
 
-      return h('div', { className: 'nw-inspector' },
+      return h('div', { className: shellClass },
         h('div', { className: 'nw-inspector-title' }, `第 ${number} 章对照`),
         h('div', { className: 'nw-inspector-row' }, h('span', null, '标题'), h('b', null, chapter.title ?? '未命名')),
         h('div', { className: 'nw-inspector-row' }, h('span', null, '卷'), h('span', null, chapter.volumeTitle ?? '—')),
@@ -3612,60 +3623,24 @@ window.__ModuleLoader__.load({
           volumes.map(volumeGroup),
         )
       })()
-      return h('div', null,
-        h('div', { className: 'nw-workspace-switch' },
-          h('button', {
-            type: 'button',
-            className: `nw-workspace-tab${isOutline ? ' active' : ''}`,
-            onClick: () => setTab('outline'),
-          }, '章纲'),
-          h('button', {
-            type: 'button',
-            className: `nw-workspace-tab${isOutline ? '' : ' active'}`,
-            onClick: () => setTab('chapters'),
-          }, '正文'),
-        ),
-        tree
-          ? h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
-            tree,
-            h('div', { style: { flex: 1, minWidth: 0 } },
-        isOutline
-          ? h(OutlineWorkbench, {
-              state, run, busy, setToast, focusChapter,
-              onSelectChapter,
-              runIssueAction,
-              showIssuesModal,
-              onOpenChapter: (number) => openChapter?.(number),
-            })
-          : h(ChaptersWorkbench, {
-              state, root, run, busy, setToast, focusChapter,
-              onSelectChapter,
-              runIssueAction,
-              showIssuesModal,
-              onOpenOutline: (number) => openOutline?.(number),
-            }),
-            ),
-            h(ChapterInspector, { state, root, mode, focusChapter, setTab }),
-          )
-        : h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
-          h('div', { style: { flex: 1, minWidth: 0 } },
-            isOutline
-              ? h(OutlineWorkbench, {
-                  state, run, busy, setToast, focusChapter,
-                  onSelectChapter,
-                  runIssueAction,
-                  showIssuesModal,
-                  onOpenChapter: (number) => openChapter?.(number),
-                })
-              : h(ChaptersWorkbench, {
-                  state, root, run, busy, setToast, focusChapter,
-                  onSelectChapter,
-                  runIssueAction,
-                  showIssuesModal,
-                  onOpenOutline: (number) => openOutline?.(number),
-                }),
-          ),
-          h(ChapterInspector, { state, root, mode, focusChapter, setTab }),
+      return h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
+        tree,
+        h('div', { style: { flex: 1, minWidth: 0 } },
+          isOutline
+            ? h(OutlineWorkbench, {
+                state, run, busy, setToast, focusChapter,
+                onSelectChapter,
+                runIssueAction,
+                showIssuesModal,
+                onOpenChapter: (number) => openChapter?.(number),
+              })
+            : h(ChaptersWorkbench, {
+                state, root, run, busy, setToast, focusChapter,
+                onSelectChapter,
+                runIssueAction,
+                showIssuesModal,
+                onOpenOutline: (number) => openOutline?.(number),
+              }),
         ),
       )
     }
@@ -4865,6 +4840,77 @@ window.__ModuleLoader__.load({
           desc: '左边选章，右边阅读与操作；审校、修订与定稿都在本页完成。',
           hints: ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
         }),
+        (() => {
+          const numbers = chapters.map((item) => Number(item.number)).filter((number) => Number.isFinite(number)).sort((a, b) => a - b)
+          const first = numbers[0]
+          const last = numbers[numbers.length - 1]
+          const volumeId = volumeFilter !== 'all' ? volumeFilter : undefined
+          const confirmChapter = async () => {
+            if (!(await requestConfirm({ title: '确认本章章纲', message: `确认第 ${selected} 章章纲？`, confirmLabel: '确认' }))) return
+            run('outline-commit', { fromChapter: selected, toChapter: selected }, { toast: `第 ${selected} 章章纲已确认` })
+          }
+          const confirmVolume = async () => {
+            if (!(await requestConfirm({ title: '确认本卷章纲', message: `确认第 ${first}–${last} 章章纲？`, confirmLabel: '确认' }))) return
+            run('outline-commit', { fromChapter: first, toChapter: last }, { toast: '本卷章纲已确认' })
+          }
+          return h('div', { className: 'nw-actions', style: { marginBottom: '8px', flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy || Boolean(lockMsg('outline-generate', { count: 3 })),
+              title: '在现有章纲之后再生成 3 章',
+              onClick: () => run('outline-generate', { count: 3, volumeId }, { toast: '已生成后 3 章章纲' }),
+            }, '生成后 3 章章纲'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy || !Number.isFinite(Number(selected)) || Boolean(lockMsg('outline-generate', { fromChapter: selected, toChapter: selected })),
+              title: '按现有要求重写本章章纲（会覆盖并重置为待确认）',
+              onClick: () => run('outline-generate', { fromChapter: selected, toChapter: selected, regenerate: true, volumeId }, { toast: `第 ${selected} 章章纲已重写` }),
+            }, '重生成本章章纲'),
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: confirmChapter }, '确认本章章纲'),
+            last > first
+              ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: confirmVolume }, '确认本卷章纲')
+              : null,
+            (state?.outlineAudit?.issues?.length ?? 0) > 0
+              ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: `大纲体检发现 ${state.outlineAudit.issues.length} 个问题`, onClick: () => run('outline-repair', {}, { toast: '已修复大纲问题' }) }, `修复大纲（${state.outlineAudit.issues.length}）`)
+              : null,
+            h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => onOpenOutline?.(selected) }, '编辑本章章卡'),
+            h('div', { style: { width: '1px', height: '20px', background: 'var(--dsw-alias-border-l1)', margin: '0 4px' } }),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn',
+              disabled: busy,
+              title: '从当前章开始连续写 3 章（跳过已有草稿）',
+              onClick: async () => {
+                if (!(await requestConfirm({ title: '连续写章', message: `从第 ${selected} 章起连续写 3 章？`, confirmLabel: '开始写' }))) return
+                run('chapter-batch', { fromChapter: selected, count: 3 }, { toast: '已开始连续写章' })
+              },
+            }, '连续写 3 章'),
+            volumeId
+              ? h('button', {
+                  type: 'button',
+                  className: 'nw-btn',
+                  disabled: busy,
+                  title: '把本卷已写草稿的章节采纳为定稿',
+                  onClick: async () => {
+                    if (!(await requestConfirm({ title: '定稿本卷', message: '把本卷已写草稿的章节全部采纳为定稿？', confirmLabel: '定稿' }))) return
+                    run('chapter-approve-volume', { volumeId }, { toast: '本卷已定稿' })
+                  },
+                }, '定稿本卷')
+              : null,
+            h('button', {
+              type: 'button',
+              className: 'nw-btn ghost',
+              disabled: busy,
+              title: '把全部已写草稿的章节采纳为定稿',
+              onClick: async () => {
+                if (!(await requestConfirm({ title: '定稿全部', message: '把全部已写草稿的章节采纳为定稿？', confirmLabel: '定稿' }))) return
+                run('chapter-approve-all', {}, { toast: '已全部定稿' })
+              },
+            }, '定稿全部'),
+          )
+        })(),
         (() => {
           const current = (state?.issues?.items ?? []).filter((issue) => Number(issue.chapter) === Number(selected) && (issue.source === 'chapter' || issue.source === 'state'))
           if (current.length === 0) return null
