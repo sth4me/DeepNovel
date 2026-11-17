@@ -10332,6 +10332,158 @@ ${sections.join('\n')}
     }
   }
 
+  /* ------------------------------ 写入提案（写盘前 diff 审阅） ------------------------------ */
+
+  proposalsFile() {
+    return 'story/proposals/index.json'
+  }
+
+  async readProposalDoc(agent) {
+    const doc = await this.readJson(agent, this.proposalsFile()).catch(() => null)
+    return { proposals: Array.isArray(doc?.proposals) ? doc.proposals : [] }
+  }
+
+  async writeProposalDoc(agent, doc) {
+    const pending = doc.proposals.filter((item) => item.status === 'pending')
+    const done = doc.proposals
+      .filter((item) => item.status !== 'pending')
+      .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
+      .slice(0, 20)
+    await this.writeJson(agent, this.proposalsFile(), { proposals: [...pending, ...done] })
+  }
+
+  async listProposals(agent) {
+    const doc = await this.readProposalDoc(agent)
+    return {
+      proposals: doc.proposals
+        .filter((item) => item.status === 'pending')
+        .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
+    }
+  }
+
+  diffStat(before, after) {
+    const oldParts = String(before ?? '').split(/\n+/).map((part) => part.trim()).filter(Boolean)
+    const newParts = String(after ?? '').split(/\n+/).map((part) => part.trim()).filter(Boolean)
+    const oldSet = new Set(oldParts)
+    const newSet = new Set(newParts)
+    const added = newParts.filter((part) => !oldSet.has(part))
+    const removed = oldParts.filter((part) => !newSet.has(part))
+    return {
+      addedParagraphs: added.length,
+      removedParagraphs: removed.length,
+      addedChars: added.join('').length,
+      removedChars: removed.join('').length,
+    }
+  }
+
+  async proposeChapterText(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    const after = String(options.text ?? '')
+    if (!after.trim()) throw new Error('正文不能为空')
+    const { chapter } = await this.findOutlineChapter(agent, number)
+    if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const paths = this.chapterPaths(number)
+    const draft = await this.readText(agent, paths.draft).catch(() => '')
+    const final = await this.readText(agent, paths.final).catch(() => '')
+    const before = draft || final || ''
+    if (before.trim() === after.trim()) return { status: 'unchanged', number }
+    const doc = await this.readProposalDoc(agent)
+    const id = `prop-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const proposal = {
+      id,
+      kind: 'chapter-text',
+      number,
+      title: chapter.title ?? `第 ${number} 章`,
+      before,
+      after,
+      beforeHash: this.hashInputs(before),
+      source: String(options.source ?? 'assistant').slice(0, 80),
+      status: 'pending',
+      createdAt: now(),
+      diff: this.diffStat(before, after),
+      wordCount: countChars(after),
+    }
+    doc.proposals.push(proposal)
+    await this.writeProposalDoc(agent, doc)
+    return { status: 'proposed', id, number, diff: proposal.diff, wordCount: proposal.wordCount }
+  }
+
+  async proposeChapterCard(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const number = Number(options.number)
+    const { chapter } = await this.findOutlineChapter(agent, number)
+    if (!chapter) throw new Error(`找不到第 ${number} 章章纲`)
+    const fields = options.fields && typeof options.fields === 'object' ? options.fields : {}
+    const before = {
+      title: chapter.title ?? '',
+      wordBudget: chapter.wordBudget ?? null,
+      synopsis: chapter.synopsis ?? '',
+    }
+    const after = { ...before, ...fields }
+    if (JSON.stringify(before) === JSON.stringify(after)) return { status: 'unchanged', number }
+    const doc = await this.readProposalDoc(agent)
+    const id = `prop-${Date.now()}-${randomUUID().slice(0, 8)}`
+    const proposal = {
+      id,
+      kind: 'chapter-card',
+      number,
+      chapterId: chapter.id,
+      title: chapter.title ?? `第 ${number} 章`,
+      before,
+      after,
+      beforeHash: this.hashInputs(before),
+      source: String(options.source ?? 'assistant').slice(0, 80),
+      status: 'pending',
+      createdAt: now(),
+    }
+    doc.proposals.push(proposal)
+    await this.writeProposalDoc(agent, doc)
+    return { status: 'proposed', id, number, before, after }
+  }
+
+  async applyProposal(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const id = String(options.id ?? '')
+    const doc = await this.readProposalDoc(agent)
+    const proposal = doc.proposals.find((item) => item.id === id && item.status === 'pending')
+    if (!proposal) throw new Error('提案不存在或已处理')
+    if (proposal.kind === 'chapter-text') {
+      const paths = this.chapterPaths(proposal.number)
+      const draft = await this.readText(agent, paths.draft).catch(() => '')
+      const final = await this.readText(agent, paths.final).catch(() => '')
+      const current = draft || final || ''
+      if (current !== proposal.before) {
+        return { applied: false, conflict: true, id, currentText: current }
+      }
+      const saved = await this.saveChapterText(agent, { number: proposal.number, text: proposal.after })
+      proposal.status = 'applied'
+      proposal.appliedAt = now()
+      await this.writeProposalDoc(agent, doc)
+      return { applied: true, id, ...saved }
+    }
+    if (proposal.kind === 'chapter-card') {
+      await this.updateOutlineChapter(agent, { chapterId: proposal.chapterId, fields: proposal.after })
+      proposal.status = 'applied'
+      proposal.appliedAt = now()
+      await this.writeProposalDoc(agent, doc)
+      return { applied: true, id, kind: 'chapter-card', fields: proposal.after }
+    }
+    throw new Error('未知提案类型')
+  }
+
+  async rejectProposal(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const id = String(options.id ?? '')
+    const doc = await this.readProposalDoc(agent)
+    const proposal = doc.proposals.find((item) => item.id === id && item.status === 'pending')
+    if (!proposal) throw new Error('提案不存在或已处理')
+    proposal.status = 'rejected'
+    proposal.rejectedAt = now()
+    await this.writeProposalDoc(agent, doc)
+    return { rejected: true, id }
+  }
+
   async saveChapterText(agent, options = {}) {
     await this.assertInitialized(agent)
     const number = Number(options.number)

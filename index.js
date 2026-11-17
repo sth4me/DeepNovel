@@ -1431,6 +1431,16 @@ export function apply(ctx) {
         return service.restoreRevision(agent, { number: params.number, name: params.name })
       case 'chapter-save-text':
         return service.saveChapterText(agent, { number: params.number, text: params.text })
+      case 'proposals-list':
+        return service.listProposals(agent)
+      case 'proposal-apply':
+        return service.applyProposal(agent, { id: params.id })
+      case 'proposal-reject':
+        return service.rejectProposal(agent, { id: params.id })
+      case 'propose-chapter-text':
+        return service.proposeChapterText(agent, { number: params.number, text: params.text, source: params.source })
+      case 'propose-chapter-card':
+        return service.proposeChapterCard(agent, { number: params.number, fields: params.fields, source: params.source })
       case 'chapter-clear-revisions':
         return service.clearRevisions(agent, { number: params.number, keep: params.keep })
       case 'find-orphans':

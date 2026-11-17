@@ -361,7 +361,23 @@ export function apply(ctx) {
     async execute(args, exec) {
       const service = getNovelWriter()
       if (args?.action === 'templates') return service.styleTemplateList(exec.agent)
-      if (args?.action === 'save') {
+      if (args?.action === 'propose') {
+      return service.proposeChapterText(exec.agent, {
+        number: args?.number,
+        text: args?.text,
+        source: 'assistant',
+      })
+    }
+    if (args?.action === 'proposals') {
+      return service.listProposals(exec.agent)
+    }
+    if (args?.action === 'apply-proposal') {
+      return service.applyProposal(exec.agent, { id: args?.id })
+    }
+    if (args?.action === 'reject-proposal') {
+      return service.rejectProposal(exec.agent, { id: args?.id })
+    }
+    if (args?.action === 'save') {
         return service.saveStyleTemplate(exec.agent, { name: args?.name, fields: args?.fields })
       }
       if (args?.action === 'update') return service.updateStyleFields(exec.agent, args?.fields ?? {})
@@ -747,7 +763,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'read', 'search', 'draft', 'batch', 'qa', 'audit', 'style-audit', 'revision-learn', 'deslop', 'fix', 'autofix', 'revise', 'save', 'patch', 'approve', 'delete', 'delete-tail'] },
+        action: { type: 'string', enum: ['list', 'read', 'search', 'propose', 'proposals', 'apply-proposal', 'reject-proposal', 'draft', 'batch', 'qa', 'audit', 'style-audit', 'revision-learn', 'deslop', 'fix', 'autofix', 'revise', 'save', 'patch', 'approve', 'delete', 'delete-tail'] },
         rounds: { type: 'number', description: 'fix/autofix 的修复轮数，1–3，默认 1/2' },
         count: { type: 'number', description: 'batch 时连续生成的章数，1–5；delete-tail 时删除的尾部章数' },
         number: { type: 'number', description: '章节号（read/search/patch 等需要）' },
