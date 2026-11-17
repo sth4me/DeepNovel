@@ -275,6 +275,9 @@ window.__ModuleLoader__.load({
 .nw-model-row{display:grid;grid-template-columns:120px minmax(0,1fr) 150px;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .nw-model-row:last-child{border-bottom:none}
 .nw-model-head{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);padding-top:2px}
+.nw-model-row-wrap{display:flex;flex-direction:column;gap:0}
+.nw-model-group{margin-top:10px;margin-bottom:2px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dsw-alias-label-secondary)}
+.nw-model-effective{grid-column:1 / -1;font-size:10.5px;color:var(--dsw-alias-label-secondary);opacity:.7}
 .nw-model-task{display:flex;gap:6px;align-items:center;font-size:11.5px;min-width:0}
 @media (max-width:900px){.nw-model-row{grid-template-columns:1fr}}
 .nw-filetree{width:300px;flex:0 0 300px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
@@ -5414,15 +5417,15 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
     }
     const NEXT_LABELS = { init: '初始化项目', premise: '确认构思', style: '确认文风', bible: '确认设定', outline: '生成并确认章纲', draft: '生成章节草稿（下一步）' }
     const MODEL_TASKS = [
-      { id: 'premise', label: '构思' },
-      { id: 'bible', label: '设定' },
-      { id: 'outline', label: '章纲' },
-      { id: 'draft', label: '正文草稿', prose: true },
-      { id: 'revise', label: '正文修订', prose: true },
-      { id: 'fix', label: '质检修复', prose: true },
-      { id: 'audit', label: '风格审稿' },
-      { id: 'summary', label: '章节摘要' },
-      { id: 'continuity', label: '连续性检查' },
+      { id: 'premise', label: '构思', group: '创作前段' },
+      { id: 'bible', label: '设定', group: '创作前段' },
+      { id: 'outline', label: '章纲', group: '创作前段' },
+      { id: 'draft', label: '正文草稿', prose: true, group: '正文' },
+      { id: 'revise', label: '正文修订', prose: true, group: '正文' },
+      { id: 'fix', label: '质检修复', prose: true, group: '正文' },
+      { id: 'audit', label: '风格审稿', group: '质检与连续性' },
+      { id: 'summary', label: '章节摘要', group: '质检与连续性' },
+      { id: 'continuity', label: '连续性检查', group: '质检与连续性' },
     ]
 
     const STATUS_LABELS = {
@@ -7425,7 +7428,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           : null,
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '模型分配'),
-          h('p', { className: 'nw-muted' }, '默认继承 DSH 当前模型；也可以给不同任务单独指定模型与思考等级。正文类任务建议关闭思考或使用低等级。'),
+          h('p', { className: 'nw-muted' }, '对话模型（DSH 会话当前模型）只负责理解需求与调用工具；真正的生成与审校走下面按任务指定的模型。留空即继承默认。正文类任务建议关闭思考或使用低等级。'),
           catalog
             ? h('div', null,
                 h('div', { className: 'nw-model-row nw-model-head' },
@@ -7433,7 +7436,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   h('span', null, '模型'),
                   h('span', null, '思考等级'),
                 ),
-                MODEL_TASKS.map((task) => {
+                MODEL_TASKS.map((task, taskIndex) => {
+                  const groupChanged = taskIndex === 0 || MODEL_TASKS[taskIndex - 1].group !== task.group
                   const selection = taskModel(task.id)
                   const value = selection.config?.provider ? `${selection.config.provider}::${selection.config.model}` : ''
                   const efforts = selection.info?.reasoning?.efforts ?? []
@@ -7445,7 +7449,9 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                       : selection.inherited
                         ? `继承默认（${effortLabel(effective?.reasoningEffort) || '模型默认'}）`
                         : '模型默认'
-                  return h('div', { key: task.id, className: 'nw-model-row' },
+                  return h('div', { key: task.id, className: 'nw-model-row-wrap' },
+                    groupChanged ? h('div', { className: 'nw-model-group' }, task.group) : null,
+                    h('div', { className: 'nw-model-row' },
                     h('div', { className: 'nw-model-task' },
                       task.label,
                       task.prose ? h('span', { className: 'nw-badge cur' }, '正文') : null,
@@ -7472,6 +7478,9 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                         h('option', { key: effort.id, value: effort.id }, effortLabel(effort.id) || effort.name || effort.id),
                       ),
                     ),
+                    h('span', { className: 'nw-model-effective' },
+                      selection.inherited ? `生效：${defaultModelLabel}` : '生效：已覆盖'),
+                    ),
                   )
                 }),
                 h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
@@ -7484,6 +7493,15 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   : null,
                 h('div', { className: 'nw-actions' },
                   h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: () => run('project-update', { fields: { models } }, { toast: '模型分配已保存' }) }, '保存模型分配'),
+                  h('button', {
+                    type: 'button',
+                    className: 'nw-btn',
+                    disabled: busy || Object.keys(models).length === 0,
+                    onClick: () => {
+                      setModels({})
+                      run('project-update', { fields: { models: {} } }, { toast: '已全部改为继承默认' })
+                    },
+                  }, '全部继承默认'),
                 ),
               )
             : h('div', { className: 'nw-muted' }, '正在读取 DSH 模型列表…'),
