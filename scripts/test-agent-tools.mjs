@@ -33,7 +33,11 @@ const { apply } = await import('../agent.js')
 setNovelWriter(service)
 
 const tools = []
-apply({ tools: { register: (tool) => tools.push(tool) }, systemPrompt: { section: () => {} } })
+const sections = []
+apply({ tools: { register: (tool) => tools.push(tool) }, systemPrompt: { section: (section) => sections.push(section) } })
+assert.ok(sections.some((section) => section.name === 'deepnovel:conversation-writing'), '应注入对话内写作提示词')
+const conversation = sections.find((section) => section.name === 'deepnovel:conversation-writing')
+assert.ok(conversation.text().includes('不需要打开写作台'), '提示词要说明无需写作台')
 const names = tools.map((tool) => tool.name)
 for (const expected of ['novel_reference', 'novel_material', 'novel_facts', 'novel_query']) {
   assert.ok(names.includes(expected), `应注册 ${expected}`)

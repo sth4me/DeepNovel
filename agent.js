@@ -158,6 +158,13 @@ export function apply(ctx) {
   })
 
   ctx.systemPrompt.section({
+    name: 'deepnovel:conversation-writing',
+    order: 10100,
+    text: () =>
+      '对话内写作：不需要打开写作台，也能用 novel_* 工具完成写作。用户要求写小说/续写/改稿/整理设定时，先确认项目（novel_init 或 novel_state）与当前进度，再按需调用工具；生成类动作（构思、设定、章纲、正文、修订、审校）成本高，执行前说明将改动什么并征得用户确认；写入后用工具返回结果汇报落盘位置、字数与下一步，不要虚构未落盘的内容。',
+  })
+
+  ctx.systemPrompt.section({
     name: 'deepnovel:interaction-rhythm',
     order: 10090,
     text: () =>
