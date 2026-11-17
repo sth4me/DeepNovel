@@ -4889,7 +4889,49 @@ window.__ModuleLoader__.load({
             if (!(await requestConfirm({ title: '确认本卷章纲', message: `确认第 ${first}–${last} 章章纲？`, confirmLabel: '确认' }))) return
             run('outline-commit', { fromChapter: first, toChapter: last }, { toast: '本卷章纲已确认' })
           }
+          const activeVolume = volumes.find((volume) => volume.id === volumeFilter) ?? null
           return h('div', { className: 'nw-actions', style: { marginBottom: '8px', flexWrap: 'wrap' } },
+            volumes.length > 1
+              ? h('select', {
+                  className: 'nw-input',
+                  style: { width: '150px' },
+                  value: volumeFilter,
+                  title: '按卷筛选与操作',
+                  onChange: (event) => setVolumeFilter(event.target.value),
+                },
+                  h('option', { value: 'all' }, `全部卷 · ${allChapters.length} 章`),
+                  volumes.map((volume) => h('option', { key: volume.id, value: volume.id }, volume.title || '未命名卷')),
+                )
+              : null,
+            activeVolume
+              ? h('button', {
+                  type: 'button',
+                  className: 'nw-btn',
+                  disabled: busy,
+                  title: '编辑本卷目标（卷设置的一部分）',
+                  onClick: () => {
+                    const goal = window.prompt('本卷目标', activeVolume.goal || '')
+                    if (goal == null) return
+                    run('volume-update', { volumeId: activeVolume.id, goal: String(goal) }, { toast: '卷目标已更新' })
+                  },
+                }, '卷设置')
+              : null,
+            activeVolume
+              ? h('button', {
+                  type: 'button',
+                  className: 'nw-btn',
+                  disabled: busy,
+                  title: '按构思与上一卷末态生成本卷目标候选',
+                  onClick: async () => {
+                    const planned = await run('volume-plan', { volumeId: activeVolume.id }, { silent: true })
+                    if (!planned?.candidates?.length) {
+                      setToast('卷目标生成失败，可稍后重试或手动填写')
+                      return
+                    }
+                    await run('volume-select', { volumeId: activeVolume.id, index: 0, candidates: planned.candidates }, { toast: `已生成卷目标：${planned.candidates[0].goal}` })
+                  },
+                }, '生成卷设定')
+              : null,
             h('button', {
               type: 'button',
               className: 'nw-btn',
