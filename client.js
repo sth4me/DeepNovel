@@ -2553,7 +2553,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-insp-body' },
           (tab === 'outline' || tab === 'chapters')
             ? h('div', { className: 'nw-insp-section' },
-                h(ChapterInspector, { state, root, mode: tab, focusChapter, setTab, embedded: true }),
+                h(ChapterInspector, { state, root, mode: tab, focusChapter, setTab, embedded: true, run }),
                 h('div', { className: 'nw-insp-divider' }),
               )
             : null,
@@ -3491,10 +3491,11 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterInspector({ state, root, mode, focusChapter, setTab, embedded }) {
+    function ChapterInspector({ state, root, mode, focusChapter, setTab, embedded, run }) {
       const [detail, setDetail] = useState(null)
       const [previous, setPrevious] = useState(null)
       const [loading, setLoading] = useState(false)
+      const [cardEdit, setCardEdit] = useState(null)
       const number = Number(focusChapter)
       const valid = Number.isFinite(number) && number > 0
       const chapter = (() => {
@@ -3506,6 +3507,24 @@ window.__ModuleLoader__.load({
         }
         return null
       })()
+
+      useEffect(() => {
+        if (!valid) {
+          setCardEdit(null)
+          return
+        }
+        const current = (() => {
+          for (const volume of state?.outline?.volumes ?? []) {
+            for (const item of volume.chapters ?? []) {
+              if (Number(item.number) === number) return item
+            }
+          }
+          return null
+        })()
+        setCardEdit(current
+          ? { title: current.title ?? '', wordBudget: String(current.wordBudget ?? ''), synopsis: current.synopsis ?? '' }
+          : null)
+      }, [number, valid, state?.outline])
 
       useEffect(() => {
         if (!valid || !root) {
@@ -3552,17 +3571,46 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-inspector-row' }, h('span', null, '章卡'), h('span', null, chapter.status === 'confirmed' ? '已确认' : '待确认')),
         mode === 'chapters'
           ? h('div', null,
-            h('div', { className: 'nw-inspector-label' }, '章卡要点'),
-            chapter.synopsis
-              ? h('div', { className: 'nw-inspector-body' }, String(chapter.synopsis).slice(0, 420))
-              : h('div', { className: 'nw-muted', style: { fontSize: '12px' } }, '本章还没有章卡摘要。'),
-            budget > 0
-              ? h('div', { className: 'nw-inspector-row', style: { marginTop: '8px' } }, h('span', null, '目标字数'), h('span', null, `${budget}`))
+            h('div', { className: 'nw-inspector-label' }, '本章章卡'),
+            cardEdit
+              ? h('div', { style: { display: 'grid', gap: '6px', marginTop: '4px' } },
+                  h('div', { className: 'nw-field', style: { margin: 0 } },
+                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '标题'),
+                    h('input', { className: 'nw-input', value: cardEdit.title, onChange: (event) => setCardEdit((value) => ({ ...value, title: event.target.value })) }),
+                  ),
+                  h('div', { className: 'nw-field', style: { margin: 0 } },
+                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '目标字数（下限）'),
+                    h('input', { className: 'nw-input', type: 'number', value: cardEdit.wordBudget, onChange: (event) => setCardEdit((value) => ({ ...value, wordBudget: event.target.value })) }),
+                  ),
+                  h('div', { className: 'nw-field', style: { margin: 0 } },
+                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '章卡要点'),
+                    h('textarea', {
+                      className: 'nw-input',
+                      rows: 6,
+                      value: cardEdit.synopsis,
+                      style: { resize: 'vertical', fontFamily: 'inherit' },
+                      onChange: (event) => setCardEdit((value) => ({ ...value, synopsis: event.target.value })),
+                    }),
+                  ),
+                  h('button', {
+                    type: 'button',
+                    className: 'nw-btn',
+                    disabled: !run,
+                    onClick: () => run?.('outline-update', {
+                      chapterId: chapter.id,
+                      fields: {
+                        title: cardEdit.title.trim(),
+                        wordBudget: Number(cardEdit.wordBudget) || null,
+                        synopsis: cardEdit.synopsis,
+                      },
+                    }, { toast: '章卡已保存' }),
+                  }, '保存章卡'),
+                )
               : null,
             plant.length || payoff.length
-              ? h('div', { className: 'nw-inspector-row' }, h('span', null, '伏笔'), h('span', null, `埋 ${plant.length} · 收 ${payoff.length}`))
+              ? h('div', { className: 'nw-inspector-row', style: { marginTop: '8px' } }, h('span', null, '伏笔'), h('span', null, `埋 ${plant.length} · 收 ${payoff.length}`))
               : null,
-            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('outline') }, '打开章卡 →'),
+            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('outline') }, '打开完整章卡页 →'),
           )
           : h('div', null,
             h('div', { className: 'nw-inspector-label' }, '正文状态'),
