@@ -3597,18 +3597,8 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'nw-filetree-name nw-filetree-open',
             title: chapter.title ?? '',
-            onClick: () => openOutline?.(chapter.number),
+            onClick: () => openChapter?.(chapter.number),
           }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
-          h('button', {
-            type: 'button',
-            className: 'nw-filetree-link',
-            onClick: (event) => { event.stopPropagation(); openOutline?.(chapter.number) },
-          }, '章卡'),
-          h('button', {
-            type: 'button',
-            className: 'nw-filetree-link',
-            onClick: (event) => { event.stopPropagation(); openChapter?.(chapter.number) },
-          }, '正文'),
         )
         const volumeGroup = (volume) => {
           const collapsed = collapsedVolumes[volume.id] === true
@@ -4352,7 +4342,7 @@ window.__ModuleLoader__.load({
       const [lastRewrite, setLastRewrite] = useState(null)
       const [continuity, setContinuity] = useState(null)
       const [continuitySelected, setContinuitySelected] = useState([])
-      const [mouseSelection, setMouseSelection] = useState(readMouseSelection)
+      const [mouseSelection, setMouseSelection] = useState(false)
       const paneRef = useRef(null)
       const scrollPositions = useRef({})
 
@@ -5086,41 +5076,33 @@ window.__ModuleLoader__.load({
                   ),
                   h('div', { className: 'nw-sticky-actions' },
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || editing, title: '编辑正文（E）', onClick: startEditing }, editing ? '编辑中' : '编辑') : null,
-                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方修订要求修订本章', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '按意见修订') : null,
+                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方要求修订本章；润色/扩写/缩写也写在这里', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '修订') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '一次跑规则质检、风格检测与 AI 连续性检查', onClick: runCombinedReview }, '审校') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-autofix', { number: selected })), title: lockMsg('chapter-autofix', { number: selected }) ?? undefined, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || Boolean(lockMsg('chapter-deslop', { number: selected })), title: lockMsg('chapter-deslop', { number: selected }) ?? '只改表达不改剧情，先预览改写结果', onClick: openDeslop }, '去 AI 味') : null,
                     hasDraft ? h('button', {
                       type: 'button',
-                      className: 'nw-btn primary',
-                      disabled: busy || qa?.status === 'fail' || Boolean(lockMsg('chapter-approve', { number: selected })),
-                      title: lockMsg('chapter-approve', { number: selected }) ?? (qa?.status === 'fail'
-                        ? `规则质检未通过：${(qa.issues ?? []).filter((issue) => issue.level === 'error').map((issue) => issue.message).join('；') || '见质检详情'}`
-                        : '采纳为定稿'),
+                      className: 'nw-btn',
+                      disabled: busy || Boolean(lockMsg('chapter-approve', { number: selected })),
+                      title: lockMsg('chapter-approve', { number: selected }) ?? '按当前正文重新生成摘要与状态（编辑后建议点一次）',
                       onClick: () => act('chapter-approve', { number: selected }),
-                    }, hasFinal ? '重新定稿' : '定稿') : null,
+                    }, '更新摘要/状态') : null,
                     h('button', {
                       type: 'button',
                       className: hasDraft ? 'nw-btn' : 'nw-btn primary',
                       disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })),
                       title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : (hasDraft ? '按当前章纲重新生成草稿' : '生成本章草稿')),
-                      onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }),
-                    }, busy ? '生成中…' : (hasDraft ? '重新生成草稿' : '生成草稿')),
+                      onClick: async () => {
+                        const result = await act('chapter-draft', { number: selected, instruction: instruction || undefined })
+                        if (result) await act('chapter-approve', { number: selected })
+                      },
+                    }, busy ? '生成中…' : (hasDraft ? '重新生成' : '生成正文')),
                     ),
                   h('div', { className: 'nw-sticky-actions nw-sticky-extra' },
                         h('button', { type: 'button', className: 'nw-btn', disabled: contextLoading, onClick: loadContext }, contextLoading ? '读取…' : '上下文'),
-                        hasDraft ? h('select', { className: 'nw-input', style: { width: '82px' }, value: polishMode, disabled: busy, onChange: (event) => setPolishMode(event.target.value) },
-                          ['润色', '扩写', '缩写'].map((mode) => h('option', { key: mode, value: mode }, mode)),
-                        ) : null,
-                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? undefined, onClick: () => polishChapter(polishMode) }, '润色') : null,
                         hasFinal && nextChapter ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: nextChapter.number })), title: lockMsg('chapter-draft', { number: nextChapter.number }) ?? undefined, onClick: writeNext }, `生成下一章（第 ${nextChapter.number} 章）`) : null,
                         batchStart ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !batchReady, title: batchReady ? `从第 ${batchStart} 章连续生成 ${batchCount} 章` : `第 ${batchStart} 章章纲尚未确认，请先在大纲页确认`, onClick: batchWrite }, `连续写 ${batchCount} 章`) : null,
                         lastRewrite ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: undoRewrite }, '撤销重写') : null,
-                        h('button', {
-                          type: 'button',
-                          className: `nw-btn ghost${mouseSelection ? '' : ' active'}`,
-                          onClick: toggleMouseSelection,
-                        }, mouseSelection ? '选段：开' : '选段：关'),
                         h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => paneRef.current?.scrollTo({ top: 0, behavior: 'smooth' }) }, '回到顶部'),
                         hasFinal
                           ? h('button', {
@@ -5290,7 +5272,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'nw-card' },
                   h('div', { className: 'nw-field' },
                     h('label', { className: 'nw-label' }, '本章/修订要求（可留空）'),
-                    h('textarea', { className: 'nw-textarea', value: instruction, disabled: busy, placeholder: '例如：开头更冷硬；压缩心理描写；加强章末钩子', onChange: (event) => setInstruction(event.target.value) }),
+                    h('textarea', { className: 'nw-textarea', value: instruction, disabled: busy, placeholder: '例如：润色文字 / 扩写到 3000 字 / 缩写到 1500 字 / 开头更冷硬 / 加强章末钩子', onChange: (event) => setInstruction(event.target.value) }),
                     instruction.trim()
                       ? h('div', { className: 'nw-actions', style: { marginTop: '4px' } },
                           h('button', {
