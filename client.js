@@ -283,7 +283,7 @@ window.__ModuleLoader__.load({
 .nw-model-head{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);padding-top:2px}
 .nw-model-task{display:flex;gap:6px;align-items:center;font-size:11.5px;min-width:0}
 @media (max-width:900px){.nw-model-row{grid-template-columns:1fr}}
-.nw-filetree{width:248px;flex:0 0 248px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
+.nw-filetree{width:300px;flex:0 0 300px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
 .nw-filetree-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:2px 2px 6px}
 .nw-filetree-title{font-size:13px;font-weight:600;opacity:.85}
 .nw-filetree-group{margin-bottom:6px}
@@ -292,7 +292,12 @@ window.__ModuleLoader__.load({
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px;border-left:2px solid transparent}
 .nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-filetree-name{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nw-filetree-open{display:flex;align-items:center;gap:7px;flex:1;min-width:0;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
+.nw-filetree-num{flex:0 0 auto;font-size:10.5px;opacity:.5;font-variant-numeric:tabular-nums}
+.nw-filetree-meta{flex:0 0 auto;font-size:10.5px;opacity:.45;white-space:nowrap}
+.nw-filetree-meta.cur{opacity:.7}
+.nw-filetree-meta.ok{opacity:.65;color:var(--dsw-alias-state-success-primary)}
+.nw-filetree-name{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;padding:2px 5px;border-radius:5px}
 .nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
 .nw-filetree + div .nw-workbench{grid-template-columns:minmax(0,1fr)}
@@ -321,7 +326,7 @@ window.__ModuleLoader__.load({
 .nw-focus .nw-rail,.nw-focus .nw-inspector{display:none}
 .nw-app.nw-inspector-closed .nw-inspector{display:none}
 .nw-focus .nw-stage{padding:34px 46px}
-.nw-focus .nw-stage-inner{max-width:900px}
+.nw-focus .nw-stage-inner{max-width:1200px}
 .nw-hints{display:flex;flex-direction:column;gap:4px;margin:11px 0 0;padding:0;list-style:none;counter-reset:hint}
 .nw-hints li{position:relative;padding-left:19px;font-size:10.5px;color:var(--dsw-alias-label-secondary);line-height:1.6;counter-increment:hint}
 .nw-hints li::before{content:counter(hint);position:absolute;left:0;top:1px;width:13px;height:13px;border-radius:50%;display:grid;place-items:center;font-size:8px;font-weight:650;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1)}
@@ -347,8 +352,8 @@ window.__ModuleLoader__.load({
 .nw-rail-label{font-size:12.5px;font-weight:600;line-height:1.4}
 .nw-rail-desc{display:none}
 .nw-rail-foot{margin-top:14px;padding:10px 8px;border-top:1px solid var(--dsw-alias-border-l1)}
-.nw-stage{flex:1;min-width:0;overflow:auto;padding:24px 30px;scrollbar-width:thin}
-.nw-stage-inner{max-width:1120px;margin:0 auto}
+.nw-stage{flex:1;min-width:0;overflow:auto;padding:20px 22px;scrollbar-width:thin}
+.nw-stage-inner{max-width:1600px;margin:0 auto}
 .nw-inspector{width:330px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
 .nw-insp-section{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .nw-insp-divider{height:1px;background:var(--dsw-alias-border-l1);margin:6px 0}
@@ -3594,17 +3599,29 @@ window.__ModuleLoader__.load({
         const volumes = state?.outline?.volumes ?? []
         const total = volumes.reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
         if (total === 0) return null
-        const chapterRow = (chapter) => h('div', {
-          key: chapter.id ?? chapter.number,
-          className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
-        },
-          h('button', {
-            type: 'button',
-            className: 'nw-filetree-name nw-filetree-open',
-            title: chapter.title ?? '',
-            onClick: () => openChapter?.(chapter.number),
-          }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
-        )
+        const stats = new Map((state?.chapters ?? []).map((item) => [Number(item.number), item]))
+        const chapterRow = (chapter) => {
+          const stat = stats.get(Number(chapter.number))
+          const words = Number(stat?.wordCount ?? 0) || 0
+          const stateText = stat?.hasFinal ? '已同步' : stat?.hasDraft ? '有正文' : '未写'
+          return h('div', {
+            key: chapter.id ?? chapter.number,
+            className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
+            title: `${chapter.title ?? ''} · ${stateText}${words ? ` · ${words} 字` : ''}`,
+          },
+            h('button', {
+              type: 'button',
+              className: 'nw-filetree-open',
+              onClick: () => openChapter?.(chapter.number),
+            },
+              h('span', { className: 'nw-filetree-num' }, String(chapter.number).padStart(2, '0')),
+              h('span', { className: 'nw-filetree-name' }, chapter.title ?? '未命名'),
+            ),
+            h('span', { className: `nw-filetree-meta${stat?.hasFinal ? ' ok' : stat?.hasDraft ? ' cur' : ''}` },
+              words ? `${words} 字` : '未写',
+              stat?.hasFinal ? ' · 已同步' : ''),
+          )
+        }
         const volumeGroup = (volume) => {
           const collapsed = collapsedVolumes[volume.id] === true
           const chapters = volume.chapters ?? []
@@ -3614,7 +3631,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'nw-filetree-volume',
                 onClick: () => setCollapsedVolumes((current) => ({ ...current, [volume.id]: !collapsed })),
-              }, `${collapsed ? '▸' : '▾'} ${volume.title || '未命名卷'}`),
+              }, `${collapsed ? '▸' : '▾'} ${volume.title || '未命名卷'} · ${(volume.chapters ?? []).length}`),
               h('button', {
                 type: 'button',
                 className: 'nw-filetree-link',
