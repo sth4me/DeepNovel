@@ -3614,8 +3614,8 @@ window.__ModuleLoader__.load({
           )
           : h('div', null,
             h('div', { className: 'nw-inspector-label' }, '正文状态'),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '草稿'), h('span', null, loading ? '读取中…' : hasDraft ? '有' : '无')),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '定稿'), h('span', null, hasFinal ? '已定稿' : '未定稿')),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '正文'), h('span', null, loading ? '读取中…' : hasDraft ? '有' : '无')),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '摘要/状态'), h('span', null, hasFinal ? '已同步' : '未同步')),
             h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, budget > 0 ? (reached ? `${words} 字 · 已达标` : `${words} / ${budget}`) : `${words} 字`)),
             budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
             h('div', { className: 'nw-inspector-label' }, '本章摘要'),
@@ -4715,7 +4715,10 @@ window.__ModuleLoader__.load({
       const saveManual = async () => {
         if (!draftText.trim()) return
         const result = await act('chapter-save-text', { number: selected, text: draftText })
-        if (result) setEditing(false)
+        if (result) {
+          setEditing(false)
+          setToast('已保存；改动较大时点「更新摘要/状态」重新生成摘要')
+        }
       }
 
       const batchWrite = async () => {
@@ -5108,7 +5111,7 @@ window.__ModuleLoader__.load({
                       h('span', { className: 'nw-eyebrow', style: { display: 'block' } }, `第 ${selected ?? '—'} 章`),
                       h('span', { className: 'nw-sticky-name' }, detail?.chapter?.title ?? current?.title ?? ''),
                       detail?.meta?.finalStale && hasFinal
-                        ? h('span', { className: 'nw-badge bad', style: { marginTop: '3px' } }, '定稿待更新')
+                        ? h('span', { className: 'nw-badge bad', style: { marginTop: '3px' } }, '摘要/状态待更新')
                         : null,
                     ),
                     h('select', {
