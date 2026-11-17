@@ -3,7 +3,7 @@ import { clone, isPlainObject } from './doc-store.js'
 
 const FILE = 'plot/outline.json'
 const VOLUME_KNOWN = ['id', 'title', 'map', 'goal', 'powerCeiling', 'exitCriteria', 'targetChapters', 'chapters']
-const CHAPTER_KNOWN = ['id', 'number', 'title', 'synopsis', 'status', 'wordBudget', 'inputs', 'plant', 'payoff', 'createdAt', 'updatedAt']
+const CHAPTER_KNOWN = ['id', 'number', 'title', 'synopsis', 'status', 'wordBudget', 'inputs', 'plant', 'payoff', 'foreshadow', 'createdAt', 'updatedAt']
 const OUTLINE_KNOWN = ['status', 'logline', 'volumes', 'updatedAt']
 
 function extraFields(source, known) {
@@ -21,6 +21,14 @@ function finiteOrNull(value) {
 }
 
 function normalizeChapter(chapter) {
+  // 旧服务按 chapter.foreshadow.{plant,payoff} 读取，文件存储这里保持两套字段同步。
+  const foreshadow = isPlainObject(chapter.foreshadow) ? chapter.foreshadow : {}
+  const plant = Array.isArray(chapter.plant)
+    ? clone(chapter.plant)
+    : (Array.isArray(foreshadow.plant) ? clone(foreshadow.plant) : [])
+  const payoff = Array.isArray(chapter.payoff)
+    ? clone(chapter.payoff)
+    : (Array.isArray(foreshadow.payoff) ? clone(foreshadow.payoff) : [])
   return {
     ...extraFields(chapter, CHAPTER_KNOWN),
     id: String(chapter.id ?? ''),
@@ -30,8 +38,9 @@ function normalizeChapter(chapter) {
     status: chapter.status ?? 'candidate',
     wordBudget: finiteOrNull(chapter.wordBudget),
     inputs: isPlainObject(chapter.inputs) ? clone(chapter.inputs) : {},
-    plant: Array.isArray(chapter.plant) ? clone(chapter.plant) : [],
-    payoff: Array.isArray(chapter.payoff) ? clone(chapter.payoff) : [],
+    plant,
+    payoff,
+    foreshadow: { plant: clone(plant), payoff: clone(payoff) },
     createdAt: chapter.createdAt ?? null,
     updatedAt: chapter.updatedAt ?? null,
   }

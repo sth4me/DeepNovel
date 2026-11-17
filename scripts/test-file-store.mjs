@@ -103,6 +103,18 @@ assert.equal(outline.volumes[0].extraVolume, '保留', '卷未知字段保留')
 assert.equal(outline.volumes[0].chapters[0].extraChapter, '保留', '章未知字段保留')
 assert.equal(outline.volumes[0].chapters[0].wordBudget, 3500)
 assert.deepEqual(outline.volumes[0].chapters[0].plant, ['伏笔'])
+assert.deepEqual(outline.volumes[0].chapters[0].foreshadow.plant, ['伏笔'], 'foreshadow 与 plant 必须同步')
+
+// 只给 foreshadow 的旧数据也要能读成 plant/payoff
+store.writeOutline({
+  volumes: [{
+    id: 'v1', title: '卷一',
+    chapters: [{ id: 'c1', number: 1, title: '第一章', foreshadow: { plant: ['旧伏笔'], payoff: ['旧回收'] } }],
+  }],
+})
+const synced = store.readOutline().volumes[0].chapters[0]
+assert.deepEqual(synced.plant, ['旧伏笔'])
+assert.deepEqual(synced.payoff, ['旧回收'])
 
 // 章节状态
 store.writeChapterMeta(1, { chapterId: 'c1', title: '第一章', wordCount: 1200, status: 'drafted' })
