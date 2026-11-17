@@ -7,6 +7,9 @@ import { join } from 'node:path'
 import { DocStore, clone, isPlainObject } from './storage/doc-store.js'
 import { readOutline, writeOutline, deleteOutlineChapterByNumber } from './storage/outline.js'
 import * as chapterState from './storage/chapter-state.js'
+import * as library from './storage/library.js'
+import * as logs from './storage/logs.js'
+import * as searchIndex from './storage/search.js'
 import { MATERIAL_KINDS, FACT_KINDS } from './store.js'
 
 export { MATERIAL_KINDS, FACT_KINDS }
@@ -251,43 +254,47 @@ export class FileNovelStore {
   deleteChapterRows(number) { return chapterState.deleteChapterRows(this.docs, number) }
   renameChapterRows(from, to) { return chapterState.renameChapterRows(this.docs, from, to) }
 
-  /* ------------------------------ P3 占位 ------------------------------ */
+  /* ------------------------------ 素材与事实 ------------------------------ */
 
-  unsupported(name) {
-    throw new Error(`file-store 尚未实现 ${name}（P3 阶段补齐）`)
-  }
+  listMaterials() { return library.listMaterials(this.docs) }
+  readMaterial(id) { return library.readMaterial(this.docs, id) }
+  saveMaterial(input) { return library.saveMaterial(this.docs, input) }
+  deleteMaterial(id) { return library.deleteMaterial(this.docs, id) }
+  listFacts(filter) { return library.listFacts(this.docs, filter) }
+  readFact(id) { return library.readFact(this.docs, id) }
+  saveFact(input) { return library.saveFact(this.docs, input) }
+  deleteFact(id) { return library.deleteFact(this.docs, id) }
+  glossaryFacts() { return library.glossaryFacts(this.docs) }
 
-  readStats() { return this.unsupported('readStats') }
-  appendStatsEvent() { return this.unsupported('appendStatsEvent') }
-  writeStats() { return this.unsupported('writeStats') }
-  saveRun() { return this.unsupported('saveRun') }
-  readRun() { return this.unsupported('readRun') }
-  listRuns() { return this.unsupported('listRuns') }
-  pruneRuns() { return this.unsupported('pruneRuns') }
-  readPromptOverrides() { return this.unsupported('readPromptOverrides') }
-  writePromptOverride() { return this.unsupported('writePromptOverride') }
-  deletePromptOverride() { return this.unsupported('deletePromptOverride') }
-  listNotes() { return this.unsupported('listNotes') }
-  appendNote() { return this.unsupported('appendNote') }
-  replaceNotes() { return this.unsupported('replaceNotes') }
-  search() { return this.unsupported('search') }
-  reindexChapter() { return this.unsupported('reindexChapter') }
-  reindexOutline() { return this.unsupported('reindexOutline') }
-  reindexBible() { return this.unsupported('reindexBible') }
-  reindexSummaries() { return this.unsupported('reindexSummaries') }
-  reindexAll() { return this.unsupported('reindexAll') }
-  ftsRowCounts() { return this.unsupported('ftsRowCounts') }
-  ftsQuery() { return this.unsupported('ftsQuery') }
-  listMaterials() { return this.unsupported('listMaterials') }
-  readMaterial() { return this.unsupported('readMaterial') }
-  saveMaterial() { return this.unsupported('saveMaterial') }
-  deleteMaterial() { return this.unsupported('deleteMaterial') }
-  listFacts() { return this.unsupported('listFacts') }
-  readFact() { return this.unsupported('readFact') }
-  saveFact() { return this.unsupported('saveFact') }
-  deleteFact() { return this.unsupported('deleteFact') }
-  glossaryFacts() { return this.unsupported('glossaryFacts') }
-  readChapterBody() { return this.unsupported('readChapterBody') }
+  /* ------------------------------ 运行 / 提示词 / 笔记 / 统计 ------------------------------ */
+
+  saveRun(run) { return logs.saveRun(this.docs, run) }
+  readRun(runId) { return logs.readRun(this.docs, runId) }
+  listRuns(limit) { return logs.listRuns(this.docs, limit) }
+  pruneRuns(keep) { return logs.pruneRuns(this.docs, keep) }
+  readPromptOverrides() { return logs.readPromptOverrides(this.docs) }
+  writePromptOverride(key, value) { return logs.writePromptOverride(this.docs, key, value) }
+  deletePromptOverride(key) { return logs.deletePromptOverride(this.docs, key) }
+  listNotes(number) { return logs.listNotes(this.docs, number) }
+  appendNote(note) { return logs.appendNote(this.docs, note) }
+  replaceNotes(number, notes) { return logs.replaceNotes(this.docs, number, notes) }
+  readStats() { return logs.readStats(this.docs) }
+  appendStatsEvent(event) { return logs.appendStatsEvent(this.docs, event) }
+  writeStats(value) { return logs.writeStats(this.docs, value) }
+
+  /* ------------------------------ 检索 ------------------------------ */
+
+  search(query, options) { return searchIndex.search(this.docs, this.projectRoot, query, options) }
+  readChapterBody(number) { return searchIndex.readChapterBody(this.projectRoot, number) }
+  ftsRowCounts() { return searchIndex.indexCounts(this.docs, this.projectRoot) }
+  ftsQuery(query) { return `"${String(query ?? '').replace(/"/g, '""')}"` }
+
+  /* 文件存储没有索引：重建动作保留为“重新计数”，让旧调用继续可用但不再维护 FTS。 */
+  reindexChapter(number) { return { number: Number(number) } }
+  reindexOutline() { return { outline: searchIndex.indexCounts(this.docs, this.projectRoot).outline } }
+  reindexBible() { return { bible: searchIndex.indexCounts(this.docs, this.projectRoot).bible } }
+  reindexSummaries() { return { summaries: searchIndex.indexCounts(this.docs, this.projectRoot).summaries } }
+  reindexAll() { return searchIndex.indexCounts(this.docs, this.projectRoot) }
 
   checkpoint() {
     return { checkpointed: false }

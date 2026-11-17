@@ -1,6 +1,6 @@
 // P1 文件存储测试：项目、提示词、自动化、构思、文风、设定、关系、能力。
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FileNovelStore } from '../file-store.js'
@@ -152,8 +152,73 @@ assert.equal(store.readOutline().volumes[0].chapters[0].number, 1)
 await stat(join(root, 'story', 'plot', 'outline.json'))
 await stat(join(root, 'story', 'state', '001.json'))
 
-// 未实现的方法必须显式失败
-assert.throws(() => store.readStats(), /尚未实现/)
+
+
+// 素材库
+const material = store.saveMaterial({ content: '第一行素材\n第二行', kind: '片段', tags: ['a', 'a', 'b'] })
+assert.equal(material.title, '第一行素材')
+assert.deepEqual(material.tags, ['a', 'b'])
+assert.equal(store.listMaterials().length, 1)
+assert.equal(store.readMaterial(material.id).content.includes('第二行'), true)
+assert.throws(() => store.saveMaterial({ content: '   ' }), /不能为空/)
+assert.equal(store.deleteMaterial(material.id), true)
+assert.equal(store.listMaterials().length, 0)
+
+// 事实库
+const term = store.saveFact({ key: '夜之城', value: 'Night City', kind: '术语' })
+const address = store.saveFact({ key: '凯', value: '老大', kind: '称呼', chapter: 1 })
+assert.equal(store.listFacts({ chapter: 1 }).length, 2, '全局事实与本章事实都要返回')
+const glossary = store.glossaryFacts()
+assert.equal(glossary.find((item) => item.id === term.id).canonical, '夜之城')
+assert.deepEqual(glossary.find((item) => item.id === address.id).aliases, ['凯'])
+assert.equal(store.deleteFact(term.id), true)
+
+// 运行记录
+store.saveRun({ runId: 'r1', kind: 'draft', number: 1, createdAt: '2026-01-01T00:00:00.000Z' })
+store.saveRun({ runId: 'r2', kind: 'audit', number: 1, createdAt: '2026-01-02T00:00:00.000Z' })
+assert.equal(store.listRuns(10)[0].runId, 'r2', '按时间倒序')
+assert.equal(store.readRun('r1').kind, 'draft')
+assert.deepEqual(store.pruneRuns(1), { removed: 1, kept: 1 })
+
+// 提示词覆盖
+store.writePromptOverride('draft', '自定义正文 system')
+assert.equal(store.readPromptOverrides().draft.text, '自定义正文 system')
+store.writePromptOverride('draft', '')
+assert.equal(store.readPromptOverrides().draft, undefined, '空文本等于删除')
+store.writePromptOverride('outline', { text: ' SS ', baseHash: 'h', baseRevision: 3 })
+assert.equal(store.readPromptOverrides().outline.text, 'SS')
+assert.equal(store.readPromptOverrides().outline.baseRevision, 3)
+store.deletePromptOverride('outline')
+assert.deepEqual(store.readPromptOverrides(), {})
+
+// 章节笔记
+store.appendNote({ chapter: 1, text: '第一条', source: 'ui' })
+store.appendNote({ chapter: 2, text: { text: '第二条', tag: 'x' } })
+assert.equal(store.listNotes(1).notes[0].text, '第一条')
+assert.equal(store.listNotes().notes.length, 2)
+store.replaceNotes(1, ['替换一', '替换二'])
+assert.equal(store.listNotes(1).notes.length, 2)
+assert.equal(store.listNotes(1).notes[0].text, '替换一')
+
+// 统计
+store.appendStatsEvent({ date: '2026-01-01', number: 1, words: 500 })
+assert.equal(store.readStats().events[0].words, 500)
+store.writeStats({ events: [{ date: '2026-01-02', number: 2, words: 700 }] })
+assert.equal(store.readStats().events.length, 1)
+
+// 检索与正文读取
+await mkdir(join(root, 'story', 'chapters', '001'), { recursive: true })
+await writeFile(join(root, 'story', 'chapters', '001', 'draft.md'), '凯在冷雨里等接头人。', 'utf8')
+store.writeChapterSummary(1, { summary: '凯在冷雨里接头。' })
+assert.equal(store.readChapterBody(1).includes('冷雨'), true)
+const found = store.search('冷雨')
+assert.ok(found.results.some((item) => item.type === 'chapter'), '应检索到正文')
+assert.ok(found.results.some((item) => item.type === 'summary'), '应检索到摘要')
+const counts = store.ftsRowCounts()
+assert.equal(counts.chapters, 1)
+assert.equal(counts.summaries, 1)
+assert.deepEqual(store.reindexChapter(1), { number: 1 })
+assert.equal(store.reindexAll().chapters, 1)
 
 // 重新打开仍能读到（没有数据库）
 const reopened = new FileNovelStore(root)
@@ -162,4 +227,4 @@ assert.equal(reopened.listStyleTemplates().length, 0)
 assert.equal(reopened.readBible().characters[0].name, '角色甲')
 
 await rm(root, { recursive: true, force: true })
-console.log('file-store P1+P2 tests passed')
+console.log('file-store P1+P2+P3 tests passed')
