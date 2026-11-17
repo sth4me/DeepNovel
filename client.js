@@ -3666,11 +3666,8 @@ window.__ModuleLoader__.load({
           title: isOutline ? '章卡与章纲' : '逐章写作与审阅',
           status: isOutline ? state.outline?.status : ((state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate'),
           desc: isOutline
-            ? '左侧目录选章，右侧改章卡；生成与重生成只影响当前章，确认后进入正文写作。'
-            : '左侧目录选章，正文在中间阅读；章卡对照在右侧面板，大纲与批量操作在工具栏。',
-          hints: isOutline
-            ? ['生成后 3 章章纲', '逐章确认或确认本卷', '修复大纲问题']
-            : ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
+            ? '左侧目录选章，右侧改章卡。'
+            : '左侧目录选章，正文在中间阅读，章卡对照在右侧面板。',
         }),
         h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
         tree,
@@ -4885,10 +4882,6 @@ window.__ModuleLoader__.load({
             if (!(await requestConfirm({ title: '确认本章章纲', message: `确认第 ${selected} 章章纲？`, confirmLabel: '确认' }))) return
             run('outline-commit', { fromChapter: selected, toChapter: selected }, { toast: `第 ${selected} 章章纲已确认` })
           }
-          const confirmVolume = async () => {
-            if (!(await requestConfirm({ title: '确认本卷章纲', message: `确认第 ${first}–${last} 章章纲？`, confirmLabel: '确认' }))) return
-            run('outline-commit', { fromChapter: first, toChapter: last }, { toast: '本卷章纲已确认' })
-          }
           const activeVolume = volumes.find((volume) => volume.id === volumeFilter) ?? null
           return h('div', { className: 'nw-actions', style: { marginBottom: '8px', flexWrap: 'wrap' } },
             volumes.length > 1
@@ -4947,55 +4940,10 @@ window.__ModuleLoader__.load({
               onClick: () => run('outline-generate', { fromChapter: selected, toChapter: selected, regenerate: true, volumeId }, { toast: `第 ${selected} 章章纲已重写` }),
             }, '重生成本章章纲'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: confirmChapter }, '确认本章章纲'),
-            last > first
-              ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: confirmVolume }, '确认本卷章纲')
-              : null,
             (state?.outlineAudit?.issues?.length ?? 0) > 0
               ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: `大纲体检发现 ${state.outlineAudit.issues.length} 个问题`, onClick: () => run('outline-repair', {}, { toast: '已修复大纲问题' }) }, `修复大纲（${state.outlineAudit.issues.length}）`)
               : null,
             h('div', { style: { width: '1px', height: '20px', background: 'var(--dsw-alias-border-l1)', margin: '0 4px' } }),
-            volumeId
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn',
-                  disabled: busy,
-                  title: '把本卷已写草稿的章节采纳为定稿',
-                  onClick: async () => {
-                    if (!(await requestConfirm({ title: '定稿本卷', message: '把本卷已写草稿的章节全部采纳为定稿？', confirmLabel: '定稿' }))) return
-                    run('chapter-approve-volume', { volumeId }, { toast: '本卷已定稿' })
-                  },
-                }, '定稿本卷')
-              : null,
-            h('button', {
-              type: 'button',
-              className: 'nw-btn danger',
-              disabled: busy,
-              title: '从最后一章往前删除若干章（含正文、摘要与状态）',
-              onClick: async () => {
-                const input = window.prompt('删除尾部几章？', '1')
-                const count = Number(input) || 0
-                if (count < 1) return
-                const preview = await run('chapters-delete-tail', { count, dryRun: true }, { silent: true })
-                if (!preview) return
-                if (!(await requestConfirm({
-                  title: '删除尾部章节',
-                  message: `将删除第 ${preview.from}–${preview.to} 章的大纲、正文、摘要与状态，无法恢复。`,
-                  danger: true,
-                  confirmLabel: '删除',
-                }))) return
-                run('chapters-delete-tail', { count }, { toast: '已删除尾部章节' })
-              },
-            }, '删除尾部章节'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn ghost',
-              disabled: busy,
-              title: '把全部已写草稿的章节采纳为定稿',
-              onClick: async () => {
-                if (!(await requestConfirm({ title: '定稿全部', message: '把全部已写草稿的章节采纳为定稿？', confirmLabel: '定稿' }))) return
-                run('chapter-approve-all', {}, { toast: '已全部定稿' })
-              },
-            }, '定稿全部'),
           )
         })(),
         (() => {
@@ -5151,11 +5099,16 @@ window.__ModuleLoader__.load({
                         : '采纳为定稿'),
                       onClick: () => act('chapter-approve', { number: selected }),
                     }, hasFinal ? '重新定稿' : '定稿') : null,
-                    !hasDraft ? h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '生成本章草稿'), onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, busy ? '生成中…' : '生成草稿') : null,
+                    h('button', {
+                      type: 'button',
+                      className: hasDraft ? 'nw-btn' : 'nw-btn primary',
+                      disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })),
+                      title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : (hasDraft ? '按当前章纲重新生成草稿' : '生成本章草稿')),
+                      onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }),
+                    }, busy ? '生成中…' : (hasDraft ? '重新生成草稿' : '生成草稿')),
                     ),
                   h('div', { className: 'nw-sticky-actions nw-sticky-extra' },
                         h('button', { type: 'button', className: 'nw-btn', disabled: contextLoading, onClick: loadContext }, contextLoading ? '读取…' : '上下文'),
-                        hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : '按当前章纲重新生成草稿'), onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '重新生成草稿') : null,
                         hasDraft ? h('select', { className: 'nw-input', style: { width: '82px' }, value: polishMode, disabled: busy, onChange: (event) => setPolishMode(event.target.value) },
                           ['润色', '扩写', '缩写'].map((mode) => h('option', { key: mode, value: mode }, mode)),
                         ) : null,
