@@ -378,6 +378,10 @@ window.__ModuleLoader__.load({
 .nw-list-item .nw-list-hover:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
 .nw-page-btn{min-height:30px;padding:4px 12px;font-size:11.5px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
 .nw-page-btn:disabled{opacity:.4}
+.nw-next b{display:inline-block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.nw-filetree-head .nw-filetree-link{border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:2px 8px;font-size:11px}
+.nw-filetree-head .nw-filetree-link:hover{background:var(--dsw-alias-bg-layer-2)}
+.nw-insp-body>.nw-card+.nw-card{margin-top:10px}
 .nw-sticky-nav{gap:6px}
 .nw-list-item.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .nw-list-num{font-size:9px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;min-width:18px}
