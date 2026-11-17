@@ -236,11 +236,6 @@ window.__ModuleLoader__.load({
 .nw-qa-details{margin-top:8px}
 .nw-qa-summary-line{cursor:pointer;font-size:11px;color:var(--dsw-alias-label-secondary);padding:4px 0;list-style:none}
 .nw-qa-summary-line::-webkit-details-marker{display:none}
-.nw-selbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 11px;margin:10px 0 0;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
-.nw-selbar.active{border-style:solid;border-color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 7%,var(--dsw-alias-bg-layer-1))}
-.nw-selbar-title{font-size:11.5px;font-weight:650;line-height:1.4}
-.nw-sel-float{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:8px;padding:8px 10px 8px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-2);box-shadow:0 12px 34px rgba(0,0,0,.28);max-width:calc(100vw - 32px)}
-.nw-sel-float-info{font-size:11.5px;font-weight:600;white-space:nowrap}
 .nw-task-dock{position:absolute;left:16px;bottom:16px;z-index:58;width:278px;display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);box-shadow:0 14px 34px rgba(0,0,0,.3);backdrop-filter:blur(10px)}
 .nw-task-dock.collapsed{width:auto;max-width:240px;padding:6px 8px 6px 10px}
 .nw-task-dock.collapsed .nw-task-head{gap:4px}
@@ -262,7 +257,6 @@ window.__ModuleLoader__.load({
 .nw-editor{max-width:100%;margin:0 auto;width:100%}
 .nw-editor-textarea{width:100%;min-height:70vh;resize:vertical;font-family:"Iowan Old Style","Palatino Linotype","Songti SC","Noto Serif CJK SC",serif;font-size:15.5px;line-height:1.95;letter-spacing:.01em;padding:18px 20px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);outline:none}
 .nw-editor-textarea:focus{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent)}
-@media (max-width:600px){.nw-sel-float-info{display:none}}
 .nw-more summary{cursor:pointer;list-style:none;display:inline-flex}
 .nw-more summary::-webkit-details-marker{display:none}
 .nw-qa-block{background:var(--dsw-alias-bg-layer-2);border-radius:10px;padding:10px 12px;min-width:0}
@@ -461,7 +455,6 @@ window.__ModuleLoader__.load({
 .nw-reading{max-width:740px;width:100%;margin:0 auto}
 .nw-reading .nw-manuscript{max-width:none}
 .nw-manuscript p{margin:0 0 15px}
-.nw-selbar{padding:10px 13px;border-radius:12px}
 .nw-qa-block{padding:12px 14px}
 .nw-qa-score{font-size:34px}
 .nw-issue{font-size:11px;line-height:1.6}
@@ -5046,54 +5039,11 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                               h('h3', { className: 'nw-h3' }, hasFinal ? '定稿 / 当前草稿' : '当前草稿'),
                               detail?.revisions?.length ? h('span', { className: 'nw-muted' }, `修订历史 ${detail.revisions.length}`) : null,
                             ),
-                            h('div', { className: `nw-selbar${rangeStart != null ? ' active' : ''}` },
-                              h('div', { style: { minWidth: 0 } },
-                                h('div', { className: 'nw-selbar-title' }, rangeStart != null ? `已选第 ${rangeStart + 1}–${rangeEnd + 1} 段` : '局部重写'),
-                                h('div', { className: 'nw-muted' }, rangeStart != null ? '只重写选中范围，其余段落保留' : mouseSelection ? '点第一段，再点另一段选择范围' : '鼠标选段已关闭；可用精确段号，或点右上「选段：关」开启'),
-                              ),
-                              h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-                                rangeStart != null ? h('span', { className: 'nw-muted' }, '用下方浮动条重写') : null,
-                                h('button', { type: 'button', className: 'nw-btn ghost', onClick: toggleMouseSelection }, mouseSelection ? '鼠标选段：开' : '鼠标选段：关'),
-                                h('details', { className: 'nw-more' },
-                                  h('summary', { className: 'nw-btn ghost' }, '精确段号'),
-                                  h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '6px' } },
-                                    h('input', { className: 'nw-input', type: 'number', min: '1', placeholder: '起', value: fromParagraph, style: { width: '74px' }, onChange: (event) => setFromParagraph(event.target.value) }),
-                                    h('span', { className: 'nw-muted' }, '至'),
-                                    h('input', { className: 'nw-input', type: 'number', min: '1', placeholder: '止', value: toParagraph, style: { width: '74px' }, onChange: (event) => setToParagraph(event.target.value) }),
-                                    h('button', {
-                                      type: 'button',
-                                      className: 'nw-btn',
-                                      disabled: busy || !Number(fromParagraph) || !Number(toParagraph),
-                                      onClick: () => {
-                                        const start = Math.max(0, Math.min(Number(fromParagraph), Number(toParagraph)) - 1)
-                                        const end = Math.max(0, Math.max(Number(fromParagraph), Number(toParagraph)) - 1)
-                                        setSelStart(start)
-                                        setSelEnd(end)
-                                        setFromParagraph(String(start + 1))
-                                        setToParagraph(String(end + 1))
-                                      },
-                                    }, '选定'),
-                                  ),
-                                ),
-                              ),
-                            ),
                             h('div', { className: 'nw-manuscript' },
                               paragraphs.map((paragraph, index) =>
-                                h('p', {
-                                  key: index,
-                                  'data-para': index,
-                                  className: selStart != null && selEnd != null && index >= selStart && index <= selEnd ? 'selected' : selStart != null && selEnd == null && index === selStart ? 'selected' : '',
-                                  onClick: () => selectParagraph(index),
-                                }, paragraph),
+                                h('p', { key: index, 'data-para': index }, paragraph),
                               ),
                             ),
-                            rangeStart != null
-                              ? h('div', { className: 'nw-sel-float' },
-                                  h('span', { className: 'nw-sel-float-info' }, `已选第 ${rangeStart + 1}–${rangeEnd + 1} 段`),
-                                  h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || previewLoading, onClick: rewriteSelection }, previewLoading ? '生成预览…' : '预览重写'),
-                                  h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: clearSelection }, '取消'),
-                                )
-                              : null,
                           )
                         : h('div', { className: 'nw-empty', style: { marginTop: '12px' } }, '还没有正文。点上面的「生成本章草稿」。'),
                 ),
