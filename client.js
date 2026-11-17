@@ -192,6 +192,7 @@ window.__ModuleLoader__.load({
 .nw-meta span{font-size:9.5px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);border-radius:6px;padding:2px 7px}
 .nw-logline{font-family:"Iowan Old Style","Palatino Linotype","Songti SC","STSong",Georgia,serif;font-size:17px;font-weight:600;line-height:1.5;margin:6px 0 4px;letter-spacing:.005em}
 .nw-premise{font-size:13px;line-height:1.65;margin:6px 0 4px;color:var(--dsw-alias-label-primary);white-space:pre-wrap}
+.nw-card-title{font-size:13px;font-weight:650;line-height:1.4}
 .nw-candidate{position:relative;transition:box-shadow .15s}
 .nw-candidate.selected{box-shadow:inset 3px 0 0 var(--dsw-alias-brand-primary)}
 .nw-template{display:flex;flex-direction:column;gap:4px;background:var(--dsw-alias-bg-layer-2);border:1px solid transparent;border-radius:12px;padding:13px 14px;margin-bottom:8px;transition:border-color .15s,background .15s}
@@ -8215,56 +8216,46 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           hints: ['说方向或直接开始聊', '继续提修改意见', '确认一个候选，进入文风'],
         }),
         h(PremiseChat, { state, run, busy, setToast, chosen }),
-        h(DeconstructPanel, { state, run, busy, setDirection, setToast }),
-        chosen ? h(ChosenPremiseEditor, { state, chosen, run, busy, goTo }) : null,
         candidates.length
           ? h('div', null,
               h('div', { className: 'nw-row', style: { marginTop: '4px' } },
                 h('h3', { className: 'nw-h3', style: { margin: 0 } }, `候选（${candidates.length}）`),
-                h('button', { type: 'button', className: 'nw-btn', onClick: () => setCompare((value) => !value) }, compare ? '卡片视图' : '对比视图'),
+                h('button', { type: 'button', className: 'nw-btn', onClick: () => setCompare((value) => !value) }, compare ? '列表视图' : '并排对比'),
               ),
-              compare
-                ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: '8px', marginTop: '8px' } },
-                    candidates.map((candidate, index) =>
-                      h('div', { key: candidate.id, className: `nw-card nw-candidate${chosen?.id === candidate.id ? ' selected' : ''}`, style: { margin: 0 } },
-                        h('div', { className: 'nw-row' },
-                          h('span', { className: 'nw-eyebrow' }, candidate.title || `候选 ${index + 1}`),
-                          chosen?.id === candidate.id ? h('span', { className: 'nw-badge ok' }, '已选') : null,
-                        ),
-                        h('div', { className: 'nw-premise' }, candidate.premise || '（无构思内容）'),
-                        h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, `主角：${candidate.protagonist || '—'}`),
-                        h('div', { className: 'nw-muted' }, `篇幅：${candidate.length?.chapters ?? '—'} 章 / ${candidate.length?.wordsPerChapter ?? '—'} 字每章`),
-                        h('div', { className: 'nw-actions' },
-                          h('button', { type: 'button', className: 'nw-btn primary block', disabled: busy, onClick: () => run('premise-commit', { candidateId: candidate.id }, { next: 'style', toast: '构思已确认，下一步：文风' }) },
-                            busy ? '处理中…' : '确认这个'),
-                        ),
-                      ),
+              h('div', { style: compare ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '8px', marginTop: '8px' } : { display: 'grid', gap: '8px', marginTop: '8px' } },
+                candidates.map((candidate, index) => {
+                  const isChosen = chosen?.id === candidate.id
+                  const genre = Array.isArray(candidate.genre) ? candidate.genre.slice(0, 4) : []
+                  return h('div', { key: candidate.id, className: `nw-card nw-candidate${isChosen ? ' selected' : ''}`, style: { marginBottom: 0 } },
+                    h('div', { className: 'nw-row' },
+                      h('span', { className: 'nw-card-title' }, candidate.title || `候选 ${index + 1}`),
+                      isChosen ? h('span', { className: 'nw-badge ok' }, '当前已选') : null,
+                      h('span', { className: 'nw-muted', style: { marginLeft: 'auto', fontSize: '11px' } },
+                        `${candidate.length?.chapters ?? '—'} 章 · ${candidate.length?.wordsPerChapter ?? '—'} 字/章`),
+                    ),
+                    h('div', { className: 'nw-premise' }, candidate.premise || '（无构思内容）'),
+                    h('div', { className: 'nw-meta' },
+                      h('span', null, `主角：${candidate.protagonist || '—'}`),
+                      genre.map((tag) => h('span', { key: tag }, tag)),
+                    ),
+                    h('div', { className: 'nw-actions' },
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn primary',
+                        disabled: busy || isChosen,
+                        onClick: () => run('premise-commit', { candidateId: candidate.id }, { toast: '已确认构思，下一步：文风' }),
+                      }, isChosen ? '已选用' : '确认选用这个构思'),
                     ),
                   )
-                : candidates.map((candidate, index) =>
-                    h('div', { key: candidate.id, className: `nw-card nw-candidate${chosen?.id === candidate.id ? ' selected' : ''}` },
-                      h('div', { className: 'nw-row' },
-                        h('span', { className: 'nw-eyebrow' }, candidate.title || `候选 ${index + 1}`),
-                        chosen?.id === candidate.id ? h('span', { className: 'nw-badge ok' }, '当前已选') : null,
-                      ),
-                      h('div', { className: 'nw-premise' }, candidate.premise || '（无构思内容）'),
-                      h('div', { className: 'nw-meta' },
-                        (candidate.genre ?? []).slice(0, 4).map((tag) => h('span', { key: tag }, tag)),
-                        h('span', null, `${candidate.length?.chapters ?? '—'} 章`),
-                        h('span', null, `${candidate.length?.wordsPerChapter ?? '—'} 字/章`),
-                      ),
-                      h('div', { className: 'nw-muted' }, `主角：${candidate.protagonist ?? '—'}`),
-                      h('div', { className: 'nw-actions' },
-                        h('button', { type: 'button', className: 'nw-btn primary block', disabled: busy, onClick: () => run('premise-commit', { candidateId: candidate.id }, { next: 'style', toast: '构思已确认，下一步：文风' }) },
-                          busy ? '处理中…' : '确认选用这个构思'),
-                      ),
-                    ),
-                  ),
+                }),
+              ),
             )
           : h(EmptyState, {
               title: '还没有候选',
               desc: '填一个方向，然后生成 3 个候选；也可以直接留空，让模型先给几个方向。',
             }),
+        chosen ? h(ChosenPremiseEditor, { state, chosen, run, busy, goTo }) : null,
+        h(DeconstructPanel, { state, run, busy, setDirection, setToast }),
       )
     }
 
