@@ -6983,7 +6983,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       return h('div', null,
         h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '项目'),
         h(StepIntro, { eyebrow: '01 / 项目', title: '项目与流程', desc: '所有创作步骤都围绕这个项目展开。你可以随时回到这里查看进度或修改标题。', hints: ['确认项目标题', '按顺序完成构思 → 文风 → 大纲 → 章节'] }),
-        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+        h('div', { className: 'nw-section-head first' },
           h('div', { className: 'nw-section-title' }, '项目与创作'),
           h('div', { className: 'nw-section-hint' }, '项目信息、目标、统计、进度与快照'),
         ),
@@ -7248,7 +7248,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有快照。'),
         ),
         h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '写作配置'),
-        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+        h('div', { className: 'nw-section-head' },
           h('div', { className: 'nw-section-title' }, '写作要求与素材'),
           h('div', { className: 'nw-section-hint' }, '共享写作要求、技能、素材与资料'),
         ),
@@ -7421,7 +7421,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             : null,
         ),
         h(PromptAndSkillsCard, { state, run, busy, setToast }),
-        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+        h('div', { className: 'nw-section-head' },
           h('div', { className: 'nw-section-title' }, '数据与存储'),
           h('div', { className: 'nw-section-hint' }, '存储状态与导入导出'),
         ),
@@ -7484,7 +7484,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                 : null,
             )
           : null,
-        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+        h('div', { className: 'nw-section-head' },
           h('div', { className: 'nw-section-title' }, '模型与上下文'),
           h('div', { className: 'nw-section-hint' }, '任务模型、上下文预算与提示词注入'),
         ),
@@ -7798,7 +7798,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
               )
             : null,
         ),
-        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+        h('div', { className: 'nw-section-head' },
           h('div', { className: 'nw-section-title' }, '流程与工具'),
           h('div', { className: 'nw-section-hint' }, '固定流程、拆书与构思对话'),
         ),
@@ -8732,6 +8732,25 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
     const MAIN_ID = 'novel-writer-desk'
 
     function registerDesk(scope) {
+      // 渲染异常时给出可见错误，而不是整页白屏（便于用户直接反馈第一条报错）。
+      if (!window.__deepnovelErrorBound) {
+        window.__deepnovelErrorBound = true
+        const show = (message) => {
+          try {
+            if (document.getElementById('deepnovel-error-overlay')) return
+            const box = document.createElement('div')
+            box.id = 'deepnovel-error-overlay'
+            box.style.cssText = 'position:fixed;inset:auto 12px 12px 12px;z-index:99999;background:#3a1d1d;color:#ffd7d7;padding:12px 14px;border-radius:10px;font:12px/1.6 monospace;white-space:pre-wrap;max-height:40vh;overflow:auto;border:1px solid #a33'
+            box.textContent = `DeepNovel 渲染出错：\n${message}`
+            box.onclick = () => box.remove()
+            document.body.appendChild(box)
+          } catch {
+            // 连错误框都建不出来就只能放弃
+          }
+        }
+        window.addEventListener('error', (event) => show(String(event?.message ?? event?.error ?? 'unknown error')))
+        window.addEventListener('unhandledrejection', (event) => show(String(event?.reason?.message ?? event?.reason ?? 'unhandled rejection')))
+      }
       clientScope = scope
       layoutService = scope.get('layout') ?? layoutService
       resolveUiWorkspace()
