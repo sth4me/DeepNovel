@@ -282,6 +282,8 @@ window.__ModuleLoader__.load({
 .nw-filetree-title{font-size:13px;font-weight:600;opacity:.85}
 .nw-filetree-group{margin-bottom:6px}
 .nw-filetree-vol-row{display:flex;align-items:center;gap:2px}
+.nw-filetree-vol-row .nw-filetree-link{opacity:0;transition:opacity .12s}
+.nw-filetree-vol-row:hover .nw-filetree-link,.nw-filetree-vol-row:focus-within .nw-filetree-link{opacity:1}
 .nw-filetree-volume{font-size:12px;opacity:.8;padding:4px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;border-radius:6px}
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px;border-left:2px solid transparent;cursor:pointer}
@@ -381,7 +383,7 @@ window.__ModuleLoader__.load({
 .nw-list-num{font-size:9px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;min-width:18px}
 .nw-list-title{flex:1;min-width:0;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nw-pane{min-width:0}
-.nw-pane-scroll{max-height:calc(100vh - 300px);overflow:auto;padding-right:6px;scrollbar-width:thin}
+.nw-pane-scroll{max-height:calc(100vh - 230px);overflow:auto;padding-right:6px;scrollbar-width:thin}
 .nw-chapter-sticky{position:sticky;top:0;z-index:9;display:flex;flex-direction:column;gap:8px;padding:9px 10px;margin-bottom:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:11px;background:var(--dsw-alias-bg-layer-1);box-shadow:0 6px 18px rgba(0,0,0,.12)}
 .nw-sticky-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
 .nw-sticky-title{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1 1 auto;max-width:420px}
@@ -452,6 +454,8 @@ window.__ModuleLoader__.load({
 .nw-pane-scroll{max-height:calc(100vh - 270px)}
 .nw-manuscript{max-width:760px;font-size:14px;line-height:1.95;color:var(--dsw-alias-label-primary)}
 .nw-reading{max-width:none;width:100%;margin:0}
+.nw-manuscript p{text-indent:2em;text-align:justify;margin:0 0 .62em}
+.nw-manuscript p:last-child{margin-bottom:0}
 .nw-reader-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:2px 0 6px;font-size:11px;flex-wrap:wrap}
 .nw-reader-select{width:auto !important;min-width:64px;padding:2px 6px;font-size:11.5px;border-radius:7px}
 .nw-reading .nw-manuscript{max-width:none}
@@ -3582,6 +3586,11 @@ window.__ModuleLoader__.load({
 
       const plant = Array.isArray(chapter.plant) ? chapter.plant : []
       const payoff = Array.isArray(chapter.payoff) ? chapter.payoff : []
+      const dirty = Boolean(cardEdit) && (
+        cardEdit.title !== (chapter.title ?? '')
+        || String(cardEdit.wordBudget ?? '') !== String(chapter.wordBudget ?? '')
+        || cardEdit.synopsis !== (chapter.synopsis ?? '')
+      )
 
       return h('div', { className: shellClass },
         h('div', { className: 'nw-inspector-title' }, `第 ${number} 章 · ${chapter.volumeTitle ?? '未命名卷'}`),
@@ -3608,7 +3617,8 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: 'nw-btn primary',
-                  disabled: !run,
+                  disabled: !run || !dirty,
+                  title: dirty ? undefined : '还没有改动',
                   onClick: () => run?.('outline-update', {
                     chapterId: chapter.id,
                     fields: {
@@ -4575,6 +4585,11 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                     h('div', { className: 'nw-sticky-title' },
                       h('span', { className: 'nw-eyebrow', style: { display: 'block' } }, `第 ${selected ?? '—'} 章`),
                       h('span', { className: 'nw-sticky-name' }, detail?.chapter?.title ?? current?.title ?? ''),
+                      h('span', { className: 'nw-muted', style: { fontSize: '11px' } },
+                        `${Number(detail?.wordCount ?? 0) || 0} 字`,
+                        Number(current?.wordBudget) > 0 ? ` · 目标 ${current.wordBudget}` : '',
+                        detail?.revisions?.length ? ` · 修订 ${detail.revisions.length}` : '',
+                      ),
                       detail?.meta?.finalStale && hasFinal
                         ? h('span', { className: 'nw-badge bad', style: { marginTop: '3px' } }, '摘要/状态待更新')
                         : null,
