@@ -3660,7 +3660,19 @@ window.__ModuleLoader__.load({
           volumes.map(volumeGroup),
         )
       })()
-      return h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
+      return h('div', null,
+        h(StepIntro, {
+          eyebrow: '04 / 章节',
+          title: isOutline ? '章卡与章纲' : '逐章写作与审阅',
+          status: isOutline ? state.outline?.status : ((state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate'),
+          desc: isOutline
+            ? '左侧目录选章，右侧改章卡；生成与重生成只影响当前章，确认后进入正文写作。'
+            : '左侧目录选章，正文在中间阅读；章卡对照在右侧面板，大纲与批量操作在工具栏。',
+          hints: isOutline
+            ? ['生成后 3 章章纲', '逐章确认或确认本卷', '修复大纲问题']
+            : ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
+        }),
+        h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
         tree,
         h('div', { style: { flex: 1, minWidth: 0 } },
           isOutline
@@ -3678,6 +3690,7 @@ window.__ModuleLoader__.load({
                 showIssuesModal,
                 onOpenOutline: (number) => openOutline?.(number),
               }),
+        ),
         ),
       )
     }
@@ -3901,13 +3914,6 @@ window.__ModuleLoader__.load({
       
       
       return h('div', null,
-        h(StepIntro, {
-          eyebrow: '04 / 大纲',
-          title: '把故事拆成可执行的章节',
-          status: state.outline?.status,
-          desc: '左侧目录选章，右侧直接改章卡；生成与重生成只影响当前章，确认后进入正文写作。',
-          hints: ['生成后 3–6 章', '左侧选章，右侧编辑', '逐章确认或全部确认'],
-        }),
         (state?.issues?.items?.length ?? 0) > 0
           ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '10px 12px', display: 'grid', gap: '6px' } },
               h('div', { className: 'nw-row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
@@ -4870,13 +4876,6 @@ window.__ModuleLoader__.load({
         .slice(0, 3)
 
       return h('div', null,
-        h(StepIntro, {
-          eyebrow: '05 / 章节',
-          title: '逐章写作与审阅',
-          status: (state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate',
-          desc: '左侧目录选章，正文在中间阅读；章卡对照、进度与大纲操作在工具栏和右侧面板。',
-          hints: ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
-        }),
         (() => {
           const numbers = chapters.map((item) => Number(item.number)).filter((number) => Number.isFinite(number)).sort((a, b) => a - b)
           const first = numbers[0]
