@@ -102,7 +102,6 @@ const outlineNumbers = async (project) => {
   const outline = await service.readJson(project, 'story/plot/outline.json')
   return (outline?.volumes ?? []).flatMap((volume) => volume.chapters ?? []).map((chapter) => Number(chapter.number))
 }
-const ftsCount = (store, number) => Number(store.db.prepare('SELECT COUNT(*) AS n FROM fts_chapters WHERE number = ?').get(number).n)
 
 // ---------- 1) 成功路径：删第 3 章并重排 ----------
 {
@@ -129,8 +128,7 @@ const ftsCount = (store, number) => Number(store.db.prepare('SELECT COUNT(*) AS 
   assert.equal(store.readChapterMeta(4).title, '第5章', '原第5章的 meta 应迁到第4章')
   assert.equal(store.readChapterMeta(5), null, '原第5章行应被迁移走')
   assert.equal(store.readChapterMeta(5), null)
-  assert.equal(ftsCount(store, 5), 0, 'FTS 不应残留原第5章行')
-  assert.equal(ftsCount(store, 4), 1, 'FTS 第4章应只有 1 行')
+  // 文件存储没有 FTS 索引：章号迁移后直接以章节文档为准。
 
   // 文件：004 → 003、005 → 004，且 005 目录消失
   assert.ok(await statFile(join(project, 'story', 'chapters', '003')), '第3章目录应存在（原第4章）')
@@ -179,8 +177,7 @@ const ftsCount = (store, number) => Number(store.db.prepare('SELECT COUNT(*) AS 
   assert.deepEqual(await outlineNumbers(project), beforeNumbers, '大纲应回滚到删除前')
   assert.ok(store.readChapterMeta(2), '第2章 meta 不应被删除')
   assert.equal(store.readChapterMeta(3).title, '第3章', '第3章 meta 不应被提前重排')
-  assert.equal(ftsCount(store, 2), 1, 'FTS 第2章应保留')
-  assert.equal(ftsCount(store, 3), 1, 'FTS 第3章应保留')
+  // 文件存储没有 FTS 索引，章号与文档一致性由上面的 meta 断言覆盖。
   const powerAfter = await service.readJson(project, 'story/power.json')
   assert.deepEqual(powerAfter.chapterChanges, beforePower.chapterChanges, 'power.chapterChanges 应回滚')
 

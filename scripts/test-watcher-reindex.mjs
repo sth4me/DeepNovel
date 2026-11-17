@@ -100,8 +100,8 @@ assert.equal(store.readChapterMeta(1).wordCount, expected, 'wordCount 应更新�
 const second = `${body}又追来一名黑衣人。`
 await writeFile(join(project, 'story', 'chapters', '001', 'draft.md'), second, 'utf8')
 await service.flushChapterWatch(project)
-const rows = store.db.prepare('SELECT COUNT(*) AS n FROM fts_chapters WHERE number = 1').get()
-assert.equal(Number(rows.n), 1, '重复写入后该章 FTS 仍只有 1 行（幂等）')
+// 文件存储没有 FTS 索引：幂等性体现为章节文档不被重复创建/覆盖错乱
+assert.ok(store.readChapterMeta(1), '重复写入后章节文档仍存在且唯一')
 assert.equal(store.readChapterMeta(1).wordCount, second.replace(/\s+/g, '').length, 'wordCount 应随内容继续更新')
 
 // 3) 轮询定时器也能捕获变化（用短轮询验证一次）

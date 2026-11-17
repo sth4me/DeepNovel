@@ -28,6 +28,11 @@ export class FileNovelStore {
     this.docs = new DocStore(join(projectRoot, 'story'))
   }
 
+  /** 事务：与旧版 store.tx 对齐（延迟写入、失败回滚）。 */
+  tx(fn) {
+    return this.docs.transaction(fn)
+  }
+
   /* ------------------------------ 项目 ------------------------------ */
 
   readProject() {
@@ -155,7 +160,8 @@ export class FileNovelStore {
   /* ------------------------------ 设定 ------------------------------ */
 
   readBible() {
-    const doc = this.docs.read('bible/entries.json', null)
+    // 兼容旧版纯 JSON 项目：设定曾写在 story/bible/index.json。
+    const doc = this.docs.read('bible/entries.json', null) ?? this.docs.read('bible/index.json', null)
     const data = {
       status: doc?.status ?? 'missing',
       updatedAt: doc?.updatedAt ?? null,
