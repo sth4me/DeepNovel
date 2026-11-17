@@ -3587,6 +3587,8 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-inspector-row' }, h('span', null, '定稿'), h('span', null, hasFinal ? '已定稿' : '未定稿')),
             h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, `${words}${budget > 0 ? ` / ${budget}（${percent}%）` : ''}`)),
             budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
+            h('div', { className: 'nw-inspector-label' }, '本章摘要'),
+            h('div', { className: 'nw-inspector-body' }, String(detail?.summary?.summary ?? detail?.summary ?? '').slice(0, 220) || '还没有本章摘要'),
             h('div', { className: 'nw-inspector-label' }, '上一章交接'),
             previous
               ? h('div', { className: 'nw-inspector-body' }, `${previous.title ?? `第 ${number - 1} 章`}：${String(previous.summary?.summary ?? previous.summary ?? '').slice(0, 160) || '无摘要'}`)
