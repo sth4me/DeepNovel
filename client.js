@@ -46,6 +46,9 @@ window.__ModuleLoader__.load({
 .nw-dot.cur{background:var(--dsw-alias-state-warn-primary)}
 .nw-dot.bad{background:var(--dsw-alias-state-error-primary)}
 .nw-main{flex:1;overflow:auto;padding:14px;min-height:0;scrollbar-width:thin}
+.nw-bible-tabs{margin:4px 0 12px;display:flex;flex-direction:column;gap:6px}
+.nw-bible-tab-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.nw-bible-tab-row.secondary{padding-top:6px;border-top:1px dashed var(--dsw-alias-border-l1)}
 .nw-section-head{margin:26px 2px 10px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l1)}
 .nw-section-head.first{border-top:none;margin-top:6px;padding-top:0}
 .nw-section-title{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--dsw-alias-label-secondary)}
@@ -2867,13 +2870,15 @@ window.__ModuleLoader__.load({
       }
       const categories = [
         ['characters', '角色'],
-        ['relations', '关系'],
-        ['foreshadow', '伏笔'],
         ['locations', '地点'],
         ['rules', '规则'],
         ['factions', '势力'],
         ['items', '物品'],
+      ]
+      const structureViews = [
+        ['relations', '关系'],
         ['power', '能力'],
+        ['foreshadow', '伏笔'],
       ]
       const power = state.power ?? null
       const library = Array.isArray(state.characterLibrary?.characters) ? state.characterLibrary.characters : []
@@ -2912,21 +2917,35 @@ window.__ModuleLoader__.load({
             `角色 ${bible.characters.length} · 地点 ${bible.locations.length} · 规则 ${bible.rules.length} · 势力 ${bible.factions.length} · 物品 ${bible.items.length} · 能力 ${power?.characters?.length ?? 0}`,
           ),
         ),
-        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '4px 0 12px' } },
-          categories.map(([id, label]) =>
+        h('div', { className: 'nw-bible-tabs' },
+          h('div', { className: 'nw-bible-tab-row' },
+            categories.map(([id, label]) =>
+              h('button', {
+                key: id,
+                type: 'button',
+                className: `nw-btn${category === id ? ' primary' : ''}`,
+                onClick: () => setCategory(id),
+              }, `${label}（${(bible[id] ?? []).length}）`),
+            ),
             h('button', {
-              key: id,
               type: 'button',
-              className: `nw-btn${category === id ? ' primary' : ''}`,
-              onClick: () => setCategory(id),
-            }, `${label}（${id === 'power' ? (power?.characters?.length ?? 0) : id === 'relations' ? (state.relations?.relations?.length ?? 0) : id === 'foreshadow' ? foreshadowCount : (bible[id] ?? []).length}）`),
+              className: 'nw-btn',
+              disabled: busy || category === 'power' || category === 'relations' || category === 'foreshadow',
+              onClick: () => run('bible-update', { category, fields: { name: '新条目', description: '' } }, { toast: '已添加条目' }),
+            }, '+ 新增条目'),
           ),
-          h('button', {
-            type: 'button',
-            className: 'nw-btn',
-            disabled: busy || category === 'power' || category === 'relations',
-            onClick: () => run('bible-update', { category, fields: { name: '新条目', description: '' } }, { toast: '已添加条目' }),
-          }, '+ 新增条目'),
+          h('div', { className: 'nw-bible-tab-row secondary' },
+            h('span', { className: 'nw-section-title' }, '结构视图'),
+            structureViews.map(([id, label]) =>
+              h('button', {
+                key: id,
+                type: 'button',
+                className: `nw-btn${category === id ? ' primary' : ''}`,
+                onClick: () => setCategory(id),
+              }, `${label}（${id === 'power' ? (power?.characters?.length ?? 0) : id === 'relations' ? (state.relations?.relations?.length ?? 0) : foreshadowCount}）`),
+            ),
+            h('span', { className: 'nw-muted', style: { fontSize: '11px' } }, '关系 / 能力 / 伏笔是只读结构视图'),
+          ),
         ),
         category === 'relations'
           ? h(BibleRelationsGraph, { state, run, busy, setToast })
