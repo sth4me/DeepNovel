@@ -293,6 +293,9 @@ window.__ModuleLoader__.load({
 .nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:10px;cursor:pointer;padding:0 2px}
 .nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
+.nw-filetree-chapter.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+.nw-filetree-open{border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
+.nw-filetree-open:hover{color:var(--dsw-alias-brand-primary)}
 .nw-inspector{width:240px;flex:0 0 240px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:10px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;display:flex;flex-direction:column;gap:6px;font-size:12px;max-height:70vh;overflow:auto}
 .nw-inspector-title{font-size:12px;font-weight:600;opacity:.75}
 .nw-inspector-label{font-size:11px;opacity:.55;margin-top:6px}
@@ -3757,8 +3760,16 @@ window.__ModuleLoader__.load({
           h('div', { className: 'nw-filetree-title' }, '目录'),
           ...volumes.map((volume) => h('div', { key: volume.id, className: 'nw-filetree-group' },
             h('div', { className: 'nw-filetree-volume' }, volume.title || '未命名卷'),
-            ...(volume.chapters ?? []).map((chapter) => h('div', { key: chapter.id ?? chapter.number, className: 'nw-filetree-chapter' },
-              h('span', { className: 'nw-filetree-name', title: chapter.title ?? '' }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
+            ...(volume.chapters ?? []).map((chapter) => h('div', {
+              key: chapter.id ?? chapter.number,
+              className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
+            },
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-name nw-filetree-open',
+                title: chapter.title ?? '',
+                onClick: () => openOutline?.(chapter.number),
+              }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
               h('button', {
                 type: 'button',
                 className: 'nw-filetree-link',
