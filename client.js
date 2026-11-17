@@ -284,9 +284,11 @@ window.__ModuleLoader__.load({
 .nw-filetree-vol-row{display:flex;align-items:center;gap:2px}
 .nw-filetree-volume{font-size:12px;opacity:.8;padding:4px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;border-radius:6px}
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px;border-left:2px solid transparent}
+.nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px;border-left:2px solid transparent;cursor:pointer}
 .nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-filetree-open{display:flex;align-items:center;gap:7px;flex:1;min-width:0;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
+.nw-filetree-chapter:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}
+.nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
+.nw-filetree-open{display:flex;align-items:center;gap:7px;flex:1;min-width:0;color:inherit;padding:0}
 .nw-filetree-num{flex:0 0 auto;font-size:10.5px;opacity:.5;font-variant-numeric:tabular-nums}
 .nw-filetree-meta{flex:0 0 auto;font-size:10.5px;opacity:.45;white-space:nowrap}
 .nw-filetree-meta.cur{opacity:.7}
@@ -3499,6 +3501,45 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function PromptDialog({ title, label, value = '', multiline = false, hint = '', confirmLabel = '确定', onCancel, onSubmit }) {
+      const [text, setText] = useState(value)
+      const field = multiline
+        ? h('textarea', {
+            className: 'nw-input',
+            rows: 5,
+            value: text,
+            autoFocus: true,
+            style: { resize: 'vertical', fontFamily: 'inherit' },
+            onChange: (event) => setText(event.target.value),
+          })
+        : h('input', {
+            className: 'nw-input',
+            value: text,
+            autoFocus: true,
+            onChange: (event) => setText(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                onSubmit?.(text)
+              }
+            },
+          })
+      return h('div', { className: 'nw-modal-backdrop', onClick: onCancel },
+        h('div', { className: 'nw-modal', style: { width: 'min(420px, 92vw)' }, onClick: (event) => event.stopPropagation() },
+          h('h3', { className: 'nw-h3' }, title),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, label),
+            field,
+            hint ? h('div', { className: 'nw-muted', style: { fontSize: '11px', marginTop: '4px' } }, hint) : null,
+          ),
+          h('div', { className: 'nw-actions' },
+            h('button', { type: 'button', className: 'nw-btn', onClick: onCancel }, '取消'),
+            h('button', { type: 'button', className: 'nw-btn primary', onClick: () => onSubmit?.(text) }, confirmLabel),
+          ),
+        ),
+      )
+    }
+
     function ChapterInspector({ state, focusChapter, embedded, run }) {
       const [cardEdit, setCardEdit] = useState(null)
       const number = Number(focusChapter)
@@ -3589,6 +3630,17 @@ window.__ModuleLoader__.load({
 
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const [collapsedVolumes, setCollapsedVolumes] = useState({})
+      const [volumeDialog, setVolumeDialog] = useState(null)
+      const submitVolumeDialog = (text) => {
+        const value = String(text ?? '').trim()
+        if (!value) return
+        const dialog = volumeDialog
+        setVolumeDialog(null)
+        if (!dialog) return
+        if (dialog.kind === 'goal') run('volume-update', { volumeId: dialog.volumeId, goal: value }, { toast: '卷目标已更新' })
+        else if (dialog.kind === 'rename') run('volume-update', { volumeId: dialog.volumeId, title: value }, { toast: '已重命名卷' })
+        else run('volume-create', { title: value }, { toast: '已新建卷' })
+      }
       const tree = (() => {
         const volumes = state?.outline?.volumes ?? []
         const total = volumes.reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
@@ -3602,12 +3654,17 @@ window.__ModuleLoader__.load({
             key: chapter.id ?? chapter.number,
             className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
             title: `${chapter.title ?? ''} · ${stateText}${words ? ` · ${words} 字` : ''}`,
-          },
-            h('button', {
-              type: 'button',
-              className: 'nw-filetree-open',
-              onClick: () => openChapter?.(chapter.number),
+            role: 'button',
+            tabIndex: 0,
+            onClick: () => openChapter?.(chapter.number),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                openChapter?.(chapter.number)
+              }
             },
+          },
+            h('span', { className: 'nw-filetree-open' },
               h('span', { className: 'nw-filetree-num' }, String(chapter.number).padStart(2, '0')),
               h('span', { className: 'nw-filetree-name' }, chapter.title ?? '未命名'),
             ),
@@ -3630,11 +3687,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'nw-filetree-link',
                 title: '重命名卷',
-                onClick: () => {
-                  const title = window.prompt('卷标题', volume.title || '')
-                  if (!title || !String(title).trim()) return
-                  run('volume-update', { volumeId: volume.id, title: String(title).trim() }, { toast: '已重命名卷' })
-                },
+                onClick: () => setVolumeDialog({ kind: 'rename', volumeId: volume.id, value: volume.title || '' }),
               }, '✎'),
               h('button', {
                 type: 'button',
@@ -3656,11 +3709,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'nw-filetree-link',
               title: '新建卷',
-              onClick: async () => {
-                const title = window.prompt('新卷标题', `第 ${volumes.length + 1} 卷`)
-                if (!title || !String(title).trim()) return
-                run('volume-create', { title: String(title).trim() }, { toast: '已新建卷' })
-              },
+              onClick: () => setVolumeDialog({ kind: 'create', value: `第 ${volumes.length + 1} 卷` }),
             }, '＋卷'),
           ),
           volumes.map(volumeGroup),
@@ -3682,13 +3731,25 @@ window.__ModuleLoader__.load({
             runIssueAction,
             showIssuesModal,
             onOpenOutline: (number) => openOutline?.(number),
+            onEditVolumeGoal: (volume) => setVolumeDialog({ kind: 'goal', volumeId: volume.id, value: volume.goal || '' }),
           }),
         ),
         ),
+        volumeDialog
+          ? h(PromptDialog, {
+              title: volumeDialog.kind === 'create' ? '新建卷' : volumeDialog.kind === 'rename' ? '重命名卷' : '卷设置',
+              label: volumeDialog.kind === 'goal' ? '本卷目标' : '卷标题',
+              value: volumeDialog.value,
+              multiline: volumeDialog.kind === 'goal',
+              hint: volumeDialog.kind === 'goal' ? '目标会进入后续章纲与正文的上下文。' : '只改卷名，不影响章节内容。',
+              onCancel: () => setVolumeDialog(null),
+              onSubmit: submitVolumeDialog,
+            })
+          : null,
       )
     }
 
-function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
+function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter, runIssueAction, showIssuesModal, onEditVolumeGoal }) {
       const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const allChapters = state.chapters ?? []
       const volumes = state.volumes ?? []
@@ -4351,11 +4412,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   className: 'nw-btn',
                   disabled: busy,
                   title: '编辑本卷目标（卷设置的一部分）',
-                  onClick: () => {
-                    const goal = window.prompt('本卷目标', activeVolume.goal || '')
-                    if (goal == null) return
-                    run('volume-update', { volumeId: activeVolume.id, goal: String(goal) }, { toast: '卷目标已更新' })
-                  },
+                  onClick: () => onEditVolumeGoal?.(activeVolume),
                 }, '卷设置')
               : null,
             activeVolume
