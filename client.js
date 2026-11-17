@@ -5335,22 +5335,6 @@ window.__ModuleLoader__.load({
                     )
                   : null,
                 h('div', { className: 'nw-card' },
-                  h('div', { className: 'nw-row' },
-                    h('div', null,
-                      h('div', { className: 'nw-eyebrow' }, `第 ${selected ?? '—'} 章`),
-                      h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
-                        h('h2', { className: 'nw-h2', style: { margin: 0 } }, detail?.chapter?.title ?? current?.title ?? ''),
-                        qa ? h('span', { className: `nw-badge ${qa.status === 'pass' ? 'ok' : 'cur'}` }, `质检 ${displayStatus(qa.status)}`) : null,
-                        styleQa ? h('span', { className: `nw-badge ${styleQa.status === 'pass' ? 'ok' : styleQa.status === 'warn' ? 'cur' : 'bad'}` }, `AI ${styleQa.score ?? '—'}`) : null,
-                        styleQa?.aiFlavor
-                          ? h('span', { className: `nw-badge ${styleQa.aiFlavor.level === '轻' ? 'ok' : styleQa.aiFlavor.level === '中' ? 'cur' : 'bad'}` }, `AI 味 ${styleQa.aiFlavor.level ?? '?'} · ${styleQa.aiFlavor.score ?? '—'}`)
-                          : null,
-                        detail?.meta?.status === 'manual' ? h('span', { className: 'nw-badge cur' }, '手动编辑') : null,
-                        needsReview ? h('span', { className: 'nw-badge bad' }, '待人工') : null,
-                        hasFinal ? h('span', { className: 'nw-badge ok' }, '已定稿') : null,
-                      ),
-                    ),
-                  ),
                   h('div', { className: 'nw-field' },
                     h('label', { className: 'nw-label' }, '本章/修订要求（可留空）'),
                     h('textarea', { className: 'nw-textarea', value: instruction, disabled: busy, placeholder: '例如：开头更冷硬；压缩心理描写；加强章末钩子', onChange: (event) => setInstruction(event.target.value) }),
