@@ -353,6 +353,9 @@ window.__ModuleLoader__.load({
 .nw-insp-section{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .nw-insp-divider{height:1px;background:var(--dsw-alias-border-l1);margin:6px 0}
 .nw-inspector-embedded{width:auto;flex:none;border:none;padding:0;position:static;max-height:none;overflow:visible;background:transparent}
+.nw-inspector-embedded .nw-input{width:100%;box-sizing:border-box}
+.nw-inspector-embedded .nw-field{width:100%}
+.nw-inspector-embedded .nw-textarea{width:100%}
 .nw-insp-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:6;background:transparent}
 .nw-insp-resizer:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent)}
 .nw-insp-tabs{display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto}
@@ -2390,7 +2393,7 @@ window.__ModuleLoader__.load({
                   : tab === 'bible'
                     ? h(BibleView, {
                         state, run, busy, setToast,
-                        onOpenOutline: (number) => { setFocusChapter(number); setTab('outline') },
+                        onOpenOutline: (number) => { setFocusChapter(number); setTab('chapters') },
                       })
                     : tab === 'references'
                       ? h(ReferencesView, { root, setToast })
@@ -2398,12 +2401,12 @@ window.__ModuleLoader__.load({
                       ? h(ChapterWorkspace, {
                           state, root, run, busy, setToast,
                           focusChapter,
-                          mode: tab,
+                          mode: 'chapters',
                           setTab,
                           runIssueAction,
                           showIssuesModal,
                           openChapter: (number) => { setFocusChapter(number); setTab('chapters') },
-                          openOutline: (number) => { setFocusChapter(number); setTab('outline') },
+                          openOutline: (number) => { setFocusChapter(number); setTab('chapters') },
                           onSelectChapter: setFocusChapter,
                         })
                       : null
@@ -2553,7 +2556,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-insp-body' },
           (tab === 'outline' || tab === 'chapters')
             ? h('div', { className: 'nw-insp-section' },
-                h(ChapterInspector, { state, root, mode: tab, focusChapter, setTab, embedded: true, run }),
+                h(ChapterInspector, { state, focusChapter, embedded: true, run }),
                 h('div', { className: 'nw-insp-divider' }),
               )
             : null,
@@ -3491,10 +3494,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterInspector({ state, root, mode, focusChapter, setTab, embedded, run }) {
-      const [detail, setDetail] = useState(null)
-      const [previous, setPrevious] = useState(null)
-      const [loading, setLoading] = useState(false)
+    function ChapterInspector({ state, focusChapter, embedded, run }) {
       const [cardEdit, setCardEdit] = useState(null)
       const number = Number(focusChapter)
       const valid = Number.isFinite(number) && number > 0
@@ -3526,112 +3526,64 @@ window.__ModuleLoader__.load({
           : null)
       }, [number, valid, state?.outline])
 
-      useEffect(() => {
-        if (!valid || !root) {
-          setDetail(null)
-          return undefined
-        }
-        let alive = true
-        setLoading(true)
-        const unwrap = (value) => value?.data ?? value ?? null
-        Promise.all([
-          fetchProjectChapter(root, number).then(unwrap).catch(() => null),
-          number > 1 ? fetchProjectChapter(root, number - 1).then(unwrap).catch(() => null) : Promise.resolve(null),
-        ]).then(([current, prev]) => {
-          if (!alive) return
-          setDetail(current)
-          setPrevious(prev)
-        }).finally(() => {
-          if (alive) setLoading(false)
-        })
-        return () => { alive = false }
-      }, [root, number, valid])
-
       const shellClass = `nw-inspector${embedded ? ' nw-inspector-embedded' : ''}`
       if (!valid || !chapter) {
         return h('div', { className: shellClass },
-          h('div', { className: 'nw-inspector-title' }, '本章对照'),
-          h('div', { className: 'nw-muted', style: { padding: '6px 4px', fontSize: '12px' } }, '在左侧目录选择一章，这里会显示章卡与正文的对照信息。'),
+          h('div', { className: 'nw-inspector-title' }, '章卡'),
+          h('div', { className: 'nw-muted', style: { padding: '6px 4px', fontSize: '12px' } }, '在左侧目录选择一章。'),
         )
       }
 
-      const hasDraft = Boolean(detail?.draft)
-      const hasFinal = Boolean(detail?.final)
-      const words = Number(detail?.wordCount ?? 0) || 0
-      const budget = Number(chapter.wordBudget ?? 0) || 0
-      const reached = budget > 0 && words >= budget
-      const percent = budget > 0 ? Math.min(100, Math.round((words / budget) * 100)) : 0
       const plant = Array.isArray(chapter.plant) ? chapter.plant : []
       const payoff = Array.isArray(chapter.payoff) ? chapter.payoff : []
 
       return h('div', { className: shellClass },
-        h('div', { className: 'nw-inspector-title' }, `第 ${number} 章对照`),
-        h('div', { className: 'nw-inspector-row' }, h('span', null, '标题'), h('b', null, chapter.title ?? '未命名')),
-        h('div', { className: 'nw-inspector-row' }, h('span', null, '卷'), h('span', null, chapter.volumeTitle ?? '—')),
-        h('div', { className: 'nw-inspector-row' }, h('span', null, '章卡'), h('span', null, chapter.status === 'confirmed' ? '已确认' : '待确认')),
-        mode === 'chapters'
-          ? h('div', null,
-            h('div', { className: 'nw-inspector-label' }, '本章章卡'),
-            cardEdit
-              ? h('div', { style: { display: 'grid', gap: '6px', marginTop: '4px' } },
-                  h('div', { className: 'nw-field', style: { margin: 0 } },
-                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '标题'),
-                    h('input', { className: 'nw-input', value: cardEdit.title, onChange: (event) => setCardEdit((value) => ({ ...value, title: event.target.value })) }),
-                  ),
-                  h('div', { className: 'nw-field', style: { margin: 0 } },
-                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '目标字数（下限）'),
-                    h('input', { className: 'nw-input', type: 'number', value: cardEdit.wordBudget, onChange: (event) => setCardEdit((value) => ({ ...value, wordBudget: event.target.value })) }),
-                  ),
-                  h('div', { className: 'nw-field', style: { margin: 0 } },
-                    h('label', { className: 'nw-label', style: { fontSize: '11px' } }, '章卡要点'),
-                    h('textarea', {
-                      className: 'nw-input',
-                      rows: 6,
-                      value: cardEdit.synopsis,
-                      style: { resize: 'vertical', fontFamily: 'inherit' },
-                      onChange: (event) => setCardEdit((value) => ({ ...value, synopsis: event.target.value })),
-                    }),
-                  ),
-                  h('button', {
-                    type: 'button',
-                    className: 'nw-btn',
-                    disabled: !run,
-                    onClick: () => run?.('outline-update', {
-                      chapterId: chapter.id,
-                      fields: {
-                        title: cardEdit.title.trim(),
-                        wordBudget: Number(cardEdit.wordBudget) || null,
-                        synopsis: cardEdit.synopsis,
-                      },
-                    }, { toast: '章卡已保存' }),
-                  }, '保存章卡'),
-                )
-              : null,
-            plant.length || payoff.length
-              ? h('div', { className: 'nw-inspector-row', style: { marginTop: '8px' } }, h('span', null, '伏笔'), h('span', null, `埋 ${plant.length} · 收 ${payoff.length}`))
-              : null,
-            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('outline') }, '打开完整章卡页 →'),
-          )
-          : h('div', null,
-            h('div', { className: 'nw-inspector-label' }, '正文状态'),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '正文'), h('span', null, loading ? '读取中…' : hasDraft ? '有' : '无')),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '摘要/状态'), h('span', null, hasFinal ? '已同步' : '未同步')),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, budget > 0 ? (reached ? `${words} 字 · 已达标` : `${words} / ${budget}`) : `${words} 字`)),
-            budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
-            h('div', { className: 'nw-inspector-label' }, '本章摘要'),
-            h('div', { className: 'nw-inspector-body' }, String(detail?.summary?.summary ?? detail?.summary ?? '').slice(0, 220) || '还没有本章摘要'),
-            h('div', { className: 'nw-inspector-label' }, '上一章交接'),
-            previous
-              ? h('div', { className: 'nw-inspector-body' }, `${previous.title ?? `第 ${number - 1} 章`}：${String(previous.summary?.summary ?? previous.summary ?? '').slice(0, 160) || '无摘要'}`)
-              : h('div', { className: 'nw-muted', style: { fontSize: '12px' } }, number > 1 ? '上一章暂无交接信息' : '这是第一章'),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '最近修订'), h('span', null, Array.isArray(detail?.revisions) ? `${detail.revisions.length} 个版本` : '—')),
-            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('chapters') }, '打开正文 →'),
-          ),
+        h('div', { className: 'nw-inspector-title' }, `第 ${number} 章 · ${chapter.volumeTitle ?? '未命名卷'}`),
+        cardEdit
+          ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '4px' } },
+              h('div', { className: 'nw-field', style: { margin: 0 } },
+                h('label', { className: 'nw-label' }, '标题'),
+                h('input', { className: 'nw-input', value: cardEdit.title, onChange: (event) => setCardEdit((value) => ({ ...value, title: event.target.value })) }),
+              ),
+              h('div', { className: 'nw-field', style: { margin: 0 } },
+                h('label', { className: 'nw-label' }, '目标字数（下限）'),
+                h('input', { className: 'nw-input', type: 'number', value: cardEdit.wordBudget, onChange: (event) => setCardEdit((value) => ({ ...value, wordBudget: event.target.value })) }),
+              ),
+              h('div', { className: 'nw-field', style: { margin: 0 } },
+                h('label', { className: 'nw-label' }, '章卡要点'),
+                h('textarea', {
+                  className: 'nw-input',
+                  rows: 10,
+                  value: cardEdit.synopsis,
+                  style: { resize: 'vertical', fontFamily: 'inherit', minHeight: '160px' },
+                  onChange: (event) => setCardEdit((value) => ({ ...value, synopsis: event.target.value })),
+                }),
+              ),
+              h('div', { className: 'nw-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'nw-btn primary',
+                  disabled: !run,
+                  onClick: () => run?.('outline-update', {
+                    chapterId: chapter.id,
+                    fields: {
+                      title: cardEdit.title.trim(),
+                      wordBudget: Number(cardEdit.wordBudget) || null,
+                      synopsis: cardEdit.synopsis,
+                    },
+                  }, { toast: '章卡已保存' }),
+                }, '保存章卡'),
+                h('span', { className: 'nw-muted', style: { fontSize: '11px' } }, chapter.status === 'confirmed' ? '已确认' : '待确认'),
+              ),
+              plant.length || payoff.length
+                ? h('div', { className: 'nw-inspector-row' }, h('span', null, '伏笔'), h('span', null, `埋 ${plant.length} · 收 ${payoff.length}`))
+                : null,
+            )
+          : null,
       )
     }
 
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
-      const isOutline = mode === 'outline'
       const [collapsedVolumes, setCollapsedVolumes] = useState({})
       const tree = (() => {
         const volumes = state?.outline?.volumes ?? []
@@ -3701,608 +3653,26 @@ window.__ModuleLoader__.load({
       return h('div', null,
         h(StepIntro, {
           eyebrow: '04 / 章节',
-          title: isOutline ? '章卡与章纲' : '逐章写作与审阅',
-          status: isOutline ? state.outline?.status : ((state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate'),
-          desc: isOutline
-            ? '左侧目录选章，右侧改章卡。'
-            : '左侧目录选章，正文在中间阅读，章卡对照在右侧面板。',
+          title: '逐章写作与审阅',
+          status: (state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate',
+          desc: '左侧目录选章，正文在中间阅读，章卡在右侧面板直接编辑。',
         }),
         h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
         tree,
         h('div', { style: { flex: 1, minWidth: 0 } },
-          isOutline
-            ? h(OutlineWorkbench, {
-                state, run, busy, setToast, focusChapter,
-                onSelectChapter,
-                runIssueAction,
-                showIssuesModal,
-                onOpenChapter: (number) => openChapter?.(number),
-              })
-            : h(ChaptersWorkbench, {
-                state, root, run, busy, setToast, focusChapter,
-                onSelectChapter,
-                runIssueAction,
-                showIssuesModal,
-                onOpenOutline: (number) => openOutline?.(number),
-              }),
+          h(ChaptersWorkbench, {
+            state, root, run, busy, setToast, focusChapter,
+            onSelectChapter,
+            runIssueAction,
+            showIssuesModal,
+            onOpenOutline: (number) => openOutline?.(number),
+          }),
         ),
         ),
       )
     }
 
-    function OutlineWorkbench({ state, run, busy, setToast, focusChapter, onOpenChapter, onSelectChapter, runIssueAction, showIssuesModal }) {
-      const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
-      const volumes = state.outline?.volumes ?? []
-      const allChapters = flattenOutline(state.outline)
-      const storedVolume = (() => {
-        try {
-          const map = JSON.parse(localStorage.getItem('dsh.novelWriter.outlineVolumes') || '{}')
-          return map[state?.cwd] ?? null
-        } catch {
-          return null
-        }
-      })()
-      const focusVolume = Number.isFinite(focusChapter)
-        ? volumes.find((volume) => (volume.chapters ?? []).some((chapter) => Number(chapter.number) === Number(focusChapter)))
-        : null
-      const [volumeId, setVolumeId] = useState(
-        focusVolume?.id ??
-          (volumes.some((volume) => volume.id === storedVolume)
-            ? storedVolume
-            : volumes[volumes.length - 1]?.id ?? null),
-      )
-      const [volumeDraft, setVolumeDraft] = useState(null)
-      const [deleteCount, setDeleteCount] = useState(1)
-      const chapters = volumeId ? allChapters.filter((item) => item.volumeId === volumeId) : allChapters
-      const activeVolume = volumes.find((volume) => volume.id === volumeId) ?? null
-      const ready = state.stage?.premise === 'confirmed' && state.stage?.style === 'confirmed' && state.stage?.bible === 'confirmed'
-      const readyBlockers = [
-        state.stage?.premise !== 'confirmed' ? '构思未确认' : '',
-        state.stage?.style !== 'confirmed' ? '文风未确认' : '',
-        state.stage?.bible !== 'confirmed' ? '设定未确认' : '',
-      ].filter(Boolean)
-      const [selected, setSelected] = useState(
-        Number.isFinite(focusChapter) && chapters.some((item) => Number(item.number) === Number(focusChapter))
-          ? focusChapter
-          : chapters[0]?.number ?? null,
-      )
-      const listRef = useRef(null)
-      const workbenchRef = useRef(null)
-      useEffect(() => {
-        const list = listRef.current
-        if (!list) return
-        const active = list.querySelector('.nw-list-item.active')
-        if (!active) return
-        const target = active.offsetTop - (list.clientHeight - active.clientHeight) / 2
-        list.scrollTop = Math.max(0, target)
-      }, [selected])
-      const [instruction, setInstruction] = usePersistedInput(state?.cwd, 'outlineInstruction')
-      const [view, setView] = useState('cards')
-      const [regenOpen, setRegenOpen] = useState(false)
-      const [regenFrom, setRegenFrom] = useState(1)
-      const [regenTo, setRegenTo] = useState(1)
-      const afterGenerate = async (result) => {
-        if (!result) return
-        if (result.volumeId) setVolumeId(result.volumeId)
-        if (result.nextVolumeId) {
-          setVolumeId(result.nextVolumeId)
-          setToast('本卷阶段收束，已自动开启下一卷')
-        } else if (result.volumeEnded) {
-          setToast('本卷阶段收束（自动分卷已关闭，可手动新建下一卷）')
-        }
-        if (result.partial) {
-          setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章，缺 ${result.missing?.length ?? 0} 章（可再点生成补齐）`)
-        } else {
-          setToast(`已生成第 ${result.fromChapter}–${result.toChapter} 章`)
-        }
-        if (result.cast?.warning) setToast?.(result.cast.warning)
-        const auto = state.project?.automation ?? {}
-        if (auto.autoAudit === false) return
-        try {
-          setToast?.('章纲已生成，后台审查中…')
-          const audit = await run('outline-audit', { fromChapter: result.fromChapter, toChapter: result.toChapter }, { silent: true, background: true, throwOnError: true })
-          const auditIssues = Array.isArray(audit?.issues) ? audit.issues : []
-          const structureCount = Array.isArray(audit?.structureIssues) ? audit.structureIssues.length : 0
-          if (structureCount > 0 && auto.autoRepairOutline !== false) {
-            setToast?.(`检测到 ${structureCount} 条结构问题，建议重规划（不会自动修复）`)
-          }
-          if (auto.autoRepairOutline !== false && auditIssues.length > 0) {
-            setToast?.('章纲审查完成，尝试修复…')
-            // repair 内部已复检并自带回滚；这里最多跑一轮，不收敛就停止，不再自动 continue。
-            const repair = await run('outline-repair', {}, { silent: true, background: true, throwOnError: true })
-            const remaining = Number.isFinite(repair?.issuesAfter) ? repair.issuesAfter : (Number.isFinite(repair?.issuesBefore) ? repair.issuesBefore : auditIssues.length)
-            const exhausted = Array.isArray(repair?.exhausted) ? repair.exhausted : []
-            const replan = Array.isArray(repair?.replan) ? repair.replan : []
-            if (repair?.reason === 'structure-only' || (replan.length > 0 && !repair?.repaired?.length)) {
-              const ranges = replan.map((item) => item.from == null ? '全局/跨卷' : `第 ${item.from}–${item.to} 章`).join('、')
-              setToast?.(`结构问题不自动修复；建议重规划：${ranges || '请查看审核面板'}`)
-            }
-            const staleCount = Number(repair?.staleCount ?? audit?.staleCount ?? 0)
-            if (staleCount > 0 || repair?.reason === 'stale-audit') {
-              setToast?.(`已清理 ${staleCount} 条指向已删除章节的旧审核问题`)
-            } else if (repair?.applied === false && repair?.versionId) {
-              const added = Array.isArray(repair?.newIssues) ? repair.newIssues.length : 0
-              setToast?.(`修复已保存为候选（问题 ${repair.issuesBefore ?? '?'}→${repair.issuesAfter ?? '?'}，新增 ${added} 条）；可在助手查看 diff 后应用或丢弃`)
-            } else if (repair?.applied === true) {
-              const fixed = Array.isArray(repair?.repaired) ? repair.repaired.length : 0
-              setToast?.(`修复已自动应用（${fixed} 章，问题 ${repair.issuesBefore ?? '?'}→${repair.issuesAfter ?? '?'}）`)
-            } else if (exhausted.length > 0) {
-              setToast?.(`修复已停止（${remaining} 条待人工处理）`)
-            } else {
-              setToast?.('章纲审查与修复完成')
-            }
-          } else {
-            setToast?.('章纲审查完成')
-          }
-        } catch (error) {
-          setToast?.(`后台章纲审查/修复失败：${error.message}`)
-        }
-      }
-      const chooseChapter = (number) => {
-        setSelected(number)
-        setView('edit')
-        onSelectChapter?.(number)
-      }
-      useEffect(() => {
-        if (!Number.isFinite(focusChapter)) return
-        setSelected(focusChapter)
-        setView('edit')
-        const frame = requestAnimationFrame(() => {
-          workbenchRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-        })
-        return () => cancelAnimationFrame(frame)
-      }, [focusChapter])
-      useEffect(() => {
-        if (!state?.cwd || !volumeId) return
-        try {
-          const map = JSON.parse(localStorage.getItem('dsh.novelWriter.outlineVolumes') || '{}')
-          map[state.cwd] = volumeId
-          localStorage.setItem('dsh.novelWriter.outlineVolumes', JSON.stringify(map))
-        } catch {
-          // storage unavailable
-        }
-      }, [state?.cwd, volumeId])
-      useEffect(() => {
-        if (Number.isFinite(focusChapter)) {
-          const target = volumes.find((volume) =>
-            (volume.chapters ?? []).some((chapter) => Number(chapter.number) === Number(focusChapter)),
-          )
-          if (target) setVolumeId(target.id)
-        }
-      }, [focusChapter, volumes.map((volume) => `${volume.id}:${(volume.chapters ?? []).length}`).join(',')])
-      useEffect(() => {
-        if (Number.isFinite(selected)) onSelectChapter?.(selected)
-      }, [selected])
-      useEffect(() => {
-        if (volumeId && !volumes.some((volume) => volume.id === volumeId)) {
-          setVolumeId(
-            volumes.some((volume) => volume.id === storedVolume)
-              ? storedVolume
-              : volumes[volumes.length - 1]?.id ?? null,
-          )
-        }
-      }, [volumes.map((volume) => volume.id).join(',')])
-      useEffect(() => {
-        if (selected == null && chapters.length > 0) setSelected(chapters[0].number)
-        if (selected != null && chapters.length > 0 && !chapters.some((item) => Number(item.number) === Number(selected))) {
-          setSelected(chapters[0].number)
-        }
-      }, [volumeId, chapters.length, chapters.map((item) => item.number).join(',')])
-      const createVolume = () => {
-        if (busy) return
-        setVolumeDraft({ mode: 'create', title: `第 ${volumes.length + 1} 卷`, map: '', goal: '', powerCeiling: '', exitCriteria: '', targetChapters: 12 })
-      }
-      const editVolumePlan = () => {
-        if (!activeVolume || busy) return
-        setVolumeDraft({
-          mode: 'edit',
-          id: activeVolume.id,
-          title: activeVolume.title ?? '',
-          map: activeVolume.map ?? '',
-          goal: activeVolume.goal ?? '',
-          powerCeiling: activeVolume.powerCeiling ?? '',
-          exitCriteria: activeVolume.exitCriteria ?? '',
-          targetChapters: Number(activeVolume.targetChapters) || 12,
-        })
-      }
-      const submitVolume = async () => {
-        const title = String(volumeDraft?.title ?? '').trim()
-        if (!title || busy) return
-        const fields = {
-          title,
-          map: volumeDraft.map ?? '',
-          goal: volumeDraft.goal ?? '',
-          powerCeiling: volumeDraft.powerCeiling ?? '',
-          exitCriteria: volumeDraft.exitCriteria ?? '',
-          targetChapters: Number(volumeDraft.targetChapters) || 12,
-        }
-        if (volumeDraft.mode === 'edit') {
-          await run('volume-update', { volumeId: volumeDraft.id, ...fields }, { toast: '卷计划已保存' })
-          setVolumeDraft(null)
-          return
-        }
-        const result = await run('volume-create', fields, { toast: '已新建卷' })
-        setVolumeDraft(null)
-        if (result?.id) setVolumeId(result.id)
-      }
-      const deleteVolume = async () => {
-        if (!activeVolume) return
-        if ((activeVolume.chapters ?? []).length > 0) {
-          window.alert('卷内还有章节，先把章节移到其他卷再删除。')
-          return
-        }
-        if (!(await requestConfirm({ title: '删除卷', message: `删除卷「${activeVolume.title}」？`, danger: true }))) return
-        await run('volume-delete', { volumeId: activeVolume.id }, { toast: '卷已删除' })
-        setVolumeId(volumes.find((volume) => volume.id !== activeVolume.id)?.id ?? null)
-      }
-      const moveChapter = async (number, targetId) => {
-        await run('chapter-move', { number, volumeId: targetId }, { toast: '章节已移动' })
-      }
-      const chapter = chapters.find((item) => Number(item.number) === Number(selected))
-      const [fields, setFields] = useState(chapter ?? {})
-      useEffect(() => { setFields(chapter ?? {}) }, [chapter?.id, chapter?.editedAt, chapter?.status, chapter?.title])
-      const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }))
-      const dirty = chapter
-        ? ['title', 'synopsis', 'wordBudget']
-            .some((key) => String(fields[key] ?? '') !== String(chapter[key] ?? ''))
-        : false
-      
-      
-      return h('div', null,
-        (state?.issues?.items?.length ?? 0) > 0
-          ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '10px 12px', display: 'grid', gap: '6px' } },
-              h('div', { className: 'nw-row', style: { gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
-                h('span', { className: 'nw-eyebrow', style: { margin: 0 } }, `待处理（${state.issues.count ?? state.issues.items.length}）`),
-                h('span', { className: 'nw-muted', style: { flex: 1 } }, '只做提示；结构问题不会自动处理'),
-                (state.issues.count ?? state.issues.items.length) > 3
-                  ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: showIssuesModal }, '查看全部')
-                  : null,
-              ),
-              state.issues.items.slice(0, 3).map((issue) => {
-                const action = issue.actions?.[0]
-                return h('div', { key: issue.id, className: 'nw-row', style: { gap: '8px', alignItems: 'center' } },
-                  h('span', { className: 'nw-muted', style: { flex: 1, minWidth: 0 } }, `${issue.chapter ? `第${issue.chapter}章 · ` : ''}${issue.type}${issue.message ? `：${issue.message}` : ''}`),
-                  action ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => runIssueAction(action) }, action.label) : null,
-                  issue.actions?.some((item) => item.id === 'dismiss')
-                    ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => runIssueAction(issue.actions.find((item) => item.id === 'dismiss')) }, '忽略')
-                    : null,
-                )
-              }),
-            )
-          : null,
-        h('div', { className: 'nw-card' },
-          h('div', { className: 'nw-row', style: { flexWrap: 'wrap' } },
-            h('div', { className: 'nw-eyebrow' }, '分卷'),
-            h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginLeft: '4px' } },
-              h('button', { type: 'button', className: `nw-btn ghost${volumeId == null ? ' primary' : ''}`, onClick: () => setVolumeId(null) }, '全部'),
-              volumes.map((volume) =>
-                h('button', { key: volume.id, type: 'button', className: `nw-btn ghost${volumeId === volume.id ? ' primary' : ''}`, onClick: () => setVolumeId(volume.id) },
-                  `${volume.title || '未命名卷'} · ${(volume.chapters ?? []).length}`,
-                ),
-              ),
-            ),
-          ),
-          h('div', { className: 'nw-actions', style: { marginTop: '8px' } },
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: createVolume }, '+ 新建卷'),
-            activeVolume ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: editVolumePlan }, '卷设置') : null,
-            activeVolume ? h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              title: '根据构思开局/上一卷末态自动生成卷目标（候选 1），可在卷设置里修改或再次点击重生成',
-              onClick: async () => {
-                const planned = await run('volume-plan', { volumeId: activeVolume.id }, { silent: true })
-                if (!planned?.candidates?.length) {
-                  setToast('卷目标生成失败，可稍后重试或手动填写')
-                  return
-                }
-                await run('volume-select', { volumeId: activeVolume.id, index: 0, candidates: planned.candidates }, { toast: `已生成卷目标：${planned.candidates[0].goal}` })
-              },
-            }, '生成卷设定') : null,
-            activeVolume ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: deleteVolume }, '删除卷') : null,
-            activeVolume && chapters.length
-              ? h('button', {
-                  type: 'button',
-                  className: 'nw-btn',
-                  disabled: busy,
-                  onClick: async () => {
-                    if (!(await requestConfirm({
-                      title: '确认本卷章纲',
-                      message: `确认「${activeVolume.title || '当前卷'}」全部 ${chapters.length} 章章纲？`,
-                      confirmLabel: '确认',
-                    }))) return
-                    const numbers = chapters.map((item) => Number(item.number)).sort((a, b) => a - b)
-                    run('outline-commit', {
-                      fromChapter: numbers[0],
-                      toChapter: numbers[numbers.length - 1],
-                    }, { toast: '本卷章纲已确认' })
-                  },
-                }, '确认本卷')
-              : null,
-            h('input', {
-              className: 'nw-input',
-              style: { width: '64px' },
-              type: 'number',
-              min: '1',
-              value: deleteCount,
-              disabled: busy,
-              title: '要删除的尾部章节数',
-              onChange: (event) => setDeleteCount(Number(event.target.value) || 1),
-            }),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn danger',
-              disabled: busy,
-              onClick: async () => {
-                const preview = await run('chapters-delete-tail', { count: deleteCount, dryRun: true }, { silent: true })
-                if (!preview) return
-                if (!(await requestConfirm({
-                  title: '删除尾部章节',
-                  message: `将删除第 ${preview.from}–${preview.to} 章的大纲，并同时删除这些章的正文、定稿、修订、摘要与状态快照，无法恢复。`,
-                  danger: true,
-                  confirmLabel: '删除',
-                }))) return
-                run('chapters-delete-tail', { count: deleteCount }, { toast: `已删除第 ${preview.from}–${preview.to} 章` })
-              },
-            }, '删除尾部章节'),
-          ),
-          activeVolume
-            ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
-                Array.isArray(activeVolume.cast) && activeVolume.cast.length > 0
-                  ? `本卷焦点名单 ${activeVolume.cast.length} 人（建议 6 左右）· 具名配角 ${Array.isArray(activeVolume.extras) ? activeVolume.extras.length : 0} 人（建议 3 左右）：${activeVolume.cast.map((item) => item.name).join('、')}${Array.isArray(activeVolume.extras) && activeVolume.extras.length > 0 ? `（配角：${activeVolume.extras.map((item) => item.name).join('、')}）` : ''}`
-                  : '尚未设置焦点名单：可按剧情需要挑选，角色池里的已登记角色也都能出场',
-              )
-            : null,
-          activeVolume
-            ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
-                `目标：${activeVolume.goal || '未设置'} · 目标章数：${Number(activeVolume.targetChapters) > 0 ? activeVolume.targetChapters : '未设置'} · 地图：${activeVolume.map || '未设置'} · 战力天花板：${activeVolume.powerCeiling || '未设置'} · 离卷：${activeVolume.exitCriteria || '未设置'}`,
-              )
-            : null,
-          volumeDraft
-            ? h('div', { className: 'nw-banner', style: { marginTop: '8px', display: 'grid', gap: '8px' } },
-                h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-                  h('span', { className: 'nw-label', style: { margin: 0, minWidth: '52px' } }, volumeDraft.mode === 'edit' ? '卷设置' : '新卷名称'),
-                  h('input', {
-                    className: 'nw-input',
-                    style: { flex: '1 1 220px', minWidth: '180px' },
-                    value: volumeDraft.title,
-                    autoFocus: true,
-                    disabled: busy,
-                    placeholder: '卷名',
-                    onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, title: event.target.value } : prev),
-                    onKeyDown: (event) => {
-                      if (event.key === 'Enter') submitVolume()
-                      if (event.key === 'Escape') setVolumeDraft(null)
-                    },
-                  }),
-                  h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !String(volumeDraft.title ?? '').trim(), onClick: submitVolume }, volumeDraft.mode === 'edit' ? '保存卷计划' : '创建卷'),
-                  h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setVolumeDraft(null) }, '取消'),
-                ),
-                h('div', { className: 'nw-grid-2' },
-                  h('div', { className: 'nw-field' },
-                    h('label', { className: 'nw-label' }, '本地地图'),
-                    h('input', { className: 'nw-input', value: volumeDraft.map ?? '', disabled: busy, placeholder: '如：临川府；新卷不得沿用上一卷地图', onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, map: event.target.value } : prev) }),
-                  ),
-                  h('div', { className: 'nw-field' },
-                    h('label', { className: 'nw-label' }, '本地战力天花板'),
-                    h('input', { className: 'nw-input', value: volumeDraft.powerCeiling ?? '', disabled: busy, placeholder: '如：一流；决定主角何时能离开本地', onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, powerCeiling: event.target.value } : prev) }),
-                  ),
-                ),
-                h('div', { className: 'nw-field' },
-                  h('label', { className: 'nw-label' }, '本卷目标'),
-                  h('input', { className: 'nw-input', value: volumeDraft.goal ?? '', disabled: busy, placeholder: '本卷要完成的主线', onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, goal: event.target.value } : prev) }),
-                ),
-                h('div', { className: 'nw-field' },
-                  h('label', { className: 'nw-label' }, '离卷条件'),
-                  h('input', { className: 'nw-input', value: volumeDraft.exitCriteria ?? '', disabled: busy, placeholder: '本地主线收束 + 主角压过本地天花板后离开', onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, exitCriteria: event.target.value } : prev) }),
-                ),
-                h('div', { className: 'nw-field' },
-                  h('label', { className: 'nw-label' }, '目标章数'),
-                  h('input', { className: 'nw-input', type: 'number', min: '1', value: volumeDraft.targetChapters ?? 12, disabled: busy, onChange: (event) => setVolumeDraft((prev) => prev ? { ...prev, targetChapters: Number(event.target.value) || 12 } : prev) }),
-                ),
-              )
-            : null,
-        ),
-        h('div', { className: 'nw-card' },
-          h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' } },
-            h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})), title: lockMsg('outline-generate', {}) ?? undefined, onClick: async () => { const result = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, busy ? '生成中…' : '生成后 3 章'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})),
-              title: lockMsg('outline-generate', {}) ?? '分两批各生成 3 章，降低单次输出过长导致的失败率',
-              onClick: async () => {
-                const first = await run('outline-generate', { count: 3, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true })
-                if (!first) return
-                afterGenerate(first)
-                const second = await run('outline-generate', { count: 3, fromChapter: first.toChapter + 1, volumeId: volumeId ?? volumes[0]?.id, instruction: instruction || undefined, deferAudit: true })
-                if (second) afterGenerate(second)
-              },
-            }, '生成后 6 章（分两批）'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy || chapters.length === 0,
-              title: '根据已有正文反推每章 synopsis，不新增正文没有的事件',
-              onClick: async () => {
-                if (!(await requestConfirm({
-                  title: '从正文反推章纲',
-                  message: '将读取已有正文，反推每章剧情梗概，并覆盖对应章纲的 synopsis。继续？',
-                  confirmLabel: '反推',
-                }))) return
-                await run('outline-reverse', {}, { toast: '已从正文反推章纲' })
-              },
-            }, '从正文反推章纲'),
-            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !ready || chapters.length === 0 || Boolean(lockMsg('outline-commit', {})), title: lockMsg('outline-commit', {}) ?? undefined, onClick: () => run('outline-commit', {}, { toast: '已确认全部章纲' }) }, '确认全部'),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy || !ready || chapters.length === 0,
-              title: '按范围重生成章纲（会覆盖现有章纲并重置为待确认）',
-              onClick: () => {
-                setRegenOpen((value) => !value)
-                setRegenFrom(1)
-                setRegenTo(chapters.reduce((max, item) => Math.max(max, Number(item.number) || 0), 1))
-              },
-            }, regenOpen ? '收起批量重生成' : '批量重生成'),
-            h('input', { className: 'nw-input', style: { flex: '1 1 260px', minWidth: '220px' }, value: instruction, placeholder: '生成/重生成要求（会写进章纲）', onChange: (event) => setInstruction(event.target.value), disabled: busy }),
-          ),
-          regenOpen
-            ? h('div', { className: 'nw-banner', style: { marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
-                h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end' } },
-                  h('div', { className: 'nw-field', style: { margin: 0, minWidth: '96px' } },
-                    h('label', { className: 'nw-label' }, '起始章'),
-                    h('input', { className: 'nw-input', type: 'number', min: 1, value: regenFrom, disabled: busy, onChange: (event) => setRegenFrom(Math.max(1, Number(event.target.value) || 1)) }),
-                  ),
-                  h('div', { className: 'nw-field', style: { margin: 0, minWidth: '96px' } },
-                    h('label', { className: 'nw-label' }, '结束章'),
-                    h('input', { className: 'nw-input', type: 'number', min: 1, value: regenTo, disabled: busy, onChange: (event) => setRegenTo(Math.max(1, Number(event.target.value) || 1)) }),
-                  ),
-                  h('button', {
-                    type: 'button',
-                    className: 'nw-btn primary',
-                    disabled: busy || !ready || Boolean(lockMsg('outline-generate', {})),
-                    title: lockMsg('outline-generate', {}) ?? undefined,
-                    onClick: async () => {
-                      const from = Math.min(regenFrom, regenTo)
-                      const to = Math.max(regenFrom, regenTo)
-                      if (!(await requestConfirm({ title: '重生成章纲', message: `重生成第 ${from}–${to} 章章纲？现有内容会被覆盖并重置为待确认；顶部「生成/重生成要求」会作为本次指令。`, confirmLabel: '重生成' }))) return
-                      setRegenOpen(false)
-                      // 分批生成，避免一次输出过长导致 JSON 被截断；每批 3 章。
-                      const batchSize = 3
-                      for (let start = from; start <= to; start += batchSize) {
-                        const end = Math.min(to, start + batchSize - 1)
-                        setToast(`正在重生成第 ${start}–${end} 章…`)
-                        const result = await run('outline-generate', {
-                          fromChapter: start,
-                          toChapter: end,
-                          instruction: instruction || undefined,
-                          regenerate: true,
-                          volumeId: volumeId ?? volumes[0]?.id,
-                          deferAudit: true,
-                        }, { silent: true })
-                        if (!result) return
-                        if (end === to) afterGenerate(result)
-                      }
-                      setToast(`已重生成第 ${from}–${to} 章`)
-                    },
-                  }, '开始重生成'),
-                  h('button', { type: 'button', className: 'nw-btn', onClick: () => setRegenOpen(false) }, '取消'),
-                ),
-                h('div', { className: 'nw-muted' }, `范围：第 ${Math.min(regenFrom, regenTo)}–${Math.max(regenFrom, regenTo)} 章；只重写章纲，不动已写正文。`),
-              )
-            : null,
-          ready ? null : h('div', { className: 'nw-banner warn', style: { marginTop: '10px' } }, `先完成${readyBlockers.join('、')}，章纲按钮才会启用。`),
-        ),
-        chapters.length === 0
-          ? h(EmptyState, { title: '还没有章纲', desc: '先确认构思、文风和设定，然后生成后 3 章。' })
-          : h('div', { className: 'nw-workbench', ref: workbenchRef },
-              h('div', { className: 'nw-list', ref: listRef },
-                chapters.map((item) =>
-                  h('button', {
-                    key: item.id,
-                    type: 'button',
-                    className: `nw-list-item${Number(selected) === Number(item.number) ? ' active' : ''}`,
-                    onClick: () => setSelected(item.number),
-                  },
-                    h('span', { className: 'nw-list-num' }, String(item.number).padStart(2, '0')),
-                    h('span', { className: 'nw-list-title' }, `${item.volumeTitle && volumeId == null ? `${item.volumeTitle} · ` : ''}${item.title || '未命名'}`),
-                    h('span', { className: `nw-badge ${statusClass(item.status)}` }, item.status === 'confirmed' ? '已确认' : '待确认'),
-                    onOpenChapter
-                      ? h('span', {
-                          className: 'nw-list-hover',
-                          role: 'button',
-                          title: '跳到本章正文',
-                          onClick: (event) => {
-                            event.stopPropagation()
-                            onOpenChapter(item.number)
-                          },
-                        }, '文')
-                      : null,
-                  ),
-                ),
-              ),
-              chapter
-                ? h('div', { className: 'nw-pane nw-pane-scroll' },
-                    h('div', { className: 'nw-card' },
-                      h('div', { className: 'nw-row' },
-                        h('div', null,
-                          h('div', { className: 'nw-eyebrow' }, `第 ${chapter.number} 章`),
-                          h('h2', { className: 'nw-h2' }, chapter.title || '未命名'),
-                        ),
-                        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } },
-                          volumes.length > 1
-                            ? h('select', {
-                                className: 'nw-input',
-                                style: { width: 'auto', minWidth: '120px' },
-                                value: chapter.volumeId ?? volumeId ?? volumes[0]?.id,
-                                disabled: busy || Boolean(lockMsg('chapter-move', { number: chapter.number })),
-                                title: lockMsg('chapter-move', { number: chapter.number }) ?? undefined,
-                                onChange: (event) => moveChapter(chapter.number, event.target.value),
-                              }, volumes.map((volume) => h('option', { key: volume.id, value: volume.id }, volume.title)))
-                            : null,
-                          onOpenChapter ? h('button', { type: 'button', className: 'nw-btn', title: '跳到本章正文', onClick: () => onOpenChapter(chapter.number) }, '打开正文') : null,
-                          h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !ready || Boolean(lockMsg('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number })), title: lockMsg('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number }) ?? undefined, onClick: () => run('outline-commit', { fromChapter: chapter.number, toChapter: chapter.number }, { toast: `第 ${chapter.number} 章已确认` }) }, '确认本章'),
-                        ),
-                      ),
-                      h('div', { className: 'nw-grid-2' },
-                        h('div', { className: 'nw-field' },
-                          h('label', { className: 'nw-label' }, '标题'),
-                          h('input', { className: 'nw-input', value: fields.title ?? '', onChange: (e) => update('title', e.target.value), disabled: busy }),
-                        ),
-                        h('div', { className: 'nw-field' },
-                          h('label', { className: 'nw-label' }, '目标字数'),
-                          h('input', { className: 'nw-input', type: 'number', value: fields.wordBudget ?? 0, onChange: (e) => update('wordBudget', Number(e.target.value) || 0), disabled: busy }),
-                        ),
-                      ),
-                      h('div', { className: 'nw-field' },
-                        h('label', { className: 'nw-label' }, '剧情梗概'),
-                        h('textarea', {
-                          className: 'nw-textarea',
-                          style: { minHeight: '220px' },
-                          value: fields.synopsis ?? '',
-                          placeholder: '写清这段剧情里谁在什么处境、做了什么、发生了什么、结果如何。不需要拆成目标/冲突/转折/结果。',
-                          onChange: (e) => update('synopsis', e.target.value),
-                          disabled: busy,
-                        }),
-                      ),
-                      h('div', { className: 'nw-actions' },
-                        h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || !dirty, onClick: () => run('outline-update', { chapterId: chapter.id, fields }, { toast: `第 ${chapter.number} 章已保存（待确认）` }) }, '保存修改'),
-                        h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number })), title: lockMsg('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number }) ?? undefined, onClick: async () => { const result = await run('outline-generate', { fromChapter: chapter.number, toChapter: chapter.number, instruction: instruction || undefined, deferAudit: true }); afterGenerate(result) } }, '重生成本章'),
-                        (() => {
-                          const lastChapter = allChapters.reduce(
-                            (max, item) => (Number(item.number) > Number(max?.number ?? 0) ? item : max),
-                            null,
-                          )
-                          return lastChapter && Number(lastChapter.number) === Number(chapter.number)
-                            ? h('button', {
-                                type: 'button',
-                                className: 'nw-btn danger',
-                                disabled: busy || Boolean(lockMsg('chapters-delete-tail', {})),
-                                title: lockMsg('chapters-delete-tail', {}) ?? undefined,
-                                onClick: async () => {
-                                  const preview = await run('chapters-delete-tail', { count: 1, dryRun: true }, { silent: true })
-                                  if (!preview) return
-                                  if (!(await requestConfirm({
-                                    title: '删除本章',
-                                    message: `将删除第 ${preview.from} 章（最后一章）的大纲，并同时删除它的正文、定稿、修订、摘要与状态快照，无法恢复。`,
-                                    danger: true,
-                                    confirmLabel: '删除',
-                                  }))) return
-                                  run('chapters-delete-tail', { count: 1 }, { toast: `已删除第 ${preview.from} 章` })
-                                },
-                              }, '删除本章（最后一章）')
-                            : null
-                        })(),
-                      ),
-                    ),
-                  )
-                : h('div', { className: 'nw-empty' }, '选择左侧一章。'),
-            ),
-      )
-    }
-
-    function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
+function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onOpenOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const lockMsg = (action, params) => lockBlockedMessage(action, params, state)
       const allChapters = state.chapters ?? []
       const volumes = state.volumes ?? []
