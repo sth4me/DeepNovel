@@ -1058,6 +1058,8 @@ export function apply(ctx) {
         })
       case 'style-commit':
         return service.commitStyle(agent, { fields: params.fields })
+      case 'style-update':
+        return service.updateStyleFields(agent, params.fields ?? {})
       case 'style-save-template':
         return service.saveStyleTemplate(agent, { name: params.name, fields: params.fields, samples: params.samples })
       case 'style-delete-template':

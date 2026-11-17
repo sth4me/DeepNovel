@@ -4487,6 +4487,11 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           (chapter.foreshadow?.payoff ?? []).some((text) => String(text).includes(plant.text.slice(0, Math.min(10, plant.text.length)))),
         ),
       )
+      const missingPrereq = [
+        state?.premise?.status !== 'confirmed' ? '构思未确认' : null,
+        state?.style?.status !== 'confirmed' ? '文风未确认' : null,
+        state?.bible?.status !== 'confirmed' ? '设定未确认' : null,
+      ].filter(Boolean)
       const chapterRuns = (state.recentRuns ?? [])
         .filter((run) => Number(run.number) === Number(selected))
         .slice(0, 3)
@@ -4795,7 +4800,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                       type: 'button',
                       className: hasDraft ? 'nw-btn' : 'nw-btn primary',
                       disabled: busy || detailLoading || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })),
-                      title: lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : (hasDraft ? '按当前章纲重新生成草稿' : '生成本章草稿')),
+                      title: (lockMsg('chapter-draft', { number: selected }) ?? (detail?.chapter?.status !== 'confirmed' ? '本章章纲尚未确认' : (hasDraft ? '按当前章纲重新生成草稿' : '生成本章草稿'))) + (missingPrereq.length ? `；前置未完成：${missingPrereq.join('、')}（仍可生成，但上下文会更弱）` : ''),
                       onClick: async () => {
                         const result = await act('chapter-draft', { number: selected, instruction: instruction || undefined })
                         if (result) await act('chapter-approve', { number: selected })
@@ -8581,6 +8586,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             ),
           ),
           h('div', { className: 'nw-actions' },
+            h('button', { type: 'button', className: 'nw-btn', disabled: busy || !dirty, onClick: () => run('style-update', { fields: buildFields() }, { toast: '文风已保存（未确认）' }) }, '仅保存'),
             h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || contract.status === 'missing' || Boolean(lockMsg('style-commit', {})), title: lockMsg('style-commit', {}) ?? undefined, onClick: () => run('style-commit', { fields: buildFields() }, { next: 'outline', toast: '文风已确认，下一步：大纲' }) }, '保存并确认文风'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || !contract.templateId || Boolean(lockMsg('style-apply', { templateId: contract.templateId })), title: lockMsg('style-apply', { templateId: contract.templateId }) ?? undefined, onClick: () => run('style-apply', { templateId: contract.templateId }, { toast: '已恢复模板值' }) }, '恢复模板值'),
             dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
