@@ -3588,19 +3588,20 @@ export class NovelWriterService {
         count: badRelations.length,
       })
     }
+    // 字数目标当下限：只有明显不足（<80%）才算问题，超出不提示。
     const budgetByNumber = new Map(chapters.map((chapter) => [Number(chapter.number), Number(chapter.wordBudget ?? 0)]))
-    const overWords = chapterStats.filter((item) => {
+    const underWords = chapterStats.filter((item) => {
       const target = budgetByNumber.get(Number(item.number)) ?? 0
-      return target > 0 && Number(item.wordCount) > target * 1.45
+      return target > 0 && Number(item.wordCount) > 0 && Number(item.wordCount) < target * 0.8
     })
-    if (overWords.length) {
+    if (underWords.length) {
       issues.push({
-        key: 'over-words',
+        key: 'under-words',
         level: 'note',
-        message: `${overWords.length} 章字数超目标 45%`,
+        message: `${underWords.length} 章字数低于目标的 80%（下限）`,
         tab: 'chapters',
-        count: overWords.length,
-        numbers: overWords.map((item) => Number(item.number)),
+        count: underWords.length,
+        numbers: underWords.map((item) => Number(item.number)),
       })
     }
     const noSummary = chapterStats.filter((item) => item.hasDraft && !String(item.summary ?? '').trim())

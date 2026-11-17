@@ -73,13 +73,13 @@ const expected = [
   'bad-relations',
   'drafted',
   'stale-finals',
-  'over-words',
   'no-summary',
   'stale-foreshadow',
 ]
 for (const key of expected) {
   if (!keys.includes(key)) throw new Error(`missing issue: ${key}`)
 }
+if (keys.includes('over-words')) throw new Error('字数超出目标不应再提示')
 const firstNote = report.issues.findIndex((issue) => issue.level === 'note')
 const lastWarn = report.issues.reduce((last, issue, index) => (issue.level === 'warn' ? index : last), -1)
 if (lastWarn > firstNote && firstNote !== -1) throw new Error('warnings should sort before notes')
