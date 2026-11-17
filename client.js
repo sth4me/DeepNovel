@@ -1143,7 +1143,7 @@ window.__ModuleLoader__.load({
     // 锁资源与占用者的可读标签（用于任务托盘与按钮提示）。
     const LOCK_RESOURCE_LABELS = {
       outline: '大纲',
-      references: '资料',
+      references: '资料与素材',
       bible: '设定',
       style: '文风',
       premise: '构思',
@@ -2328,7 +2328,7 @@ window.__ModuleLoader__.load({
         ['premise', '构思', '定故事核心'],
         ['style', '文风', '定文字质感'],
         ['bible', '设定', '角色与世界规则'],
-        ['references', '资料', '原作与前作、研究与灵感'],
+        ['references', '资料与素材', '原作/前作/研究/灵感 + 素材库'],
         ['chapters', '章节', '章纲与正文'],
       ]
 
@@ -2431,7 +2431,7 @@ window.__ModuleLoader__.load({
                         onOpenOutline: (number) => { setFocusChapter(number); setTab('chapters') },
                       })
                     : tab === 'references'
-                      ? h(ReferencesView, { root, setToast })
+                      ? h(ReferencesView, { root, setToast, state, run, busy })
                     : tab === 'outline' || tab === 'chapters'
                       ? h(ChapterWorkspace, {
                           state, root, run, busy, setToast,
@@ -6505,7 +6505,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       )
     }
 
-    function ReferencesView({ root, setToast }) {
+    function ReferencesView({ root, setToast, state, run, busy: pageBusy }) {
+      const [libTab, setLibTab] = useState('references')
       const [data, setData] = useState(null)
       const [loading, setLoading] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -6601,7 +6602,25 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const kinds = data?.kinds ?? []
       const currentKind = kinds.find((item) => item.kind === form.kind)
 
+      const tabsRow = h('div', { className: 'nw-actions', style: { marginBottom: '8px' } },
+        h('button', {
+          type: 'button',
+          className: libTab === 'references' ? 'nw-btn primary' : 'nw-btn',
+          onClick: () => setLibTab('references'),
+        }, '资料库'),
+        h('button', {
+          type: 'button',
+          className: libTab === 'materials' ? 'nw-btn primary' : 'nw-btn',
+          onClick: () => setLibTab('materials'),
+        }, '素材库'),
+      )
+
+      if (libTab === 'materials') {
+        return h('div', null, tabsRow, h(MaterialsLibraryCard, { state, run, busy: pageBusy, setToast }))
+      }
+
       return h('div', { className: 'nw-stack' },
+        tabsRow,
         h('div', { className: 'nw-section' },
           h('div', { className: 'nw-row' },
             h('div', null,
@@ -7402,7 +7421,6 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             : null,
         ),
         h(PromptAndSkillsCard, { state, run, busy, setToast }),
-        h(MaterialsLibraryCard, { state, run, busy, setToast }),
         h('div', { className: `nw-section-head${first ? ' first' : ''}` },
           h('div', { className: 'nw-section-title' }, '数据与存储'),
           h('div', { className: 'nw-section-hint' }, '存储状态与导入导出'),
