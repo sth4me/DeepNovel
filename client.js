@@ -3518,6 +3518,44 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function VolumeDialog({ mode, value = {}, onCancel, onSubmit }) {
+      const [title, setTitle] = useState(value.title ?? '')
+      const [goal, setGoal] = useState(value.goal ?? '')
+      const [targetChapters, setTargetChapters] = useState(String(value.targetChapters ?? 12))
+      return h('div', { className: 'nw-modal-backdrop', onClick: onCancel },
+        h('div', { className: 'nw-modal', style: { width: 'min(460px, 94vw)' }, onClick: (event) => event.stopPropagation() },
+          h('h3', { className: 'nw-h3' }, mode === 'create' ? '新建卷' : '卷设置'),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '卷标题'),
+            h('input', { className: 'nw-input', autoFocus: true, value: title, onChange: (event) => setTitle(event.target.value) }),
+          ),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '本卷目标'),
+            h('textarea', {
+              className: 'nw-input',
+              rows: 4,
+              value: goal,
+              style: { resize: 'vertical', fontFamily: 'inherit' },
+              onChange: (event) => setGoal(event.target.value),
+            }),
+            h('div', { className: 'nw-muted', style: { fontSize: '11px', marginTop: '4px' } }, '目标会进入后续章纲与正文的上下文。'),
+          ),
+          h('div', { className: 'nw-field' },
+            h('label', { className: 'nw-label' }, '目标章数'),
+            h('input', { className: 'nw-input', type: 'number', min: 1, value: targetChapters, onChange: (event) => setTargetChapters(event.target.value) }),
+          ),
+          h('div', { className: 'nw-actions' },
+            h('button', { type: 'button', className: 'nw-btn', onClick: onCancel }, '取消'),
+            h('button', {
+              type: 'button',
+              className: 'nw-btn primary',
+              onClick: () => onSubmit?.({ title, goal, targetChapters: Number(targetChapters) || 12 }),
+            }, '保存'),
+          ),
+        ),
+      )
+    }
+
     function PromptDialog({ title, label, value = '', multiline = false, hint = '', confirmLabel = '确定', onCancel, onSubmit }) {
       const [text, setText] = useState(value)
       const field = multiline
@@ -3607,6 +3645,19 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: shellClass },
         h('div', { className: 'nw-inspector-title' }, `第 ${number} 章 · ${chapter.volumeTitle ?? '未命名卷'}`),
+        (state?.outlineAudit?.issues?.length ?? 0) > 0
+          ? h('div', { style: { marginTop: '4px' } },
+              h('div', { className: 'nw-inspector-label', style: { marginTop: 0 } }, '结构问题'),
+              h('div', { className: 'nw-muted', style: { fontSize: '11px', marginBottom: '4px' } }, '结构问题不会自动处理，确认后再重规划'),
+              (state.outlineAudit.issues ?? []).slice(0, 3).map((issue, index) =>
+                h('div', { key: index, className: 'nw-muted', style: { fontSize: '11px', lineHeight: '1.6' } },
+                  `${issue.type ?? '问题'}：${issue.message ?? issue.advice ?? ''}`),
+              ),
+              state.outlineAudit?.replan?.length
+                ? h('div', { className: 'nw-muted', style: { fontSize: '11px', marginTop: '4px' } }, `建议重规划：第 ${state.outlineAudit.replan.map((item) => item.number ?? item).join('、')} 章`)
+                : null,
+            )
+          : null,
         cardEdit
           ? h('div', { style: { display: 'grid', gap: '8px', marginTop: '4px' } },
               h('div', { className: 'nw-field', style: { margin: 0 } },
@@ -3654,15 +3705,15 @@ window.__ModuleLoader__.load({
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const [collapsedVolumes, setCollapsedVolumes] = useState({})
       const [volumeDialog, setVolumeDialog] = useState(null)
-      const submitVolumeDialog = (text) => {
-        const value = String(text ?? '').trim()
-        if (!value) return
+      const submitVolumeDialog = (fields = {}) => {
+        const title = String(fields.title ?? '').trim()
+        if (!title) return
         const dialog = volumeDialog
         setVolumeDialog(null)
         if (!dialog) return
-        if (dialog.kind === 'goal') run('volume-update', { volumeId: dialog.volumeId, goal: value }, { toast: '卷目标已更新' })
-        else if (dialog.kind === 'rename') run('volume-update', { volumeId: dialog.volumeId, title: value }, { toast: '已重命名卷' })
-        else run('volume-create', { title: value }, { toast: '已新建卷' })
+        const payload = { title, goal: fields.goal ?? '', targetChapters: Number(fields.targetChapters) || 0 }
+        if (dialog.kind === 'create') run('volume-create', payload, { toast: '已新建卷' })
+        else run('volume-update', { volumeId: dialog.volumeId, ...payload }, { toast: '卷设置已保存' })
       }
       const tree = (() => {
         const volumes = state?.outline?.volumes ?? []
@@ -3710,7 +3761,7 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'nw-filetree-link',
                 title: '重命名卷',
-                onClick: () => setVolumeDialog({ kind: 'rename', volumeId: volume.id, value: volume.title || '' }),
+                onClick: () => setVolumeDialog({ kind: 'edit', volumeId: volume.id, value: { title: volume.title || '', goal: volume.goal || '', targetChapters: volume.targetChapters ?? 12 } }),
               }, '✎'),
               h('button', {
                 type: 'button',
@@ -3732,7 +3783,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'nw-filetree-link',
               title: '新建卷',
-              onClick: () => setVolumeDialog({ kind: 'create', value: `第 ${volumes.length + 1} 卷` }),
+              onClick: () => setVolumeDialog({ kind: 'create', value: { title: `第 ${volumes.length + 1} 卷`, goal: '', targetChapters: 12 } }),
             }, '＋卷'),
           ),
           volumes.map(volumeGroup),
@@ -3754,19 +3805,16 @@ window.__ModuleLoader__.load({
             runIssueAction,
             showIssuesModal,
             onOpenOutline: (number) => openOutline?.(number),
-            onEditVolumeGoal: (volume) => setVolumeDialog({ kind: 'goal', volumeId: volume.id, value: volume.goal || '' }),
+            onEditVolumeGoal: (volume) => setVolumeDialog({ kind: 'edit', volumeId: volume.id, value: { title: volume.title || '', goal: volume.goal || '', targetChapters: volume.targetChapters ?? 12 } }),
           }),
         ),
         ),
         volumeDialog
-          ? h(PromptDialog, {
-              title: volumeDialog.kind === 'create' ? '新建卷' : volumeDialog.kind === 'rename' ? '重命名卷' : '卷设置',
-              label: volumeDialog.kind === 'goal' ? '本卷目标' : '卷标题',
-              value: volumeDialog.value,
-              multiline: volumeDialog.kind === 'goal',
-              hint: volumeDialog.kind === 'goal' ? '目标会进入后续章纲与正文的上下文。' : '只改卷名，不影响章节内容。',
+          ? h(VolumeDialog, {
+              mode: volumeDialog.kind,
+              value: volumeDialog.value ?? {},
               onCancel: () => setVolumeDialog(null),
-              onSubmit: submitVolumeDialog,
+              onSubmit: (fields) => submitVolumeDialog(fields),
             })
           : null,
       )
@@ -4486,6 +4534,15 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             h('div', { style: { width: '1px', height: '20px', background: 'var(--dsw-alias-border-l1)', margin: '0 4px' } }),
           )
         })(),
+        (state?.issues?.items?.length ?? 0) > 0
+          ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '8px 12px' } },
+              h('div', { className: 'nw-row' },
+                h('span', null, `待处理（${state.issues.items.length}）`),
+                h('span', { className: 'nw-muted' }, '规则 / 风格 / 连续性问题'),
+                h('button', { type: 'button', className: 'nw-btn ghost', style: { marginLeft: 'auto' }, onClick: () => showIssuesModal?.() }, '查看全部'),
+              ),
+            )
+          : null,
         proposals.length
           ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '10px 12px' } },
               h('div', { className: 'nw-row' },
