@@ -284,9 +284,15 @@ window.__ModuleLoader__.load({
 .nw-model-head{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);padding-top:2px}
 .nw-model-task{display:flex;gap:6px;align-items:center;font-size:11.5px;min-width:0}
 @media (max-width:900px){.nw-model-row{grid-template-columns:1fr}}
-.nw-viewtoggle{display:inline-flex;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;overflow:hidden;margin-left:auto}
-.nw-viewtoggle-btn{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;padding:6px 10px;cursor:pointer}
-.nw-viewtoggle-btn.active{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.nw-filetree{width:200px;flex:0 0 200px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
+.nw-filetree-title{font-size:12px;font-weight:600;opacity:.7;padding:2px 6px 6px}
+.nw-filetree-group{margin-bottom:6px}
+.nw-filetree-volume{font-size:11px;opacity:.6;padding:2px 6px}
+.nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px}
+.nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
+.nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:10px;cursor:pointer;padding:0 2px}
+.nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
 .nw-chapter-card{display:block;text-align:left;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:14px;cursor:pointer;color:inherit;font:inherit;min-width:0}
 .nw-chapter-card:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
 .nw-chapter-card-title{font-family:"Iowan Old Style","Palatino Linotype","Songti SC","STSong",Georgia,serif;font-size:16px;line-height:1.35;margin:4px 0 6px}
@@ -3658,6 +3664,30 @@ window.__ModuleLoader__.load({
 
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const isOutline = mode === 'outline'
+      const tree = (() => {
+        const volumes = state?.outline?.volumes ?? []
+        const total = volumes.reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
+        if (total === 0) return null
+        return h('div', { className: 'nw-filetree' },
+          h('div', { className: 'nw-filetree-title' }, '目录'),
+          ...volumes.map((volume) => h('div', { key: volume.id, className: 'nw-filetree-group' },
+            h('div', { className: 'nw-filetree-volume' }, volume.title || '未命名卷'),
+            ...(volume.chapters ?? []).map((chapter) => h('div', { key: chapter.id ?? chapter.number, className: 'nw-filetree-chapter' },
+              h('span', { className: 'nw-filetree-name', title: chapter.title ?? '' }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-link',
+                onClick: (event) => { event.stopPropagation(); openOutline?.(chapter.number) },
+              }, '章卡'),
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-link',
+                onClick: (event) => { event.stopPropagation(); openChapter?.(chapter.number) },
+              }, '正文'),
+            )),
+          )),
+        )
+      })()
       return h('div', null,
         h('div', { className: 'nw-workspace-switch' },
           h('button', {
@@ -3671,6 +3701,10 @@ window.__ModuleLoader__.load({
             onClick: () => setTab('chapters'),
           }, '正文'),
         ),
+        tree
+          ? h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
+            tree,
+            h('div', { style: { flex: 1, minWidth: 0 } },
         isOutline
           ? h(OutlineWorkbench, {
               state, run, busy, setToast, focusChapter,
@@ -3686,6 +3720,9 @@ window.__ModuleLoader__.load({
               showIssuesModal,
               onOpenOutline: (number) => openOutline?.(number),
             }),
+            ),
+          )
+        : null,
       )
     }
 
