@@ -4618,10 +4618,12 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   ),
                   h('div', { className: 'nw-sticky-actions' },
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || editing, title: '编辑正文（E）', onClick: startEditing }, editing ? '编辑中' : '编辑') : null,
+                    hasDraft ? h('span', { className: 'nw-sticky-sep' }) : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方要求修订本章；润色/扩写/缩写也写在这里', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '修订') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '一次跑规则质检、风格检测与 AI 连续性检查', onClick: runCombinedReview }, '审校') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-autofix', { number: selected })), title: lockMsg('chapter-autofix', { number: selected }) ?? undefined, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || Boolean(lockMsg('chapter-deslop', { number: selected })), title: lockMsg('chapter-deslop', { number: selected }) ?? '只改表达不改剧情，先预览改写结果', onClick: openDeslop }, '去 AI 味') : null,
+                    hasDraft ? h('span', { className: 'nw-sticky-sep' }) : null,
                     hasDraft ? h('button', {
                       type: 'button',
                       className: 'nw-btn',
@@ -4642,42 +4644,25 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                     ),
                   h('div', { className: 'nw-sticky-actions nw-sticky-extra' },
                         h('button', { type: 'button', className: 'nw-btn', disabled: contextLoading, onClick: loadContext }, contextLoading ? '读取…' : '上下文'),
-                        hasFinal && nextChapter ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: nextChapter.number })), title: lockMsg('chapter-draft', { number: nextChapter.number }) ?? undefined, onClick: writeNext }, `生成下一章（第 ${nextChapter.number} 章）`) : null,
-                        batchStart ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !batchReady, title: batchReady ? `从第 ${batchStart} 章连续生成 ${batchCount} 章` : `第 ${batchStart} 章章纲尚未确认，请先在大纲页确认`, onClick: batchWrite }, `连续写 ${batchCount} 章`) : null,
-                        lastRewrite ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: undoRewrite }, '撤销重写') : null,
+                        h('span', { className: 'nw-sticky-sep' }),
+                        hasDraft && nextChapter ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-draft', { number: nextChapter.number })), title: lockMsg('chapter-draft', { number: nextChapter.number }) ?? undefined, onClick: writeNext }, `生成下一章（第 ${nextChapter.number} 章）`) : null,
+                        batchStart ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !batchReady, title: batchReady ? `从第 ${batchStart} 章连续生成 ${batchCount} 章` : `第 ${batchStart} 章章纲尚未确认，请先在章节页确认`, onClick: batchWrite }, `连续写 ${batchCount} 章`) : null,
+                        h('span', { className: 'nw-sticky-sep' }),
                         h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => paneRef.current?.scrollTo({ top: 0, behavior: 'smooth' }) }, '回到顶部'),
-                        hasFinal
-                          ? h('button', {
-                              type: 'button',
-                              className: 'nw-btn ghost',
-                              onClick: async () => {
-                                const text = detail?.final ?? ''
-                                if (!text) return
-                                try {
-                                  await navigator.clipboard.writeText(text)
-                                  setToast('定稿已复制')
-                                } catch {
-                                  setToast('复制失败')
-                                }
-                              },
-                            }, '复制定稿')
-                          : null,
-                        detail?.draft
-                          ? h('button', {
-                              type: 'button',
-                              className: 'nw-btn ghost',
-                              onClick: async () => {
-                                const text = detail?.draft ?? ''
-                                if (!text) return
-                                try {
-                                  await navigator.clipboard.writeText(text)
-                                  setToast('草稿已复制')
-                                } catch {
-                                  setToast('复制失败')
-                                }
-                              },
-                            }, '复制草稿')
-                          : null,
+                        h('button', {
+                          type: 'button',
+                          className: 'nw-btn ghost',
+                          onClick: async () => {
+                            const text = detail?.final || detail?.draft || ''
+                            if (!text) return
+                            try {
+                              await navigator.clipboard.writeText(text)
+                              setToast('正文已复制')
+                            } catch {
+                              setToast('复制失败')
+                            }
+                          },
+                        }, '复制正文'),
                         (() => {
                           const lastNumber = allChapters.reduce((max, item) => Math.max(max, Number(item.number) || 0), 0)
                           return Number(selected) === lastNumber && lastNumber > 0
