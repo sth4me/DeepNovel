@@ -287,7 +287,8 @@ window.__ModuleLoader__.load({
 .nw-filetree-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:2px 2px 6px}
 .nw-filetree-title{font-size:12px;font-weight:600;opacity:.7}
 .nw-filetree-group{margin-bottom:6px}
-.nw-filetree-volume{font-size:11px;opacity:.7;padding:2px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;width:100%;border-radius:6px}
+.nw-filetree-vol-row{display:flex;align-items:center;gap:2px}
+.nw-filetree-volume{font-size:11px;opacity:.7;padding:2px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;border-radius:6px}
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px}
 .nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -3611,11 +3612,32 @@ window.__ModuleLoader__.load({
           const collapsed = collapsedVolumes[volume.id] === true
           const chapters = volume.chapters ?? []
           return h('div', { key: volume.id, className: 'nw-filetree-group' },
-            h('button', {
-              type: 'button',
-              className: 'nw-filetree-volume',
-              onClick: () => setCollapsedVolumes((current) => ({ ...current, [volume.id]: !collapsed })),
-            }, `${collapsed ? '▸' : '▾'} ${volume.title || '未命名卷'}`),
+            h('div', { className: 'nw-filetree-vol-row' },
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-volume',
+                onClick: () => setCollapsedVolumes((current) => ({ ...current, [volume.id]: !collapsed })),
+              }, `${collapsed ? '▸' : '▾'} ${volume.title || '未命名卷'}`),
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-link',
+                title: '重命名卷',
+                onClick: () => {
+                  const title = window.prompt('卷标题', volume.title || '')
+                  if (!title || !String(title).trim()) return
+                  run('volume-update', { volumeId: volume.id, title: String(title).trim() }, { toast: '已重命名卷' })
+                },
+              }, '✎'),
+              h('button', {
+                type: 'button',
+                className: 'nw-filetree-link',
+                title: '删除卷',
+                onClick: async () => {
+                  if (!(await requestConfirm({ title: '删除卷', message: `删除「${volume.title || '未命名卷'}」及其章纲？`, danger: true, confirmLabel: '删除' }))) return
+                  run('volume-delete', { volumeId: volume.id }, { toast: '已删除卷' })
+                },
+              }, '×'),
+            ),
             collapsed ? null : chapters.map(chapterRow),
           )
         }
