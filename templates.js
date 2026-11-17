@@ -1163,6 +1163,175 @@ export const CRAFT_AGENT_HINT = [
   '技法卡片是通用写作方法，不是本书设定，不必全部套用；与章纲、文风契约、硬约束冲突时以高优先级来源为准。',
 ].join('\n')
 
+/* ------------------------------ 提示词渲染（中文 Markdown，不暴露内部字段名） ------------------------------ */
+
+function asList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item ?? '').trim()).filter(Boolean) : []
+}
+
+function renderChapterCardMarkdown(chapter = {}) {
+  const lines = [`### 第 ${chapter.number ?? '?'} 章 ${chapter.title ?? ''}`.trim()]
+  if (chapter.synopsis) lines.push('', `剧情梗概：${chapter.synopsis}`)
+  const budget = Number(chapter.wordBudget)
+  if (Number.isFinite(budget) && budget > 0) {
+    lines.push('', `目标字数：约 ${budget} 字（低于 ${Math.round(budget * 0.8)} 字视为未完成）`)
+  }
+  const plant = asList(chapter.plant).length ? asList(chapter.plant) : asList(chapter.foreshadow?.plant)
+  const payoff = asList(chapter.payoff).length ? asList(chapter.payoff) : asList(chapter.foreshadow?.payoff)
+  if (plant.length) {
+    lines.push('', '本章要埋的伏笔：')
+    plant.forEach((item) => lines.push(`- ${item}`))
+  }
+  if (payoff.length) {
+    lines.push('', '本章要回收的伏笔：')
+    payoff.forEach((item) => lines.push(`- ${item}`))
+  }
+  if (chapter.change) lines.push('', `本章结束时的局势变化：${chapter.change}`)
+  if (chapter.storyQuestion) lines.push('', `本章要让读者想知道：${chapter.storyQuestion}`)
+  if (chapter.promise) lines.push('', `本章推进或兑现的承诺：${chapter.promise}`)
+  const castUsed = asList(chapter.castUsed)
+  if (castUsed.length) lines.push('', `本章出场角色：${castUsed.join('、')}`)
+  const newNamed = asList(chapter.newNamed)
+  if (newNamed.length) lines.push(`本章新增具名角色：${newNamed.join('、')}`)
+  const time = chapter.time && typeof chapter.time === 'object' ? chapter.time : null
+  if (time && (time.day != null || time.part)) {
+    lines.push('', `本章时间：第 ${time.day ?? '—'} 天 · ${time.part ?? '—'}`)
+  }
+  return lines.join('\n')
+}
+
+function renderPremiseMarkdown(premise = {}) {
+  const lines = []
+  if (premise.title) lines.push(`故事标题：${premise.title}`)
+  if (premise.premise) lines.push(`故事核心：${premise.premise}`)
+  if (premise.protagonist) lines.push(`主角：${premise.protagonist}`)
+  const genre = asList(premise.genre)
+  if (genre.length) lines.push(`题材：${genre.join('、')}`)
+  return lines.join('\n')
+}
+
+function renderBibleMarkdown(bible = {}) {
+  const sections = []
+  const pushGroup = (label, entries, fields) => {
+    if (!Array.isArray(entries) || entries.length === 0) return
+    const lines = [`${label}：`]
+    entries.forEach((entry) => {
+      const name = entry.name ?? entry.id ?? ''
+      const parts = []
+      for (const [key, fieldLabel] of fields) {
+        const value = entry[key]
+        if (value == null || value === '') continue
+        if (Array.isArray(value)) {
+          if (value.length) parts.push(`${fieldLabel}：${value.join('、')}`)
+        } else {
+          parts.push(`${fieldLabel}：${String(value)}`)
+        }
+      }
+      lines.push(`- ${name}${parts.length ? '（' + parts.join('；') + '）' : ''}`)
+    })
+    sections.push(lines.join('\n'))
+  }
+  pushGroup('角色', bible.characters, [['role', '身份'], ['description', '简介'], ['traits', '性格'], ['goal', '目标']])
+  pushGroup('地点', bible.locations, [['description', '简介'], ['notes', '备注']])
+  pushGroup('规则', bible.rules, [['description', '内容']])
+  pushGroup('势力', bible.factions, [['description', '简介']])
+  pushGroup('物品', bible.items, [['description', '说明']])
+  return sections.join('\n\n')
+}
+
+function renderRelationsMarkdown(relations) {
+  const list = Array.isArray(relations) ? relations : []
+  if (list.length === 0) return ''
+  return list
+    .map((item) => `- ${item.from ?? ''} 与 ${item.to ?? ''}：${item.type ?? ''}${item.note ? `（${item.note}）` : ''}`)
+    .join('\n')
+}
+
+function renderForeshadowMarkdown(list, { due = false } = {}) {
+  const items = Array.isArray(list) ? list : []
+  if (items.length === 0) return ''
+  return items
+    .map((item) => {
+      const text = typeof item === 'string' ? item : (item.text ?? item.summary ?? '')
+      if (!text) return ''
+      const chapter = item && typeof item === 'object' ? item.chapter : null
+      const prefix = chapter ? `第 ${chapter} 章：` : ''
+      const overdue = !due && item && typeof item === 'object' && item.overdue ? '（已超期，优先处理）' : ''
+      return `- ${prefix}${text}${overdue}`
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function renderContinuityMarkdown(continuity = {}) {
+  const lines = []
+  const recent = Array.isArray(continuity.recent) ? continuity.recent : []
+  if (recent.length) {
+    lines.push('最近章节：')
+    recent.forEach((item) => {
+      const title = item.title ? `《${item.title}》` : ''
+      const summary = item.summary ?? item.state?.summary ?? ''
+      lines.push(`- 第 ${item.number ?? '?'} 章${title}：${String(summary).slice(0, 200)}`)
+    })
+  }
+  if (continuity.previousTail) lines.push('', `上一章结尾：${String(continuity.previousTail).slice(0, 800)}`)
+  return lines.join('\n')
+}
+
+function renderStateMarkdown(state) {
+  if (!state || typeof state !== 'object') return ''
+  const lines = []
+  for (const [key, value] of Object.entries(state)) {
+    if (value == null || value === '' || key === 'number' || key === 'chapterId' || key === 'updatedAt') continue
+    if (Array.isArray(value)) {
+      if (value.length) lines.push(`- ${key}：${value.map((item) => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join('；')}`)
+    } else if (typeof value === 'object') {
+      const inner = Object.entries(value).map(([k, v]) => `${k}：${v}`).join('；')
+      if (inner) lines.push(`- ${key}：${inner}`)
+    } else {
+      lines.push(`- ${key}：${value}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+function renderTimelineMarkdown(timeline) {
+  const list = Array.isArray(timeline) ? timeline : []
+  if (list.length === 0) return ''
+  return list
+    .map((item) => {
+      if (typeof item === 'string') return `- ${item}`
+      const chapter = item.number ?? item.chapter
+      const day = item.day ?? item.time?.day
+      const part = item.part ?? item.time?.part
+      const summary = item.summary ?? item.text ?? ''
+      const stamps = [day != null ? `第 ${day} 天` : '', part ? String(part) : ''].filter(Boolean).join(' · ')
+      return `- ${chapter ? `第 ${chapter} 章` : ''}${stamps ? ` ${stamps}` : ''}${summary ? `：${summary}` : ''}`
+    })
+    .join('\n')
+}
+
+function renderReferencesMarkdown(list) {
+  const items = Array.isArray(list) ? list : []
+  if (items.length === 0) return ''
+  const label = { original: '原作', prior: '我的前作', research: '研究资料', idea: '灵感' }
+  return items
+    .map((item) => `- 【${label[item.kind] ?? '资料'}】${item.title ?? ''}${item.note ? `：${item.note}` : ''}${Array.isArray(item.tags) && item.tags.length ? `（标签：${item.tags.join('、')}）` : ''}`)
+    .join('\n')
+}
+
+function renderNotesMarkdown(notes) {
+  const list = Array.isArray(notes) ? notes : []
+  if (list.length === 0) return ''
+  return list
+    .map((item) => {
+      const text = typeof item === 'string' ? item : (item.text ?? '')
+      return text ? `- ${String(text).slice(0, 300)}` : ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
 export function buildChapterUserPrompt(input) {
   const constraintStart = input.constraints ? renderConstraints(input.constraints, { phase: 'start' }) : ''
   const constraintEnd = input.constraints ? renderConstraints(input.constraints, { phase: 'end' }) : ''
@@ -1173,11 +1342,11 @@ export function buildChapterUserPrompt(input) {
     ...(constraintStart ? ['', constraintStart] : []),
     '',
     '【章纲】',
-    JSON.stringify(input.chapter, null, 2),
+    renderChapterCardMarkdown(input.chapter),
     '',
     '【本章执行口径（硬约束）】',
     '- 以章纲 synopsis 为剧情骨架：必须写出其中的人物、事件与结果；可以补充细节，但不能偏离或新增关键转折。',
-    '- 章纲 plant（埋设）必须在正文中出现一次明确铺垫；payoff（回收）必须落实为具体事件、物件、对话或人物反应，不能只在总结句带过。',
+    '- 章纲里写了要埋的伏笔，必须在正文中做一次明确铺垫；写了要回收的伏笔，必须落实为具体事件、物件、对话或人物反应，不能只在总结句带过。',
     '- 目标字数按上面任务行执行；低于下限视为未完成，不要用解释性长段凑字数。',
     '- 叙事视角、时态与句法遵循【文风契约】，全章不得中途切换视角。',
     '- 正文只输出小说正文：不要标题、不要章节序号、不要解释“我写了什么”，不要出现“章纲/设定/伏笔”等提示词词汇。',
@@ -1214,7 +1383,7 @@ export function buildChapterUserPrompt(input) {
     '- 同一章同时活跃的具名角色建议 4–5 人以内；超过就拆场景或合并功能，不要为热闹凑人。',
   )
   if (input.characterState) {
-    lines.push('', '【上一章人物状态（连续性参考：处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点）】', JSON.stringify(input.characterState, null, 2))
+    lines.push('', '【上一章人物状态（连续性参考）】', renderStateMarkdown(input.characterState))
   }
   if (Array.isArray(input.samples) && input.samples.length > 0) {
     lines.push('', '【文风示例（模仿其语感与节奏，不要照抄情节）】', input.samples.slice(0, 3).join('\n\n'))
@@ -1223,44 +1392,44 @@ export function buildChapterUserPrompt(input) {
   if (input.storyContext) {
     const context = input.storyContext
     if (context.premise) {
-      lines.push('', '【故事背景（不可违背）】', JSON.stringify(context.premise, null, 2))
+      lines.push('', '【故事背景（不可违背）】', renderPremiseMarkdown(context.premise))
     }
     if (context.bible) {
-      lines.push('', '【相关设定（必须遵守）】', JSON.stringify(context.bible, null, 2))
+      lines.push('', '【相关设定（必须遵守）】', renderBibleMarkdown(context.bible))
     }
     if (context.continuity) {
-      lines.push('', '【连续性（最近章节与上一章状态）】', JSON.stringify(context.continuity, null, 2))
+      lines.push('', '【连续性（最近章节与上一章状态）】', renderContinuityMarkdown(context.continuity))
     }
     if (context.relations?.length) {
-      lines.push('', '【人物关系（本章出场人物相关，必须一致）】', JSON.stringify(context.relations, null, 2))
+      lines.push('', '【人物关系（本章出场人物相关，必须一致）】', renderRelationsMarkdown(context.relations))
     }
     if (context.foreshadowing?.length) {
-      lines.push('', '【未回收伏笔（本章可择机推进，不必强行全部回收）】', JSON.stringify(context.foreshadowing, null, 2))
+      lines.push('', '【未回收伏笔（本章可择机推进，不必强行全部回收）】', renderForeshadowMarkdown(context.foreshadowing))
       lines.push('如果某条伏笔带有 overdue=true，本章优先安排一次明确推进或回收；不要只把它当背景提一句。')
     }
     if (context.foreshadowingDue?.length) {
-      lines.push('', '【本章章纲要求回收的伏笔（必须落实到正文）】', JSON.stringify(context.foreshadowingDue, null, 2))
+      lines.push('', '【本章章纲要求回收的伏笔（必须落实到正文）】', renderForeshadowMarkdown(context.foreshadowingDue, { due: true }))
       lines.push('这些伏笔必须通过具体事件、物件、对话或人物反应回收，让读者能对应到埋设处；不能只在总结句里带过。')
     }
     if (context.references?.length) {
       lines.push(
         '',
-        '【资料库（按类型使用：original 原作只借世界观与人物，禁止复述原文；prior 我的前作只学用词与节奏；research 研究资料只作事实与细节参考；idea 灵感可自由扩展）】',
-        JSON.stringify(context.references, null, 2),
+        '【资料库（按类型使用：原作只借世界观与人物，不复述原文；我的前作只学用词与节奏；研究资料只作事实与细节参考；灵感可自由扩展）】',
+        renderReferencesMarkdown(context.references),
       )
     }
     if (context.timeline?.length) {
-      lines.push('', '【时间线】', JSON.stringify(context.timeline, null, 2))
+      lines.push('', '【时间线】', renderTimelineMarkdown(context.timeline))
     }
     if (context.notes?.length) {
-      lines.push('', '【作者备注（历史记录，优先遵守）】', JSON.stringify(context.notes, null, 2))
+      lines.push('', '【作者备注（历史记录，优先遵守）】', renderNotesMarkdown(context.notes))
     }
   } else {
     if (input.facts?.bible) {
-      lines.push('', '【设定上下文（必须遵守）】', JSON.stringify(input.facts.bible, null, 2))
+      lines.push('', '【设定上下文（必须遵守）】', renderBibleMarkdown(input.facts.bible))
     }
     if (input.facts?.previousState) {
-      lines.push('', '【上一章状态快照（用于衔接）】', JSON.stringify(input.facts.previousState, null, 2))
+      lines.push('', '【上一章状态快照（用于衔接）】', renderStateMarkdown(input.facts.previousState))
     }
     if (input.previousTail) {
       lines.push('', '【上一章结尾（仅用于衔接，不要复述）】', input.previousTail)
