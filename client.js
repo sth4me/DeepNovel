@@ -293,6 +293,13 @@ window.__ModuleLoader__.load({
 .nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:10px;cursor:pointer;padding:0 2px}
 .nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
+.nw-inspector{width:240px;flex:0 0 240px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:10px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;display:flex;flex-direction:column;gap:6px;font-size:12px;max-height:70vh;overflow:auto}
+.nw-inspector-title{font-size:12px;font-weight:600;opacity:.75}
+.nw-inspector-label{font-size:11px;opacity:.55;margin-top:6px}
+.nw-inspector-row{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.nw-inspector-body{font-size:12px;line-height:1.6;opacity:.85;white-space:pre-wrap;word-break:break-word}
+.nw-inspector-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
+.nw-inspector-bar-fill{height:100%;background:var(--dsw-alias-brand-primary)}
 .nw-chapter-card{display:block;text-align:left;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:14px;cursor:pointer;color:inherit;font:inherit;min-width:0}
 .nw-chapter-card:hover{border-color:var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}
 .nw-chapter-card-title{font-family:"Iowan Old Style","Palatino Linotype","Songti SC","STSong",Georgia,serif;font-size:16px;line-height:1.35;margin:4px 0 6px}
@@ -3662,6 +3669,84 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function ChapterInspector({ state, root, mode, focusChapter, setTab }) {
+      const [detail, setDetail] = useState(null)
+      const [loading, setLoading] = useState(false)
+      const number = Number(focusChapter)
+      const valid = Number.isFinite(number) && number > 0
+      const chapter = (() => {
+        if (!valid) return null
+        for (const volume of state?.outline?.volumes ?? []) {
+          for (const item of volume.chapters ?? []) {
+            if (Number(item.number) === number) return { ...item, volumeTitle: volume.title }
+          }
+        }
+        return null
+      })()
+
+      useEffect(() => {
+        if (!valid || !root) {
+          setDetail(null)
+          return undefined
+        }
+        let alive = true
+        setLoading(true)
+        fetchProjectChapter(root, number).then((value) => {
+          if (!alive) return
+          setDetail(value?.data ?? value ?? null)
+        }).catch(() => {
+          if (alive) setDetail(null)
+        }).finally(() => {
+          if (alive) setLoading(false)
+        })
+        return () => { alive = false }
+      }, [root, number, valid])
+
+      if (!valid || !chapter) {
+        return h('div', { className: 'nw-inspector' },
+          h('div', { className: 'nw-inspector-title' }, '本章对照'),
+          h('div', { className: 'nw-muted', style: { padding: '6px 4px', fontSize: '12px' } }, '在左侧目录选择一章，这里会显示章卡与正文的对照信息。'),
+        )
+      }
+
+      const hasDraft = Boolean(detail?.draft)
+      const hasFinal = Boolean(detail?.final)
+      const words = Number(detail?.wordCount ?? 0) || 0
+      const budget = Number(chapter.wordBudget ?? 0) || 0
+      const percent = budget > 0 ? Math.min(100, Math.round((words / budget) * 100)) : 0
+      const plant = Array.isArray(chapter.plant) ? chapter.plant : []
+      const payoff = Array.isArray(chapter.payoff) ? chapter.payoff : []
+
+      return h('div', { className: 'nw-inspector' },
+        h('div', { className: 'nw-inspector-title' }, `第 ${number} 章对照`),
+        h('div', { className: 'nw-inspector-row' }, h('span', null, '标题'), h('b', null, chapter.title ?? '未命名')),
+        h('div', { className: 'nw-inspector-row' }, h('span', null, '卷'), h('span', null, chapter.volumeTitle ?? '—')),
+        h('div', { className: 'nw-inspector-row' }, h('span', null, '章卡状态'), h('span', null, chapter.status === 'confirmed' ? '已确认' : '待确认')),
+        mode === 'chapters'
+          ? h('div', null,
+            h('div', { className: 'nw-inspector-label' }, '章卡要点'),
+            chapter.synopsis
+              ? h('div', { className: 'nw-inspector-body' }, String(chapter.synopsis).slice(0, 420))
+              : h('div', { className: 'nw-muted', style: { fontSize: '12px' } }, '本章还没有章卡摘要。'),
+            budget > 0
+              ? h('div', { className: 'nw-inspector-row', style: { marginTop: '8px' } }, h('span', null, '目标字数'), h('span', null, `${budget}`))
+              : null,
+            plant.length || payoff.length
+              ? h('div', { className: 'nw-inspector-row' }, h('span', null, '伏笔'), h('span', null, `埋 ${plant.length} · 收 ${payoff.length}`))
+              : null,
+            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('outline') }, '打开章卡 →'),
+          )
+          : h('div', null,
+            h('div', { className: 'nw-inspector-label' }, '正文状态'),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '草稿'), h('span', null, loading ? '读取中…' : hasDraft ? '有' : '无')),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '定稿'), h('span', null, hasFinal ? '已定稿' : '未定稿')),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, `${words}${budget > 0 ? ` / ${budget}（${percent}%）` : ''}`)),
+            budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
+            h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('chapters') }, '打开正文 →'),
+          ),
+      )
+    }
+
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const isOutline = mode === 'outline'
       const tree = (() => {
@@ -3721,8 +3806,28 @@ window.__ModuleLoader__.load({
               onOpenOutline: (number) => openOutline?.(number),
             }),
             ),
+            h(ChapterInspector, { state, root, mode, focusChapter, setTab }),
           )
-        : null,
+        : h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            isOutline
+              ? h(OutlineWorkbench, {
+                  state, run, busy, setToast, focusChapter,
+                  onSelectChapter,
+                  runIssueAction,
+                  showIssuesModal,
+                  onOpenChapter: (number) => openChapter?.(number),
+                })
+              : h(ChaptersWorkbench, {
+                  state, root, run, busy, setToast, focusChapter,
+                  onSelectChapter,
+                  runIssueAction,
+                  showIssuesModal,
+                  onOpenOutline: (number) => openOutline?.(number),
+                }),
+          ),
+          h(ChapterInspector, { state, root, mode, focusChapter, setTab }),
+        ),
       )
     }
 
