@@ -15,7 +15,8 @@ import { MATERIAL_KINDS, FACT_KINDS } from './store.js'
 export { MATERIAL_KINDS, FACT_KINDS }
 
 const BIBLE_CATEGORIES = ['characters', 'locations', 'rules', 'factions', 'items']
-const FILE_SCHEMA_VERSION = 1
+/** 兼容等级：旧上层按 schema v5 判断能力（正文标记、摘要、事实、素材），文件存储已全部支持。 */
+const FILE_SCHEMA_VERSION = 5
 
 function now() {
   return new Date().toISOString()
