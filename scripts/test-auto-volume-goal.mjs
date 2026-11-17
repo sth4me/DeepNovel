@@ -110,7 +110,7 @@ await assert.rejects(
 )
 
 const clientSource = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-assert.ok(clientSource.includes('targetChapters: Number(volumeDraft.targetChapters) || 12'), '卷设置应支持目标章数')
+assert.ok(clientSource.includes('targetChapters: Number(targetChapters) || 12'), '卷设置弹窗应支持目标章数')
 assert.ok(clientSource.includes("run('volume-plan'"), '页面应能生成卷设定')
 assert.ok(clientSource.includes("run('volume-select'"), '页面应能采用候选目标')
 

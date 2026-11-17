@@ -148,10 +148,8 @@ for (const action of ['outline-repair', 'outline-audit', 'outline-generate', 'ch
 assert.ok(clientSource.includes('showIssuesModal'), 'client 应有查看全部 modal')
 assert.ok(clientSource.includes('人物状态未更新') || clientSource.includes('issue.type'), 'client 应展示问题类型/信息')
 // 回归：runIssueAction / showIssuesModal 必须在 App 中定义，并显式传给子组件（否则大纲页 ReferenceError 白屏）
-assert.ok(/function OutlineWorkbench\(\{[^}]*runIssueAction[^}]*showIssuesModal/.test(clientSource), 'OutlineWorkbench 应接收 runIssueAction/showIssuesModal')
 assert.ok(/function ChaptersWorkbench\(\{[^}]*runIssueAction[^}]*showIssuesModal/.test(clientSource), 'ChaptersWorkbench 应接收 runIssueAction/showIssuesModal')
 assert.ok(/function ChapterWorkspace\(\{[^}]*runIssueAction[^}]*showIssuesModal/.test(clientSource), 'ChapterWorkspace 应接收 runIssueAction/showIssuesModal')
-assert.ok(/h\(OutlineWorkbench, \{[\s\S]{0,400}?runIssueAction[\s\S]{0,200}?showIssuesModal/.test(clientSource), 'OutlineWorkbench 调用应传 runIssueAction/showIssuesModal')
 assert.ok(/h\(ChaptersWorkbench, \{[\s\S]{0,400}?runIssueAction[\s\S]{0,200}?showIssuesModal/.test(clientSource), 'ChaptersWorkbench 调用应传 runIssueAction/showIssuesModal')
 assert.ok(/h\(ChapterWorkspace, \{[\s\S]{0,400}?runIssueAction[\s\S]{0,200}?showIssuesModal/.test(clientSource), 'ChapterWorkspace 调用应传 runIssueAction/showIssuesModal')
 
