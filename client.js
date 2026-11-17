@@ -46,6 +46,10 @@ window.__ModuleLoader__.load({
 .nw-dot.cur{background:var(--dsw-alias-state-warn-primary)}
 .nw-dot.bad{background:var(--dsw-alias-state-error-primary)}
 .nw-main{flex:1;overflow:auto;padding:14px;min-height:0;scrollbar-width:thin}
+.nw-section-head{margin:26px 2px 10px;padding-top:16px;border-top:1px solid var(--dsw-alias-border-l1)}
+.nw-section-head.first{border-top:none;margin-top:6px;padding-top:0}
+.nw-section-title{font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--dsw-alias-label-secondary)}
+.nw-section-hint{font-size:11px;opacity:.55;margin-top:2px}
 .nw-card{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:12px;margin-bottom:10px;transition:border-color .15s}
 .nw-card:hover{border-color:var(--dsw-alias-border-l2)}
 .nw-h2{font-size:13px;font-weight:650;margin:0 0 4px}
@@ -6936,6 +6940,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       return h('div', null,
         h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '项目'),
         h(StepIntro, { eyebrow: '01 / 项目', title: '项目与流程', desc: '所有创作步骤都围绕这个项目展开。你可以随时回到这里查看进度或修改标题。', hints: ['确认项目标题', '按顺序完成构思 → 文风 → 大纲 → 章节'] }),
+        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+          h('div', { className: 'nw-section-title' }, '项目与创作'),
+          h('div', { className: 'nw-section-hint' }, '项目信息、目标、统计、进度与快照'),
+        ),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '项目设置'),
           h('div', { className: 'nw-field' },
@@ -7197,6 +7205,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '还没有快照。'),
         ),
         h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '写作配置'),
+        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+          h('div', { className: 'nw-section-title' }, '写作要求与素材'),
+          h('div', { className: 'nw-section-hint' }, '共享写作要求、技能、素材与资料'),
+        ),
         h('div', { className: 'nw-card' },
           h('div', { className: 'nw-row' },
             h('h3', { className: 'nw-h3' }, '写作要求（共享）'),
@@ -7367,7 +7379,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         ),
         h(PromptAndSkillsCard, { state, run, busy, setToast }),
         h(MaterialsLibraryCard, { state, run, busy, setToast }),
-        h('div', { className: 'nw-muted', style: { margin: '18px 0 2px', fontWeight: 600, letterSpacing: '0.04em' } }, '运行与数据'),
+        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+          h('div', { className: 'nw-section-title' }, '数据与存储'),
+          h('div', { className: 'nw-section-hint' }, '存储状态与导入导出'),
+        ),
         state.dataLayer
           ? h('div', { className: 'nw-card' },
               h('div', { className: 'nw-row' },
@@ -7376,7 +7391,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                 h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => run('data-status', {}, { toast: '数据层状态已刷新' }) }, '刷新'),
               ),
               h('p', { className: 'nw-muted' },
-                `${String(state.dataLayer.engine ?? 'SQLite')} · 数据库 ${formatBytes(state.dataLayer.dbBytes)}（WAL ${formatBytes(state.dataLayer.walBytes)}）· 索引 ${Number(state.dataLayer.ftsRows) || 0} 条 · schema v${state.dataLayer.schemaVersion ?? '—'}`),
+                `${formatBytes(state.dataLayer.storyBytes ?? 0)} · 章节 ${Number(state.dataLayer.chapters) || 0} · 可检索条目 ${Number(state.dataLayer.ftsRows) || 0} · 文件存储`),
               dataExportPath
                 ? h('div', { className: 'nw-muted', style: { marginTop: '4px', wordBreak: 'break-all' } }, `已导出：${dataExportPath}`)
                 : null,
@@ -7427,6 +7442,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                 : null,
             )
           : null,
+        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+          h('div', { className: 'nw-section-title' }, '模型与上下文'),
+          h('div', { className: 'nw-section-hint' }, '任务模型、上下文预算与提示词注入'),
+        ),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '模型分配'),
           h('p', { className: 'nw-muted' }, '对话模型（DSH 会话当前模型）只负责理解需求与调用工具；真正的生成与审校走下面按任务指定的模型。留空即继承默认。正文类任务建议关闭思考或使用低等级。'),
@@ -7637,6 +7656,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             ),
           ),
         ),
+        h('div', { className: 'nw-section-head' },
+          h('div', { className: 'nw-section-title' }, '数据与维护'),
+          h('div', { className: 'nw-section-hint' }, '搜索、维护索引与危险操作'),
+        ),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '搜索'),
           h('div', { style: { display: 'flex', gap: '8px' } },
@@ -7732,6 +7755,10 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                 ),
               )
             : null,
+        ),
+        h('div', { className: `nw-section-head${first ? ' first' : ''}` },
+          h('div', { className: 'nw-section-title' }, '流程与工具'),
+          h('div', { className: 'nw-section-hint' }, '固定流程、拆书与构思对话'),
         ),
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '固定流程'),
