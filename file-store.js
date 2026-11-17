@@ -1,11 +1,12 @@
 /**
  * 文件版 NovelStore：保持旧版 NovelStore 的同步方法签名与返回结构，内部改用 JSON 文档。
- * P1 覆盖：项目、提示词注入、自动化、构思、文风契约与模板、设定、关系、能力。
- * 其余方法在后续阶段补齐；未实现时抛错，避免静默返回错误数据。
+ * 代码组织：DocStore 负责同步读写与缓存；大纲、章节状态各自一个领域模块；
+ * 其余领域（项目/构思/文风/设定/关系/能力）在本类内，P3 领域先显式失败。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import { DocStore, clone, isPlainObject } from './storage/doc-store.js'
+import { readOutline, writeOutline, deleteOutlineChapterByNumber } from './storage/outline.js'
+import * as chapterState from './storage/chapter-state.js'
 import { MATERIAL_KINDS, FACT_KINDS } from './store.js'
 
 export { MATERIAL_KINDS, FACT_KINDS }
@@ -17,94 +18,51 @@ function now() {
   return new Date().toISOString()
 }
 
-function clone(value) {
-  return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
-}
-
-function isObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
 export class FileNovelStore {
   constructor(projectRoot) {
     this.projectRoot = projectRoot
-    this.root = join(projectRoot, 'story')
-    this.cache = new Map()
-  }
-
-  /* ------------------------------ 基础读写（同步） ------------------------------ */
-
-  path(relative) {
-    return join(this.root, relative)
-  }
-
-  readDoc(relative, fallback = null) {
-    if (this.cache.has(relative)) return clone(this.cache.get(relative))
-    const target = this.path(relative)
-    if (!existsSync(target)) {
-      this.cache.set(relative, fallback)
-      return clone(fallback)
-    }
-    try {
-      const value = JSON.parse(readFileSync(target, 'utf8'))
-      this.cache.set(relative, value)
-      return clone(value)
-    } catch {
-      this.cache.set(relative, fallback)
-      return clone(fallback)
-    }
-  }
-
-  writeDoc(relative, value) {
-    this.cache.set(relative, value)
-    const target = this.path(relative)
-    mkdirSync(dirname(target), { recursive: true })
-    const temp = `${target}.tmp-${process.pid}-${randomUUID().slice(0, 8)}`
-    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    renameSync(temp, target)
-    return clone(value)
+    this.docs = new DocStore(join(projectRoot, 'story'))
   }
 
   /* ------------------------------ 项目 ------------------------------ */
 
   readProject() {
-    return this.readDoc('project.json', null)
+    return this.docs.read('project.json', null)
   }
 
   writeProject(patch = {}) {
-    const current = this.readDoc('project.json', {}) ?? {}
-    const next = { ...current, ...clone(patch) }
-    return this.writeDoc('project.json', next)
+    const current = this.readProject() ?? {}
+    return this.docs.write('project.json', { ...current, ...clone(patch) })
   }
 
   readProjectPrompt() {
-    return this.readDoc('project.json', null)?.prompt ?? null
+    return this.readProject()?.prompt ?? null
   }
 
   writeProjectPrompt(value) {
-    const current = this.readDoc('project.json', {}) ?? {}
-    this.writeDoc('project.json', { ...current, prompt: clone(value) })
+    const current = this.readProject() ?? {}
+    this.docs.write('project.json', { ...current, prompt: clone(value) })
     return this.readProjectPrompt()
   }
 
   readAutomation() {
-    return this.readDoc('project.json', null)?.automation ?? null
+    return this.readProject()?.automation ?? null
   }
 
   writeAutomation(value) {
-    const current = this.readDoc('project.json', {}) ?? {}
-    this.writeDoc('project.json', { ...current, automation: clone(value) })
+    const current = this.readProject() ?? {}
+    this.docs.write('project.json', { ...current, automation: clone(value) })
     return this.readAutomation()
   }
 
   /* ------------------------------ 构思 ------------------------------ */
 
   readPremise() {
-    return this.readDoc('premise.json', null)
+    return this.docs.read('premise.json', null)
   }
 
   writePremise(value = {}) {
-    const source = isObject(value) ? value : {}
+    const source = isPlainObject(value) ? value : {}
     const next = {
       status: source.status ?? 'candidate',
       candidates: Array.isArray(source.candidates) ? clone(source.candidates) : [],
@@ -115,27 +73,26 @@ export class FileNovelStore {
     for (const [key, item] of Object.entries(source)) {
       if (!(key in next)) next[key] = clone(item)
     }
-    this.writeDoc('premise.json', next)
-    return this.readPremise()
+    return this.docs.write('premise.json', next)
   }
 
   deletePremise() {
-    this.writeDoc('premise.json', null)
+    this.docs.remove('premise.json')
     return true
   }
 
   /* ------------------------------ 文风 ------------------------------ */
 
   readStyleContract() {
-    return this.readDoc('style/contract.json', null)
+    return this.docs.read('style/contract.json', null)
   }
 
   writeStyleContract(value = {}) {
-    const source = isObject(value) ? value : {}
+    const source = isPlainObject(value) ? value : {}
     const next = {
       status: source.status ?? 'candidate',
       templateId: source.templateId ?? null,
-      fields: isObject(source.fields) ? clone(source.fields) : {},
+      fields: isPlainObject(source.fields) ? clone(source.fields) : {},
       samples: Array.isArray(source.samples) ? clone(source.samples) : [],
       fieldsHash: source.fieldsHash ?? null,
       updatedAt: source.updatedAt ?? now(),
@@ -143,17 +100,16 @@ export class FileNovelStore {
     for (const [key, item] of Object.entries(source)) {
       if (!(key in next)) next[key] = clone(item)
     }
-    this.writeDoc('style/contract.json', next)
-    return this.readStyleContract()
+    return this.docs.write('style/contract.json', next)
   }
 
   deleteStyleContract() {
-    this.writeDoc('style/contract.json', null)
+    this.docs.remove('style/contract.json')
     return true
   }
 
   listStyleTemplates() {
-    const doc = this.readDoc('style/templates.json', { templates: [] })
+    const doc = this.docs.read('style/templates.json', { templates: [] })
     const list = Array.isArray(doc?.templates) ? doc.templates : []
     return clone(list).sort((left, right) => {
       const a = String(left.createdAt ?? '')
@@ -163,7 +119,7 @@ export class FileNovelStore {
   }
 
   saveStyleTemplate(template = {}) {
-    const source = isObject(template) ? template : {}
+    const source = isPlainObject(template) ? template : {}
     const id = String(source.id ?? '')
     if (!id) throw new Error('文风模板缺少 id')
     const next = {
@@ -172,30 +128,30 @@ export class FileNovelStore {
       group: String(source.group ?? '自定义'),
       description: String(source.description ?? ''),
       tags: Array.isArray(source.tags) ? clone(source.tags) : [],
-      fields: isObject(source.fields) ? clone(source.fields) : {},
+      fields: isPlainObject(source.fields) ? clone(source.fields) : {},
       samples: Array.isArray(source.samples) ? clone(source.samples) : [],
       createdAt: source.createdAt ?? now(),
     }
-    const doc = this.readDoc('style/templates.json', { templates: [] })
+    const doc = this.docs.read('style/templates.json', { templates: [] })
     const templates = (Array.isArray(doc?.templates) ? doc.templates : []).filter((item) => item.id !== id)
     templates.push(next)
-    this.writeDoc('style/templates.json', { templates })
+    this.docs.write('style/templates.json', { templates })
     return this.listStyleTemplates().find((item) => item.id === id) ?? null
   }
 
   deleteStyleTemplate(id) {
     const key = String(id ?? '')
-    const doc = this.readDoc('style/templates.json', { templates: [] })
+    const doc = this.docs.read('style/templates.json', { templates: [] })
     const before = Array.isArray(doc?.templates) ? doc.templates : []
     const templates = before.filter((item) => item.id !== key)
-    this.writeDoc('style/templates.json', { templates })
+    this.docs.write('style/templates.json', { templates })
     return { deleted: key, changes: before.length === templates.length ? 0 : 1 }
   }
 
   /* ------------------------------ 设定 ------------------------------ */
 
   readBible() {
-    const doc = this.readDoc('bible/entries.json', null)
+    const doc = this.docs.read('bible/entries.json', null)
     const data = {
       status: doc?.status ?? 'missing',
       updatedAt: doc?.updatedAt ?? null,
@@ -211,7 +167,7 @@ export class FileNovelStore {
   }
 
   writeBible(value = {}) {
-    const source = isObject(value) ? value : {}
+    const source = isPlainObject(value) ? value : {}
     const next = {
       status: source.status ?? 'missing',
       updatedAt: source.updatedAt ?? now(),
@@ -223,72 +179,84 @@ export class FileNovelStore {
     for (const [key, item] of Object.entries(source)) {
       if (!(key in next)) next[key] = clone(item)
     }
-    this.writeDoc('bible/entries.json', next)
-    return this.readBible()
+    return this.docs.write('bible/entries.json', next)
   }
 
   readRelations() {
-    const doc = this.readDoc('bible/relations.json', null)
+    const doc = this.docs.read('bible/relations.json', null)
     return {
       status: doc?.status ?? 'candidate',
       relations: Array.isArray(doc?.relations) ? clone(doc.relations) : [],
-      positions: isObject(doc?.positions) ? clone(doc.positions) : {},
+      positions: isPlainObject(doc?.positions) ? clone(doc.positions) : {},
       updatedAt: doc?.updatedAt ?? null,
     }
   }
 
   writeRelations(value = {}) {
-    const source = isObject(value) ? value : {}
+    const source = isPlainObject(value) ? value : {}
     const next = {
       status: source.status ?? 'candidate',
       relations: Array.isArray(source.relations) ? clone(source.relations) : [],
-      positions: isObject(source.positions) ? clone(source.positions) : {},
+      positions: isPlainObject(source.positions) ? clone(source.positions) : {},
       updatedAt: source.updatedAt ?? now(),
     }
     for (const [key, item] of Object.entries(source)) {
       if (!(key in next)) next[key] = clone(item)
     }
-    this.writeDoc('bible/relations.json', next)
-    return this.readRelations()
+    return this.docs.write('bible/relations.json', next)
   }
 
   /* ------------------------------ 能力体系 ------------------------------ */
 
   readPower() {
-    return this.readDoc('power.json', null)
+    return this.docs.read('power.json', null)
   }
 
   writePower(value) {
-    this.writeDoc('power.json', clone(value ?? null))
+    this.docs.write('power.json', clone(value ?? null))
     return this.readPower()
   }
 
-  /* ------------------------------ 后续阶段占位 ------------------------------ */
+  /* ------------------------------ 大纲 ------------------------------ */
 
-  unsupported(name) {
-    throw new Error(`file-store 尚未实现 ${name}（P2/P3 阶段补齐）`)
+  readOutline() {
+    return readOutline(this.docs)
   }
 
-  readOutline() { return this.unsupported('readOutline') }
-  writeOutline() { return this.unsupported('writeOutline') }
-  readChapterMeta() { return this.unsupported('readChapterMeta') }
-  writeChapterMeta() { return this.unsupported('writeChapterMeta') }
-  setChapterProseFlags() { return this.unsupported('setChapterProseFlags') }
-  listChapterProseFlags() { return this.unsupported('listChapterProseFlags') }
-  readChapterQa() { return this.unsupported('readChapterQa') }
-  writeChapterQa() { return this.unsupported('writeChapterQa') }
-  readChapterState() { return this.unsupported('readChapterState') }
-  writeChapterState() { return this.unsupported('writeChapterState') }
-  readChapterSummary() { return this.unsupported('readChapterSummary') }
-  writeChapterSummary() { return this.unsupported('writeChapterSummary') }
-  listChapterStates() { return this.unsupported('listChapterStates') }
-  listChapterSummaries() { return this.unsupported('listChapterSummaries') }
-  readStateIndex() { return this.unsupported('readStateIndex') }
-  writeStateMeta() { return this.unsupported('writeStateMeta') }
-  writeStateIndex() { return this.unsupported('writeStateIndex') }
-  deleteChapterRows() { return this.unsupported('deleteChapterRows') }
-  deleteOutlineChapter() { return this.unsupported('deleteOutlineChapter') }
-  renameChapterRows() { return this.unsupported('renameChapterRows') }
+  writeOutline(value) {
+    return writeOutline(this.docs, value)
+  }
+
+  deleteOutlineChapter(number) {
+    return deleteOutlineChapterByNumber(this.docs, number)
+  }
+
+  /* ------------------------------ 章节状态 ------------------------------ */
+
+  readChapterMeta(number) { return chapterState.readChapterMeta(this.docs, number) }
+  writeChapterMeta(number, value) { return chapterState.writeChapterMeta(this.docs, number, value) }
+  setChapterProseFlags(number, flags) { return chapterState.setChapterProseFlags(this.docs, number, flags) }
+  listChapterProseFlags() { return chapterState.listChapterProseFlags(this.docs) }
+  readChapterQa(number) { return chapterState.readChapterQa(this.docs, number) }
+  writeChapterQa(number, value) { return chapterState.writeChapterQa(this.docs, number, value) }
+  readChapterState(number) { return chapterState.readChapterState(this.docs, number) }
+  writeChapterState(number, value) { return chapterState.writeChapterState(this.docs, number, value) }
+  readChapterSummary(number) { return chapterState.readChapterSummary(this.docs, number) }
+  writeChapterSummary(number, value) { return chapterState.writeChapterSummary(this.docs, number, value) }
+  listChapterStates() { return chapterState.listChapterStates(this.docs) }
+  listChapterSummaries() { return chapterState.listChapterSummaries(this.docs) }
+  readStateIndex() { return chapterState.readStateIndex(this.docs) }
+  writeStateMeta(updatedAt) { return chapterState.writeStateMeta(this.docs, updatedAt) }
+  writeStateIndex(value) { return chapterState.writeStateIndex(this.docs, value) }
+  deleteChapterRows(number) { return chapterState.deleteChapterRows(this.docs, number) }
+  renameChapterRows(from, to) { return chapterState.renameChapterRows(this.docs, from, to) }
+
+  /* ------------------------------ P3 占位 ------------------------------ */
+
+  unsupported(name) {
+    throw new Error(`file-store 尚未实现 ${name}（P3 阶段补齐）`)
+  }
+
   readStats() { return this.unsupported('readStats') }
   appendStatsEvent() { return this.unsupported('appendStatsEvent') }
   writeStats() { return this.unsupported('writeStats') }

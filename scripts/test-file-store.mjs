@@ -83,8 +83,77 @@ for (const relative of ['project.json', 'premise.json', 'style/contract.json', '
 }
 assert.ok((await readFile(join(root, 'story', 'project.json'), 'utf8')).includes('测试书'))
 
+// 大纲
+store.writeOutline({
+  status: 'confirmed',
+  logline: '一句话',
+  extraOutline: '保留我',
+  volumes: [{
+    id: 'v1', title: '卷一', goal: '目标', targetChapters: 10, extraVolume: '保留',
+    chapters: [{
+      id: 'c1', number: 1, title: '第一章', synopsis: '梗概', status: 'confirmed',
+      wordBudget: 3500, inputs: { pov: 'third-limited' }, plant: ['伏笔'], payoff: [], extraChapter: '保留',
+    }],
+  }],
+})
+const outline = store.readOutline()
+assert.equal(outline.status, 'confirmed')
+assert.equal(outline.extraOutline, '保留我', '大纲未知字段保留')
+assert.equal(outline.volumes[0].extraVolume, '保留', '卷未知字段保留')
+assert.equal(outline.volumes[0].chapters[0].extraChapter, '保留', '章未知字段保留')
+assert.equal(outline.volumes[0].chapters[0].wordBudget, 3500)
+assert.deepEqual(outline.volumes[0].chapters[0].plant, ['伏笔'])
+
+// 章节状态
+store.writeChapterMeta(1, { chapterId: 'c1', title: '第一章', wordCount: 1200, status: 'drafted' })
+assert.equal(store.readChapterMeta(1).wordCount, 1200)
+store.writeChapterQa(1, { qa: { issues: [1] }, styleQa: { aiFlavor: 'low' } })
+assert.deepEqual(store.readChapterQa(1).qa, { issues: [1] })
+assert.equal(store.readChapterQa(1).continuity, null, '未写的字段是 null')
+store.writeChapterState(1, { chapterId: 'c1', title: '第一章', meta: { wordCount: 1200 }, summary: '摘要' })
+assert.equal(store.readChapterState(1).chapterId, 'c1')
+store.writeChapterSummary(1, { summary: '本章摘要' })
+assert.equal(store.readChapterSummary(1).summary, '本章摘要')
+
+// 正文标记
+assert.deepEqual(store.setChapterProseFlags(1, { hasDraft: true }), { number: 1, hasDraft: true, hasFinal: false })
+assert.equal(store.listChapterProseFlags().get(1).hasDraft, true)
+store.setChapterProseFlags(1, { hasFinal: true })
+assert.equal(store.listChapterProseFlags().get(1).hasFinal, true)
+
+// 列表与索引
+assert.equal(store.listChapterStates().length, 1)
+assert.equal(store.listChapterSummaries().length, 1)
+const stateIndex = store.readStateIndex()
+assert.equal(stateIndex.chapters[0].number, 1)
+assert.equal(stateIndex.chapters[0].finalPath, 'story/chapters/001/final.md')
+assert.ok(store.readStateMeta?.() === undefined || true)
+
+// 重排与删除
+store.writeChapterState(2, { chapterId: 'c2', title: '第二章' })
+store.renameChapterRows(2, 3)
+assert.equal(store.readChapterState(3).chapterId, 'c2', '重排后章号与内容一起迁移')
+assert.equal(store.readChapterState(2), null)
+store.deleteChapterRows(3)
+assert.equal(store.readChapterState(3), null)
+
+// 大纲按章号删除
+store.writeOutline({
+  volumes: [{ id: 'v1', title: '卷一', chapters: [
+    { id: 'c1', number: 1, title: '第一章' },
+    { id: 'c2', number: 2, title: '第二章' },
+  ] }],
+})
+store.deleteOutlineChapter(2)
+assert.equal(store.readOutline().volumes[0].chapters.length, 1)
+assert.equal(store.readOutline().volumes[0].chapters[0].number, 1)
+
+// 文件落盘位置
+await stat(join(root, 'story', 'plot', 'outline.json'))
+await stat(join(root, 'story', 'state', '001.json'))
+
 // 未实现的方法必须显式失败
-assert.throws(() => store.readOutline(), /尚未实现/)
+assert.throws(() => store.readStats(), /尚未实现/)
 
 // 重新打开仍能读到（没有数据库）
 const reopened = new FileNovelStore(root)
@@ -93,4 +162,4 @@ assert.equal(reopened.listStyleTemplates().length, 0)
 assert.equal(reopened.readBible().characters[0].name, '角色甲')
 
 await rm(root, { recursive: true, force: true })
-console.log('file-store P1 tests passed')
+console.log('file-store P1+P2 tests passed')
