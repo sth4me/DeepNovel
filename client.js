@@ -2317,7 +2317,7 @@ window.__ModuleLoader__.load({
         ),
         h('div', { className: 'nw-next', style: { margin: 0 } },
           h('span', null, '下一步：'),
-          h('b', null, NEXT_LABELS[workflow.next] ?? workflow.next),
+          h('b', null, nextLabel),
         ),
         h('select', {
           className: 'nw-mobile-steps',
@@ -2422,6 +2422,11 @@ window.__ModuleLoader__.load({
                         })
                       : null
 
+      const chapterRows = state?.chapters ?? []
+      const allChaptersWritten = chapterRows.length > 0 && chapterRows.every((item) => item.hasDraft)
+      const nextLabel = allChaptersWritten && workflow.next === 'draft'
+        ? '全部章节已写完，继续修订或导出'
+        : (NEXT_LABELS[workflow.next] ?? workflow.next)
       const nextTab =
         workflow.next === 'draft' || workflow.next === 'outline'
           ? 'chapters'
@@ -2432,7 +2437,7 @@ window.__ModuleLoader__.load({
         ? h('div', { className: 'nw-nextbar' },
             h('div', { style: { minWidth: 0 } },
               h('div', { className: 'nw-eyebrow' }, '下一步'),
-              h('div', { className: 'nw-next-title' }, NEXT_LABELS[workflow.next] ?? workflow.next),
+              h('div', { className: 'nw-next-title' }, nextLabel),
               (workflow.blockers ?? []).length
                 ? h('div', { className: 'nw-muted' }, workflow.blockers.join(' · '))
                 : null,
@@ -2449,7 +2454,7 @@ window.__ModuleLoader__.load({
       const flowInspector = h('div', null,
         h('div', { className: 'nw-card' },
           h('h3', { className: 'nw-h3' }, '下一步'),
-          h('div', { className: 'nw-p', style: { fontWeight: 600 } }, NEXT_LABELS[workflow.next] ?? workflow.next),
+          h('div', { className: 'nw-p', style: { fontWeight: 600 } }, nextLabel),
           (workflow.blockers ?? []).length
             ? h('div', { className: 'nw-muted', style: { marginTop: '4px', color: 'var(--dsw-alias-state-warn-primary)' } }, workflow.blockers.join(' · '))
             : h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, '流程已就绪。'),
