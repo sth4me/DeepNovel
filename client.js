@@ -352,6 +352,7 @@ window.__ModuleLoader__.load({
 .nw-inspector{width:330px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
 .nw-insp-section{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .nw-insp-divider{height:1px;background:var(--dsw-alias-border-l1);margin:6px 0}
+.nw-inspector-embedded{display:flex;flex-direction:column;gap:8px;font-size:12px}
 .nw-inspector.nw-inspector-embedded{width:100% !important;min-width:0 !important;max-width:none !important;flex:1 1 auto !important;box-sizing:border-box;border:none;padding:0;position:static;max-height:none;overflow:visible;background:transparent;height:auto}
 .nw-inspector-embedded .nw-input{width:100%;box-sizing:border-box}
 .nw-inspector-embedded .nw-field{width:100%}
@@ -3531,7 +3532,7 @@ window.__ModuleLoader__.load({
           : null)
       }, [number, valid, state?.outline])
 
-      const shellClass = `nw-inspector${embedded ? ' nw-inspector-embedded' : ''}`
+      const shellClass = embedded ? 'nw-inspector-embedded' : 'nw-inspector'
       if (!valid || !chapter) {
         return h('div', { className: shellClass },
           h('div', { className: 'nw-inspector-title' }, '章卡'),
