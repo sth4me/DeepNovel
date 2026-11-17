@@ -461,6 +461,10 @@ window.__ModuleLoader__.load({
 .nw-manuscript p{text-indent:2em;text-align:justify;margin:0 0 .62em}
 .nw-manuscript p:last-child{margin-bottom:0}
 .nw-reader-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:2px 0 6px;font-size:11px;flex-wrap:wrap}
+.nw-prop-diff{margin-top:8px;max-height:320px;overflow:auto;background:var(--dsw-alias-bg-layer-1);border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.6}
+.nw-prop-line{white-space:pre-wrap;word-break:break-word;padding:1px 0}
+.nw-prop-line.add{color:var(--dsw-alias-state-success-primary)}
+.nw-prop-line.del{color:var(--dsw-alias-state-error-primary);text-decoration:line-through}
 .nw-reader-select{width:auto !important;min-width:64px;padding:2px 6px;font-size:11.5px;border-radius:7px}
 .nw-reading .nw-manuscript{max-width:none}
 .nw-manuscript p{margin:0 0 15px}
@@ -3774,6 +3778,17 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const volumes = state.volumes ?? []
       const [volumeFilter, setVolumeFilter] = useState('all')
       const [runDetail, setRunDetail] = useState(null)
+      const [proposals, setProposals] = useState([])
+      const [openProposal, setOpenProposal] = useState(null)
+      const reloadProposals = async () => {
+        try {
+          const data = await run('proposals-list', {}, { silent: true })
+          setProposals(Array.isArray(data?.proposals) ? data.proposals : [])
+        } catch {
+          setProposals([])
+        }
+      }
+      useEffect(() => { reloadProposals() }, [root, state?.chapters?.length])
       const chapters = volumeFilter === 'all'
         ? allChapters
         : allChapters.filter((item) => item.volumeId === volumeFilter)
@@ -4471,6 +4486,63 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             h('div', { style: { width: '1px', height: '20px', background: 'var(--dsw-alias-border-l1)', margin: '0 4px' } }),
           )
         })(),
+        proposals.length
+          ? h('div', { className: 'nw-card', style: { marginBottom: '8px', padding: '10px 12px' } },
+              h('div', { className: 'nw-row' },
+                h('h3', { className: 'nw-h3', style: { margin: 0 } }, `待审阅改动（${proposals.length}）`),
+                h('span', { className: 'nw-muted' }, '助手生成的写入不会直接落盘，接受后才保存'),
+                h('button', { type: 'button', className: 'nw-btn ghost', style: { marginLeft: 'auto' }, onClick: reloadProposals }, '刷新'),
+              ),
+              proposals.map((proposal) => {
+                const expanded = openProposal === proposal.id
+                const before = proposal.kind === 'chapter-text' ? String(proposal.before ?? '') : JSON.stringify(proposal.before, null, 2)
+                const after = proposal.kind === 'chapter-text' ? String(proposal.after ?? '') : JSON.stringify(proposal.after, null, 2)
+                const oldParts = before.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+                const newParts = after.split(/\n+/).map((line) => line.trim()).filter(Boolean)
+                const newSet = new Set(newParts)
+                const oldSet = new Set(oldParts)
+                const removed = oldParts.filter((line) => !newSet.has(line))
+                const added = newParts.filter((line) => !oldSet.has(line))
+                return h('div', { key: proposal.id, style: { borderTop: '1px dashed var(--dsw-alias-border-l1)', marginTop: '8px', paddingTop: '8px' } },
+                  h('div', { className: 'nw-row' },
+                    h('span', null, `${proposal.kind === 'chapter-text' ? '正文' : '章卡'} · 第 ${proposal.number} 章 · ${proposal.title ?? ''}`),
+                    h('span', { className: 'nw-muted' }, `+${added.length} 段 / -${removed.length} 段`),
+                    h('div', { className: 'nw-actions', style: { marginLeft: 'auto' } },
+                      h('button', { type: 'button', className: 'nw-btn ghost', onClick: () => setOpenProposal(expanded ? null : proposal.id) }, expanded ? '收起' : '查看 diff'),
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn',
+                        onClick: async () => {
+                          const result = await run('proposal-reject', { id: proposal.id }, { toast: '已拒绝对话' })
+                          if (result) { setOpenProposal(null); reloadProposals() }
+                        },
+                      }, '拒绝'),
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn primary',
+                        onClick: async () => {
+                          const result = await run('proposal-apply', { id: proposal.id }, { silent: true })
+                          if (result?.conflict) {
+                            setToast('正文已被改动，提案未应用；请让助手基于最新正文重新生成')
+                            return
+                          }
+                          if (result?.applied) setToast('已接受并写入')
+                          setOpenProposal(null)
+                          reloadProposals()
+                        },
+                      }, '接受'),
+                    ),
+                  ),
+                  expanded
+                    ? h('div', { className: 'nw-prop-diff' },
+                        removed.map((line, index) => h('div', { key: `r${index}`, className: 'nw-prop-line del' }, `- ${line}`)),
+                        added.map((line, index) => h('div', { key: `a${index}`, className: 'nw-prop-line add' }, `+ ${line}`)),
+                      )
+                    : null,
+                )
+              }),
+            )
+          : null,
         (() => {
           const current = (state?.issues?.items ?? []).filter((issue) => Number(issue.chapter) === Number(selected) && (issue.source === 'chapter' || issue.source === 'state'))
           if (current.length === 0) return null
