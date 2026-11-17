@@ -974,6 +974,62 @@ export function apply(ctx) {
   })
 
   registerTool(ctx, {
+    name: 'novel_reference',
+    description: '资料库：原作 / 我的前作 / 研究资料 / 灵感。kind 决定引用方式：original 只借世界观与人物，不复述原文；prior（我的前作）学用词与节奏；research 只作事实与细节参考；idea 可自由扩展变体。action=list 列出资料；action=get 按 id 读取正文；action=save 新增或按 id 更新；action=delete 删除。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'get', 'save', 'delete'] },
+        id: { type: 'string', description: 'get/delete 必填；save 带 id 则更新' },
+        title: { type: 'string', description: 'save 时的标题' },
+        kind: { type: 'string', enum: ['original', 'prior', 'research', 'idea'], description: '资料类型，决定引用方式' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'save 时的标签（最多 10 个）' },
+        note: { type: 'string', description: 'save 时的备注（说明怎么用）' },
+        content: { type: 'string', description: 'save 时的正文（Markdown）' },
+        source: { type: 'string', description: 'save 时的来源（路径或链接，可选）' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    output: jsonOutput,
+    async execute(args, exec) {
+      const service = getNovelWriter()
+      if (args?.action === 'delete') {
+        if (!String(args?.id ?? '').trim()) throw new Error('delete 需要 id')
+        return service.deleteReference(exec.agent, args.id)
+      }
+      if (args?.action === 'get') {
+        if (!String(args?.id ?? '').trim()) throw new Error('get 需要 id')
+        return service.readReference(exec.agent, args.id)
+      }
+      if (args?.action === 'save') {
+        return service.saveReference(exec.agent, {
+          id: args?.id,
+          title: args?.title,
+          kind: args?.kind,
+          tags: args?.tags,
+          note: args?.note,
+          content: args?.content,
+          source: args?.source,
+        })
+      }
+      const data = await service.listReferences(exec.agent)
+      return {
+        kinds: data.kinds,
+        total: data.sources.length,
+        sources: data.sources.map((item) => ({
+          id: item.id,
+          title: item.title,
+          kind: item.kind,
+          tags: item.tags,
+          note: item.note,
+          updatedAt: item.updatedAt,
+        })),
+      }
+    },
+  })
+
+  registerTool(ctx, {
     name: 'novel_constraints',
     description: '写/改某章前检查约束冲突（只读，不生成正文）。返回硬约束清单（≤12）、冲突（含裁决与理由）、需要同步设定的 warning。存在 autoResolved=false 的设定冲突时，应先提示用户/同步更新设定，再生成。',
     parameters: {
