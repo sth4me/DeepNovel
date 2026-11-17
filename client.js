@@ -287,7 +287,8 @@ window.__ModuleLoader__.load({
 .nw-filetree{width:200px;flex:0 0 200px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
 .nw-filetree-title{font-size:12px;font-weight:600;opacity:.7;padding:2px 6px 6px}
 .nw-filetree-group{margin-bottom:6px}
-.nw-filetree-volume{font-size:11px;opacity:.6;padding:2px 6px}
+.nw-filetree-volume{font-size:11px;opacity:.7;padding:2px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;width:100%;border-radius:6px}
+.nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px}
 .nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3752,36 +3753,47 @@ window.__ModuleLoader__.load({
 
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const isOutline = mode === 'outline'
+      const [collapsedVolumes, setCollapsedVolumes] = useState({})
       const tree = (() => {
         const volumes = state?.outline?.volumes ?? []
         const total = volumes.reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
         if (total === 0) return null
+        const chapterRow = (chapter) => h('div', {
+          key: chapter.id ?? chapter.number,
+          className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
+        },
+          h('button', {
+            type: 'button',
+            className: 'nw-filetree-name nw-filetree-open',
+            title: chapter.title ?? '',
+            onClick: () => openOutline?.(chapter.number),
+          }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
+          h('button', {
+            type: 'button',
+            className: 'nw-filetree-link',
+            onClick: (event) => { event.stopPropagation(); openOutline?.(chapter.number) },
+          }, '章卡'),
+          h('button', {
+            type: 'button',
+            className: 'nw-filetree-link',
+            onClick: (event) => { event.stopPropagation(); openChapter?.(chapter.number) },
+          }, '正文'),
+        )
+        const volumeGroup = (volume) => {
+          const collapsed = collapsedVolumes[volume.id] === true
+          const chapters = volume.chapters ?? []
+          return h('div', { key: volume.id, className: 'nw-filetree-group' },
+            h('button', {
+              type: 'button',
+              className: 'nw-filetree-volume',
+              onClick: () => setCollapsedVolumes((current) => ({ ...current, [volume.id]: !collapsed })),
+            }, `${collapsed ? '▸' : '▾'} ${volume.title || '未命名卷'}`),
+            collapsed ? null : chapters.map(chapterRow),
+          )
+        }
         return h('div', { className: 'nw-filetree' },
           h('div', { className: 'nw-filetree-title' }, '目录'),
-          ...volumes.map((volume) => h('div', { key: volume.id, className: 'nw-filetree-group' },
-            h('div', { className: 'nw-filetree-volume' }, volume.title || '未命名卷'),
-            ...(volume.chapters ?? []).map((chapter) => h('div', {
-              key: chapter.id ?? chapter.number,
-              className: `nw-filetree-chapter${Number(focusChapter) === Number(chapter.number) ? ' active' : ''}`,
-            },
-              h('button', {
-                type: 'button',
-                className: 'nw-filetree-name nw-filetree-open',
-                title: chapter.title ?? '',
-                onClick: () => openOutline?.(chapter.number),
-              }, `${String(chapter.number).padStart(2, '0')} ${chapter.title ?? '未命名'}`),
-              h('button', {
-                type: 'button',
-                className: 'nw-filetree-link',
-                onClick: (event) => { event.stopPropagation(); openOutline?.(chapter.number) },
-              }, '章卡'),
-              h('button', {
-                type: 'button',
-                className: 'nw-filetree-link',
-                onClick: (event) => { event.stopPropagation(); openChapter?.(chapter.number) },
-              }, '正文'),
-            )),
-          )),
+          volumes.map(volumeGroup),
         )
       })()
       return h('div', null,
