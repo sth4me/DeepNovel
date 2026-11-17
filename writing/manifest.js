@@ -1,6 +1,6 @@
 // 文档模型：deepnovel.json 只保存对象索引和薄字段，创作内容都在 Markdown。
 import { basename, join } from 'node:path'
-import { emptyRoute, normalizeRouting } from './routing.js'
+import { emptyRoute, expandLegacyRoutes } from './routing.js'
 import { normalizeDialogue } from './dialogue.js'
 
 export const MANIFEST_FILE = 'deepnovel.json'
@@ -154,7 +154,7 @@ export function normalizeManifest(raw = {}) {
       ledger: 'continuity/ledger.json',
       summaries: 'continuity/summaries',
     },
-    routing: normalizeRouting(source.routing),
+    routing: expandLegacyRoutes(source.routing),
     dialogue: normalizeDialogue(source.dialogue),
     createdAt: String(source.createdAt ?? now),
     updatedAt: String(source.updatedAt ?? now),

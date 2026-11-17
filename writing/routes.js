@@ -45,6 +45,15 @@ function validKind(kind) {
   return ['book', 'world', 'character', 'volume', 'arc', 'chapter', 'manuscript', 'summary', 'ledger'].includes(kind)
 }
 
+const ROLE_ALIASES = { plan: 'outline', prose: 'draft' }
+const ROLE_IDS = new Set(ROUTE_ROLES.map((role) => role.id))
+
+function normalizeRole(value) {
+  const raw = String(value ?? '').trim()
+  const mapped = ROLE_ALIASES[raw] ?? raw
+  return ROLE_IDS.has(mapped) ? mapped : 'outline'
+}
+
 export function registerWritingRoutes(ctx, webServer) {
   const disposers = []
   const register = (path, handler) => {
@@ -206,11 +215,11 @@ export function registerWritingRoutes(ctx, webServer) {
         efforts = []
       }
     }
-    const role = payload.role === 'prose' ? 'prose' : 'plan'
+    const role = normalizeRole(payload.role)
     const route = await resolveTaskRoute({
       routing: project.routing(),
       role,
-      base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts },
+      base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts, reasoningEffort: base?.reasoningEffort ?? '' },
       resolveEfforts: llm
         ? async (provider, model) => {
           const info = await llm.resolveModelInfo(provider, model)

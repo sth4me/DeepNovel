@@ -170,6 +170,17 @@ const configuredRoute = routingModule.resolveRoute(
 assert.equal(configuredRoute.reasoningEffort, 'low')
 assert.match(configuredRoute.note, /回落/)
 assert.equal(routingModule.describeRoute({ provider: '', model: '' }), '跟随当前会话')
+assert.equal(routingModule.roleDefaultEffort('draft', ['off', 'low', 'high'], 'high'), 'off', '正文草稿默认关闭思考')
+assert.equal(routingModule.roleDefaultEffort('outline', ['off', 'low', 'high'], 'high'), 'low', '章纲默认低思考')
+assert.equal(routingModule.roleDefaultEffort('audit', ['medium', 'high'], 'high'), 'medium', '审稿在不支持 low 时回落')
+assert.equal(routingModule.roleDefaultEffort('summary', ['off', 'high'], 'high'), 'high', '摘要继承当前档位')
+const legacyExpanded = routingModule.expandLegacyRoutes({ prose: { provider: 'p', model: 'm', reasoningEffort: 'off' } })
+assert.equal(legacyExpanded.draft.provider, 'p', '旧版 prose 展开到正文草稿')
+assert.equal(legacyExpanded.revise.model, 'm')
+assert.equal(legacyExpanded.premise.provider, '', '旧版 prose 不影响构思')
+const outlineResolved = routingModule.resolveRoute({}, 'outline', { provider: 'p', model: 'm', efforts: ['off', 'low', 'high'], reasoningEffort: 'high' })
+assert.equal(outlineResolved.reasoningEffort, 'low', '未配置时按任务默认档位')
+
 
 const dialogueModule = await import('../writing/dialogue.js')
 assert.deepEqual(dialogueModule.normalizeDialogue({}), { proseInline: false })

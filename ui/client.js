@@ -1013,8 +1013,15 @@ window.__ModuleLoader__.load({
       dialogueStyle: '对白', sensoryFocus: '感官重点', must: '必须', never: '禁止', adjust: '调整', notes: '备注',
     }
     const ROUTE_ROLES = [
-      ['plan', '规划 / 检查', '开书、设定、人物、大纲、资料整理、一致性检查'],
-      ['prose', '写正文', '写正文、润色、局部改写'],
+      ['premise', '构思', '开书方向、故事脊柱'],
+      ['bible', '设定与人物', '世界观、人物、关系'],
+      ['outline', '章纲 / 大纲', '分卷、章卡、结构'],
+      ['draft', '正文草稿', '写本章正文'],
+      ['revise', '正文修订', '按意见整章修订'],
+      ['fix', '质检修复', '按问题清单修补'],
+      ['audit', '风格审稿', 'AI 腔、文风一致性'],
+      ['summary', '章节摘要', '摘要与交接'],
+      ['continuity', '连续性检查', '事实、知情、时间线'],
     ]
     const ROUTE_EFFORT_LABELS = { '': '跟随会话', off: '关闭', minimal: '最少', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大' }
     const STYLE_VALUE_LABELS = {
@@ -2205,7 +2212,16 @@ window.__ModuleLoader__.load({
 
       const roleOfTask = (title, body) => {
         const text = `${title} ${body}`
-        return /写正文|正文|润色|改写|续写|写下一章/.test(text) && !/章卡|大纲|规划/.test(text) ? 'prose' : 'plan'
+        if (/审稿|AI 腔|文风一致|文风检查/.test(text)) return 'audit'
+        if (/修复|质检/.test(text)) return 'fix'
+        if (/修订|润色|改写/.test(text)) return 'revise'
+        if (/摘要|交接/.test(text)) return 'summary'
+        if (/连续性|一致性|检查结构|重复/.test(text)) return 'continuity'
+        if (/写正文|正文|续写|写下一章|扩写/.test(text)) return 'draft'
+        if (/章卡|大纲|分卷|规划/.test(text)) return 'outline'
+        if (/设定|人物|世界观/.test(text)) return 'bible'
+        if (/构思|开书|方向/.test(text)) return 'premise'
+        return 'outline'
       }
 
       const runBackgroundTask = async (title, body, role, options = {}) => {
@@ -2713,7 +2729,8 @@ window.__ModuleLoader__.load({
               h('div', { style: { fontSize: 10, opacity: 0.55, lineHeight: 1.6 } }, '按任务类型指定模型与思考档；留空跟随当前会话。也可以用对话里的 novel_route 修改。'),
             ),
             routing
-              ? h('div', { style: { display: 'grid', gap: 10 } }, ...ROUTE_ROLES.map(([role, label, hint]) => routeRow(role, label, hint)))
+              ? h('div', { style: { display: 'grid', gap: 10, maxHeight: '42vh', overflow: 'auto', paddingRight: 4 } },
+                ...ROUTE_ROLES.map((role) => routeRow(role[0], role[1], role[2])))
               : h('div', { style: style.muted }, '读取中…'),
             h('label', { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 12 } },
               h('input', {

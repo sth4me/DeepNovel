@@ -506,7 +506,7 @@ export function registerWritingTools(ctx) {
         taskId: { type: 'string' },
         title: { type: 'string', description: '任务标题，用于展示和去重' },
         prompt: { type: 'string', description: '交给子代理的完整任务说明' },
-        role: { type: 'string', enum: ['plan', 'prose'] },
+        role: { type: 'string', enum: ROUTE_ROLES.map((role) => role.id) },
         chapterId: { type: 'string', description: '写正文时目标章节 id' },
         write: { type: 'array', items: { type: 'string' }, description: '该任务会写的文件或目录前缀；不填按标题推断，未知任务按整项目写处理' },
         read: { type: 'array', items: { type: 'string' }, description: '该任务会读的文件或目录前缀' },
@@ -536,11 +536,12 @@ export function registerWritingTools(ctx) {
           efforts = []
         }
       }
-      const role = args.role === 'prose' ? 'prose' : 'plan'
+      const roleInput = String(args.role ?? '').trim()
+      const role = ROUTE_ROLES.some((item) => item.id === roleInput) ? roleInput : 'outline'
       const route = await resolveTaskRoute({
         routing: project.routing(),
         role,
-        base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts },
+        base: { provider: base?.provider ?? '', model: base?.model ?? '', efforts, reasoningEffort: base?.reasoningEffort ?? '' },
         resolveEfforts: llm
           ? async (provider, model) => {
             const info = await llm.resolveModelInfo(provider, model)
