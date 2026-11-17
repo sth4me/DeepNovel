@@ -85,7 +85,6 @@ window.__ModuleLoader__.load({
 @keyframes nw-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .nw-assist-wrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
 .nw-assist-fab{width:44px;height:44px;border-radius:50%;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-brand-primary);font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 8px 22px rgba(0,0,0,.28)}
-.nw-assist-fab:hover{background:var(--dsw-alias-bg-layer-2)}
 .nw-assist{width:min(540px,94vw);height:min(76vh,720px);display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-overlay);box-shadow:0 20px 50px rgba(0,0,0,.36)}
 .nw-assist.expanded{width:min(960px,96vw);height:88vh}
 .nw-assist-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary)}
@@ -1766,7 +1765,6 @@ window.__ModuleLoader__.load({
       // 只锁当前页：切到大纲页时，章节页正在生成的草稿不会挡住大纲按钮。
       const busy = Object.keys(running).some((key) => running[key]?.tab === tab)
       const anyBusy = Object.keys(running).length > 0
-      const [inspTab, setInspTab] = useState('flow')
       const [lastAction, setLastAction] = useState(null)
       const [focus, setFocus] = useState(false)
       const [inspWidth, setInspWidth] = useState(() => {
@@ -2545,27 +2543,9 @@ window.__ModuleLoader__.load({
         runDetail ? h(RunDetailModal, { detail: runDetail, onClose: () => setRunDetail(null), setToast }) : null,
       )
 
-      const deskConversation = (() => {
-        try {
-          return props?.renderSlot
-            ? props.renderSlot('deepnovel.desk.conversation', { projectRoot: root, run, setToast })
-            : null
-        } catch (failure) {
-          return h('div', { className: 'nw-empty' }, `对话加载失败：${failure?.message ?? failure}`)
-        }
-      })()
-
       const inspector = h('div', { className: 'nw-inspector', style: { width: `${inspWidth}px` } },
         h('div', { className: 'nw-insp-resizer', onMouseDown: startInspResize, title: '拖动调整面板宽度' }),
-        h('div', { className: 'nw-insp-tabs' },
-          h('button', { type: 'button', className: `nw-insp-tab${inspTab === 'flow' ? ' active' : ''}`, onClick: () => setInspTab('flow') }, '流程'),
-          h('button', { type: 'button', className: `nw-insp-tab${inspTab === 'assistant' ? ' active' : ''}`, onClick: () => setInspTab('assistant') }, 'AI'),
-        ),
-        h('div', { className: 'nw-insp-body' },
-          inspTab === 'assistant'
-            ? deskConversation
-            : flowInspector,
-        ),
+        h('div', { className: 'nw-insp-body' }, flowInspector),
       )
 
       const taskEntries = Object.entries(running)
@@ -2638,18 +2618,6 @@ window.__ModuleLoader__.load({
           inspector,
         ),
         taskDock,
-        inspectorOpen && inspTab === 'assistant'
-          ? null
-          : h('button', {
-              type: 'button',
-              className: 'nw-assist-fab',
-              title: '小说助手',
-              style: { position: 'fixed', right: '18px', bottom: '18px', zIndex: 30 },
-              onClick: () => {
-                setInspectorOpen(true)
-                setInspTab('assistant')
-              },
-            }, 'AI'),
         toast ? h('div', { className: 'nw-toast' }, toast) : null,
       )
     }
@@ -9030,28 +8998,11 @@ window.__ModuleLoader__.load({
                 {
                   name: 'main',
                   key: MAIN_ID,
-                  children: { 'deepnovel.desk.conversation': { kind: 'single', scope: 'session-maybe' } },
+                  children: {},
                 },
                 DeskApp,
               ),
             ]
-            try {
-              disposers.push(
-                slots.register(
-                  {
-                    name: 'deepnovel.desk.conversation',
-                    children: {
-                      'deepnovel.desk.conversation.body': { kind: 'single', scope: 'session-maybe' },
-                    },
-                  },
-                  DeskConversation,
-                ),
-              )
-            } catch (slotError) {
-              logClient('conversation-slot-error', {
-                message: slotError instanceof Error ? slotError.message : String(slotError),
-              })
-            }
             logClient('registered', { panel: MAIN_ID, attempt: tryIndex })
           } catch (error) {
             if (disposeEntry) {
