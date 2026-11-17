@@ -1106,6 +1106,7 @@ window.__ModuleLoader__.load({
     // 锁资源与占用者的可读标签（用于任务托盘与按钮提示）。
     const LOCK_RESOURCE_LABELS = {
       outline: '大纲',
+      references: '资料',
       bible: '设定',
       style: '文风',
       premise: '构思',
@@ -2286,6 +2287,7 @@ window.__ModuleLoader__.load({
         ['premise', '构思', '定故事核心'],
         ['style', '文风', '定文字质感'],
         ['bible', '设定', '角色与世界规则'],
+        ['references', '资料', '原作与前作、研究与灵感'],
         ['chapters', '章节', '章纲与正文'],
       ]
 
@@ -2387,6 +2389,8 @@ window.__ModuleLoader__.load({
                         state, run, busy, setToast,
                         onOpenOutline: (number) => { setFocusChapter(number); setTab('outline') },
                       })
+                    : tab === 'references'
+                      ? h(ReferencesView, { root, setToast })
                     : tab === 'outline' || tab === 'chapters'
                       ? h(ChapterWorkspace, {
                           state, root, run, busy, setToast,
@@ -6796,6 +6800,170 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+      )
+    }
+
+    function ReferencesView({ root, setToast }) {
+      const [data, setData] = useState(null)
+      const [loading, setLoading] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [selectedId, setSelectedId] = useState(null)
+      const [form, setForm] = useState({ title: '', kind: 'research', tags: '', note: '', content: '' })
+
+      const load = async () => {
+        if (!root) return
+        setLoading(true)
+        try {
+          const response = await fetch(`/novel-writer/references?projectRoot=${encodeURIComponent(root)}`, { cache: 'no-store' })
+          const body = await response.json()
+          if (!body?.ok) throw new Error(body?.error?.message ?? '加载失败')
+          setData(body.data)
+        } catch (error) {
+          setToast?.(`资料库加载失败：${String(error?.message ?? error)}`)
+        } finally {
+          setLoading(false)
+        }
+      }
+
+      useEffect(() => { load() }, [root])
+
+      const select = (item) => {
+        setSelectedId(item?.id ?? null)
+        setForm({
+          title: item?.title ?? '',
+          kind: item?.kind ?? 'research',
+          tags: (item?.tags ?? []).join('，'),
+          note: item?.note ?? '',
+          content: item?.content ?? '',
+        })
+      }
+
+      const startNew = () => {
+        setSelectedId(null)
+        setForm({ title: '', kind: 'research', tags: '', note: '', content: '' })
+      }
+
+      const save = async () => {
+        if (!root) return
+        if (!form.title.trim()) { setToast?.('先填标题'); return }
+        setBusy(true)
+        try {
+          const input = {
+            ...(selectedId ? { id: selectedId } : {}),
+            title: form.title.trim(),
+            kind: form.kind,
+            tags: form.tags.split(/[,，\s]+/).map((tag) => tag.trim()).filter(Boolean),
+            note: form.note,
+            content: form.content,
+          }
+          const response = await fetch('/novel-writer/reference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectRoot: root, op: 'save', input }),
+          })
+          const body = await response.json()
+          if (!body?.ok) throw new Error(body?.error?.message ?? '保存失败')
+          setSelectedId(body.data.id)
+          setToast?.('资料已保存')
+          await load()
+        } catch (error) {
+          setToast?.(`保存失败：${String(error?.message ?? error)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const remove = async () => {
+        if (!root || !selectedId) return
+        if (!(await requestConfirm({ title: '删除资料', message: '删除这条资料？', danger: true, confirmLabel: '删除' }))) return
+        setBusy(true)
+        try {
+          const response = await fetch('/novel-writer/reference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectRoot: root, op: 'delete', id: selectedId }),
+          })
+          const body = await response.json()
+          if (!body?.ok) throw new Error(body?.error?.message ?? '删除失败')
+          startNew()
+          await load()
+          setToast?.('已删除')
+        } catch (error) {
+          setToast?.(`删除失败：${String(error?.message ?? error)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const sources = data?.sources ?? []
+      const kinds = data?.kinds ?? []
+      const currentKind = kinds.find((item) => item.kind === form.kind)
+
+      return h('div', { className: 'nw-stack' },
+        h('div', { className: 'nw-section' },
+          h('div', { className: 'nw-row' },
+            h('div', null,
+              h('div', { className: 'nw-eyebrow' }, '资料库'),
+              h('div', { className: 'nw-muted' }, '原作、你的前作、研究资料与灵感。类型决定 AI 引用方式：原作只借世界观，前作学文风，资料只作事实参考，灵感可自由发挥。'),
+            ),
+            h('div', { className: 'nw-actions' },
+              h('button', { type: 'button', className: 'nw-btn', disabled: loading, onClick: load }, loading ? '刷新中…' : '刷新'),
+              h('button', { type: 'button', className: 'nw-btn primary', onClick: startNew }, '新增资料'),
+            ),
+          ),
+        ),
+        h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
+          h('div', { className: 'nw-filetree', style: { width: '240px', flex: '0 0 240px' } },
+            h('div', { className: 'nw-filetree-title' }, `资料（${sources.length}）`),
+            sources.length === 0
+              ? h('div', { className: 'nw-muted', style: { fontSize: '12px', padding: '4px 6px' } }, '还没有资料。')
+              : sources.map((item) => h('button', {
+                  key: item.id,
+                  type: 'button',
+                  className: `nw-filetree-chapter${selectedId === item.id ? ' active' : ''}`,
+                  style: { width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer' },
+                  onClick: () => select(item),
+                },
+                  h('span', { className: 'nw-filetree-name' }, item.title),
+                  h('span', { className: 'nw-muted', style: { fontSize: '10px' } }, kinds.find((kind) => kind.kind === item.kind)?.label ?? item.kind),
+                )),
+          ),
+          h('div', { className: 'nw-card', style: { flex: 1, minWidth: 0 } },
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '标题'),
+              h('input', { className: 'nw-input', value: form.title, onChange: (event) => setForm((value) => ({ ...value, title: event.target.value })) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '类型'),
+              h('select', { className: 'nw-input', value: form.kind, onChange: (event) => setForm((value) => ({ ...value, kind: event.target.value })) },
+                kinds.map((kind) => h('option', { key: kind.kind, value: kind.kind }, kind.label)),
+              ),
+              currentKind ? h('div', { className: 'nw-muted', style: { fontSize: '12px', marginTop: '4px' } }, currentKind.description) : null,
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '标签（逗号分隔）'),
+              h('input', { className: 'nw-input', value: form.tags, onChange: (event) => setForm((value) => ({ ...value, tags: event.target.value })) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '备注'),
+              h('input', { className: 'nw-input', value: form.note, onChange: (event) => setForm((value) => ({ ...value, note: event.target.value })) }),
+            ),
+            h('div', { className: 'nw-field' },
+              h('label', { className: 'nw-label' }, '内容（Markdown）'),
+              h('textarea', {
+                className: 'nw-input',
+                rows: 12,
+                value: form.content,
+                onChange: (event) => setForm((value) => ({ ...value, content: event.target.value })),
+                style: { resize: 'vertical', fontFamily: 'inherit' },
+              }),
+            ),
+            h('div', { className: 'nw-actions' },
+              h('button', { type: 'button', className: 'nw-btn primary', disabled: busy, onClick: save }, busy ? '保存中…' : '保存'),
+              selectedId ? h('button', { type: 'button', className: 'nw-btn danger', disabled: busy, onClick: remove }, '删除') : null,
+            ),
+          ),
+        ),
       )
     }
 
