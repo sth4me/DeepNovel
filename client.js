@@ -450,7 +450,9 @@ window.__ModuleLoader__.load({
 .nw-list-title{font-size:12px}
 .nw-pane-scroll{max-height:calc(100vh - 270px)}
 .nw-manuscript{max-width:760px;font-size:14px;line-height:1.95;color:var(--dsw-alias-label-primary)}
-.nw-reading{max-width:740px;width:100%;margin:0 auto}
+.nw-reading{max-width:none;width:100%;margin:0}
+.nw-reader-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:2px 0 6px;font-size:11px;flex-wrap:wrap}
+.nw-reader-select{width:auto !important;min-width:64px;padding:2px 6px;font-size:11.5px;border-radius:7px}
 .nw-reading .nw-manuscript{max-width:none}
 .nw-manuscript p{margin:0 0 15px}
 .nw-qa-block{padding:12px 14px}
@@ -3764,6 +3766,28 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const [editing, setEditing] = useState(false)
       const [polishMode, setPolishMode] = useState('润色')
       const [draftText, setDraftText] = useState('')
+      const [reader, setReader] = useState(() => {
+        try {
+          const raw = JSON.parse(localStorage.getItem('dsh.novelWriter.reader') || 'null')
+          return raw && typeof raw === 'object' ? raw : {}
+        } catch {
+          return {}
+        }
+      })
+      useEffect(() => {
+        try {
+          localStorage.setItem('dsh.novelWriter.reader', JSON.stringify(reader))
+        } catch {
+          // 存储不可用时忽略
+        }
+      }, [reader])
+      const readerFontSize = ({ s: 14, m: 15.5, l: 17.5, xl: 19.5 })[reader.size || 'm']
+      const readerFontFamily = reader.font === 'sans'
+        ? 'system-ui,"Microsoft YaHei",sans-serif'
+        : '"Iowan Old Style","Palatino Linotype","Songti SC","Noto Serif CJK SC",serif'
+      const readerLineHeight = ({ tight: 1.7, normal: 1.95, loose: 2.25 })[reader.lh || 'normal']
+      const readerStyle = { fontSize: `${readerFontSize}px`, fontFamily: readerFontFamily, lineHeight: readerLineHeight }
+
       const [rewritePreview, setRewritePreview] = useState(null)
       const [rejectedHunks, setRejectedHunks] = useState(() => new Set())
       const [previewLoading, setPreviewLoading] = useState(false)
@@ -5021,6 +5045,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                             ),
                             h('textarea', {
                               className: 'nw-editor-textarea',
+                              style: readerStyle,
                               value: draftText,
                               onChange: (event) => setDraftText(event.target.value),
                               onKeyDown: (event) => {
@@ -5033,11 +5058,33 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                           )
                         : text
                           ? h('div', { className: 'nw-reading' },
-                            h('div', { className: 'nw-row', style: { marginTop: '6px' } },
-                              h('h3', { className: 'nw-h3' }, hasFinal ? '定稿 / 当前草稿' : '当前草稿'),
-                              detail?.revisions?.length ? h('span', { className: 'nw-muted' }, `修订历史 ${detail.revisions.length}`) : null,
+                            h('div', { className: 'nw-reader-tools' },
+                              h('span', { className: 'nw-muted' }, '字号'),
+                              h('select', {
+                                className: 'nw-input nw-reader-select',
+                                value: reader.size || 'm',
+                                onChange: (event) => setReader((value) => ({ ...value, size: event.target.value })),
+                              },
+                                [['s', '小'], ['m', '中'], ['l', '大'], ['xl', '特大']].map(([value, label]) => h('option', { key: value, value }, label)),
+                              ),
+                              h('span', { className: 'nw-muted' }, '字体'),
+                              h('select', {
+                                className: 'nw-input nw-reader-select',
+                                value: reader.font || 'serif',
+                                onChange: (event) => setReader((value) => ({ ...value, font: event.target.value })),
+                              },
+                                [['serif', '衬线'], ['sans', '黑体']].map(([value, label]) => h('option', { key: value, value }, label)),
+                              ),
+                              h('span', { className: 'nw-muted' }, '行高'),
+                              h('select', {
+                                className: 'nw-input nw-reader-select',
+                                value: reader.lh || 'normal',
+                                onChange: (event) => setReader((value) => ({ ...value, lh: event.target.value })),
+                              },
+                                [['tight', '紧凑'], ['normal', '标准'], ['loose', '宽松']].map(([value, label]) => h('option', { key: value, value }, label)),
+                              ),
                             ),
-                            h('div', { className: 'nw-manuscript' },
+                            h('div', { className: 'nw-manuscript', style: readerStyle },
                               paragraphs.map((paragraph, index) =>
                                 h('p', { key: index, 'data-para': index }, paragraph),
                               ),
