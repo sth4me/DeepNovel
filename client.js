@@ -8376,6 +8376,28 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
             h('span', { className: `nw-badge ${statusClass(contract.status)}` }, displayStatus(contract.status) || '未设置'),
           ),
           h('p', { className: 'nw-muted' }, '套用模板作为起点，再按需要微调；保存后才是本项目的文风契约。'),
+          orderedTemplates.length
+            ? h('div', { className: 'nw-actions', style: { marginTop: '2px' } },
+                h('span', { className: 'nw-label', style: { margin: 0 } }, '模板'),
+                h('select', {
+                  className: 'nw-select',
+                  style: { maxWidth: '260px' },
+                  value: contract.templateId ?? '',
+                  disabled: busy,
+                  onChange: (event) => {
+                    const templateId = event.target.value
+                    if (!templateId) return
+                    run('style-apply', { templateId }, { toast: '已套用模板，按需要微调后保存' })
+                  },
+                },
+                  h('option', { value: '' }, '选择模板…'),
+                  orderedTemplates.map((template) => h('option', { key: template.id, value: template.id }, template.name ?? template.id)),
+                ),
+                contract.templateId
+                  ? h('span', { className: 'nw-badge cur' }, `当前：${orderedTemplates.find((template) => template.id === contract.templateId)?.name ?? contract.templateId}`)
+                  : null,
+              )
+            : null,
           h('div', { className: 'nw-eyebrow', style: { margin: '12px 2px 6px' } }, '基础'),
           h('div', { className: 'nw-grid-2' },
             h('div', { className: 'nw-field' },
@@ -8524,6 +8546,13 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           h('div', { className: 'nw-actions' },
             h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || contract.status === 'missing' || Boolean(lockMsg('style-commit', {})), title: lockMsg('style-commit', {}) ?? undefined, onClick: () => run('style-commit', { fields: buildFields() }, { next: 'outline', toast: '文风已确认，下一步：大纲' }) }, '保存并确认文风'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || !contract.templateId || Boolean(lockMsg('style-apply', { templateId: contract.templateId })), title: lockMsg('style-apply', { templateId: contract.templateId }) ?? undefined, onClick: () => run('style-apply', { templateId: contract.templateId }, { toast: '已恢复模板值' }) }, '恢复模板值'),
+            dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
+            externalUpdate ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '文风已在别处更新，你的未保存修改已保留') : null,
+          ),
+        ),
+        h('div', { className: 'nw-row', style: { margin: '6px 2px 10px' } },
+          h('h3', { className: 'nw-eyebrow', style: { margin: 0 } }, '模板库'),
+          h('div', { className: 'nw-actions', style: { marginLeft: 'auto' } },
             h('input', { className: 'nw-input', style: { width: '150px' }, value: templateName, placeholder: '模板名称', disabled: busy, onChange: (e) => setTemplateName(e.target.value) }),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy || !templateName.trim(), onClick: async () => {
               await run('style-save-template', {
@@ -8534,11 +8563,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
               setTemplateName('')
             } }, '保存为模板'),
             h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setImportOpen(true) }, '导入模板'),
-            dirty ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '有未保存修改') : null,
-            externalUpdate ? h('span', { className: 'nw-muted', style: { alignSelf: 'center' } }, '文风已在别处更新，你的未保存修改已保留') : null,
           ),
         ),
-        h('h3', { className: 'nw-eyebrow', style: { margin: '6px 2px 10px' } }, '模板库'),
         orderedTemplates.map((template) => {
           const templateFields = template.fields ?? {}
           const tags = Array.isArray(template.tags) ? template.tags.map((tag) => String(tag ?? '')).filter(Boolean) : []
