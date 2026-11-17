@@ -57,6 +57,7 @@ function estimateAiFlavor(text) {
 }
 import { migrateLegacyProject } from './migrate.js'
 import { FileNovelStore } from './file-store.js'
+import * as referencesModule from './storage/references.js'
 import { migrateProjectDb } from './migrate-from-db.js'
 import { FACT_KINDS, MATERIAL_KINDS } from './store.js'
 import { renderConstraints, resolveChapterConstraints, validateAgainstFacts } from './constraints.js'
@@ -2005,6 +2006,28 @@ export class NovelWriterService {
 
   async writeRun(agent, run) {
     return this.writeJson(agent, `.dsh-writing/runs/${run.runId}.json`, run)
+  }
+
+  /* ------------------------------ 资料库 ------------------------------ */
+
+  async listReferences(agent) {
+    const store = await this.storeFor(agent)
+    return referencesModule.listReferences(store.docs)
+  }
+
+  async readReference(agent, id) {
+    const store = await this.storeFor(agent)
+    return referencesModule.readReference(store.docs, id)
+  }
+
+  async saveReference(agent, input) {
+    const store = await this.storeFor(agent)
+    return referencesModule.saveReference(store.docs, input)
+  }
+
+  async deleteReference(agent, id) {
+    const store = await this.storeFor(agent)
+    return referencesModule.deleteReference(store.docs, id)
   }
 
   /* ------------------------------ P0：初始化与状态 ------------------------------ */

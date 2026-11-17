@@ -10,6 +10,7 @@ import * as chapterState from './storage/chapter-state.js'
 import * as library from './storage/library.js'
 import * as logs from './storage/logs.js'
 import * as searchIndex from './storage/search.js'
+import * as references from './storage/references.js'
 import { MATERIAL_KINDS, FACT_KINDS } from './store.js'
 
 export { MATERIAL_KINDS, FACT_KINDS }
@@ -288,6 +289,13 @@ export class FileNovelStore {
   readStats() { return logs.readStats(this.docs) }
   appendStatsEvent(event) { return logs.appendStatsEvent(this.docs, event) }
   writeStats(value) { return logs.writeStats(this.docs, value) }
+
+  /* ------------------------------ 资料库 ------------------------------ */
+
+  listReferences() { return references.listReferences(this.docs) }
+  readReference(id) { return references.readReference(this.docs, id) }
+  saveReference(input) { return references.saveReference(this.docs, input) }
+  deleteReference(id) { return references.deleteReference(this.docs, id) }
 
   /* ------------------------------ 检索 ------------------------------ */
 

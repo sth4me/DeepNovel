@@ -1816,6 +1816,47 @@ export function apply(ctx) {
       },
     })
 
+    const disposeReferences = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/references',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'GET') return jsonResponse(res, 405, { ok: false, error: { message: 'GET only' } })
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          const root = validProjectRoot(url.searchParams.get('projectRoot'))
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          jsonResponse(res, 200, { ok: true, data: lossless(await service.listReferences(root)) })
+        } catch (error) {
+          jsonResponse(res, 500, { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
+        }
+      },
+    })
+
+    const disposeReferenceOp = ctx.webServer.register({
+      kind: 'exact',
+      path: '/novel-writer/reference',
+      handler: async (req, res) => {
+        try {
+          if (!isLoopback(req)) return jsonResponse(res, 403, { ok: false, error: { message: 'loopback only' } })
+          if (req.method !== 'POST') return jsonResponse(res, 405, { ok: false, error: { message: 'POST only' } })
+          const body = await readRequestBody(req)
+          const root = validProjectRoot(body.projectRoot)
+          if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
+          if (body.op === 'delete') {
+            return jsonResponse(res, 200, { ok: true, data: lossless(await service.deleteReference(root, body.id)) })
+          }
+          if (body.op === 'get') {
+            return jsonResponse(res, 200, { ok: true, data: lossless(await service.readReference(root, body.id)) })
+          }
+          const input = body.input && typeof body.input === 'object' ? body.input : {}
+          jsonResponse(res, 200, { ok: true, data: lossless(await service.saveReference(root, input)) })
+        } catch (error) {
+          jsonResponse(res, 500, { ok: false, error: { message: errorText(error), code: error?.code ?? null } })
+        }
+      },
+    })
+
     const disposeAction = ctx.webServer.register({      kind: 'exact',
       path: '/novel-writer/action',
       handler: async (req, res) => {
@@ -1987,6 +2028,8 @@ export function apply(ctx) {
       disposeModelInfo()
       disposeModels()
       disposeProjectRevision()
+      disposeReferences()
+      disposeReferenceOp()
       disposeProjectCancel()
       disposeProjectPause()
       disposeProjectRuns()
