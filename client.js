@@ -349,7 +349,7 @@ window.__ModuleLoader__.load({
 .nw-rail-foot{margin-top:14px;padding:10px 8px;border-top:1px solid var(--dsw-alias-border-l1)}
 .nw-stage{flex:1;min-width:0;overflow:auto;padding:24px 30px;scrollbar-width:thin}
 .nw-stage-inner{max-width:1120px;margin:0 auto}
-.nw-inspector{width:330px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
+.nw-inspector{width:480px;flex:0 0 auto;position:relative;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;min-height:0;background:var(--dsw-alias-bg-layer-2)}
 .nw-insp-section{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
 .nw-insp-divider{height:1px;background:var(--dsw-alias-border-l1);margin:6px 0}
 .nw-inspector-embedded{width:auto;flex:none;border:none;padding:0;position:static;max-height:none;overflow:visible;background:transparent}
@@ -433,7 +433,7 @@ window.__ModuleLoader__.load({
 .nw-rail-desc{font-size:9.5px;opacity:.82}
 .nw-stage{padding:30px 36px 40px}
 .nw-stage-inner{max-width:1060px}
-.nw-inspector{width:336px}
+.nw-inspector{width:480px}
 .nw-card{padding:16px 18px;border:1px solid var(--dsw-alias-border-l1);border-radius:16px;background:linear-gradient(180deg,var(--dsw-alias-bg-layer-2),color-mix(in srgb,var(--dsw-alias-bg-layer-2) 88%,var(--dsw-alias-bg-layer-1)));margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .nw-card:hover{border-color:var(--dsw-alias-border-l2)}
 .nw-h2{font-size:24px;letter-spacing:-.01em}
@@ -1783,9 +1783,10 @@ window.__ModuleLoader__.load({
       const [inspWidth, setInspWidth] = useState(() => {
         try {
           const stored = Number(localStorage.getItem('dsh.novelWriter.inspWidth'))
-          return Number.isFinite(stored) && stored >= 260 && stored <= 720 ? stored : 340
+          if (Number.isFinite(stored) && stored >= 400 && stored <= 720) return stored
+          return 480
         } catch {
-          return 340
+          return 480
         }
       })
       const inspWidthRef = useRef(inspWidth)
@@ -1797,7 +1798,7 @@ window.__ModuleLoader__.load({
         const startX = event.clientX
         const startWidth = inspWidthRef.current
         const onMove = (moveEvent) => {
-          const next = Math.min(720, Math.max(260, startWidth - (moveEvent.clientX - startX)))
+          const next = Math.min(720, Math.max(400, startWidth - (moveEvent.clientX - startX)))
           setInspWidth(next)
         }
         const onUp = () => {
