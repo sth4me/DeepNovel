@@ -336,16 +336,16 @@ window.__ModuleLoader__.load({
 .nw-top .nw-title{font-size:18px}
 .nw-top-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .nw-body{display:flex;flex:1;min-height:0}
-.nw-rail{width:222px;flex:0 0 auto;border-right:1px solid var(--dsw-alias-border-l1);padding:16px 12px;overflow:auto;background:var(--dsw-alias-bg-layer-2)}
+.nw-rail{width:184px;flex:0 0 auto;border-right:1px solid var(--dsw-alias-border-l1);padding:16px 12px;overflow:auto;background:var(--dsw-alias-bg-layer-2)}
 .nw-rail-title{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);margin:0 8px 10px;font-weight:650}
-.nw-rail-step{display:flex;gap:10px;width:100%;padding:10px;margin-bottom:2px;border:none;border-radius:10px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;text-align:left;cursor:pointer;transition:background .15s,color .15s}
+.nw-rail-step{display:flex;gap:8px;width:100%;padding:8px;margin-bottom:2px;border:none;border-radius:10px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;text-align:left;cursor:pointer;transition:background .15s,color .15s}
 .nw-rail-step:hover{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .nw-rail-step.active{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .nw-rail-num{width:22px;height:22px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:9px;font-weight:650;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);margin-top:1px}
 .nw-rail-step.active .nw-rail-num{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 .nw-rail-step.ok .nw-rail-num{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
-.nw-rail-label{font-size:12px;font-weight:600;line-height:1.4}
-.nw-rail-desc{font-size:9.5px;color:var(--dsw-alias-label-secondary);line-height:1.45;margin-top:2px}
+.nw-rail-label{font-size:12.5px;font-weight:600;line-height:1.4}
+.nw-rail-desc{display:none}
 .nw-rail-foot{margin-top:14px;padding:10px 8px;border-top:1px solid var(--dsw-alias-border-l1)}
 .nw-stage{flex:1;min-width:0;overflow:auto;padding:24px 30px;scrollbar-width:thin}
 .nw-stage-inner{max-width:1120px;margin:0 auto}
