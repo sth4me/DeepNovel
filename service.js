@@ -1679,17 +1679,17 @@ export class NovelWriterService {
     // 已打开的 store 一定来自已初始化项目（storeFor 只在 DB/legacy 就绪时缓存）：
     // 直接命中缓存，避免每个 service 调用都重复 stat DB 与 legacy 标记。
     if (this.stores.has(cwd)) return true
-    const dbTarget = await this.ctx.fs.resolve('story/project.db', { cwd })
-    if (await this.ctx.fs.stat(dbTarget)) {
-      try {
-        const store = await this.storeFor(agent)
-        if (store.readProject()) return true
-      } catch {
-        // DB 打不开时退回 legacy 判断
-      }
-    }
     const target = await this.ctx.fs.resolve(this.marker, { cwd })
-    return Boolean(await this.ctx.fs.stat(target))
+    if (await this.ctx.fs.stat(target)) return true
+    // 只有旧库、还没有 project.json 的项目：交给 storeFor 做一次性迁移再判断。
+    const dbTarget = await this.ctx.fs.resolve('story/project.db', { cwd })
+    if (!(await this.ctx.fs.stat(dbTarget))) return false
+    try {
+      const store = await this.storeFor(agent)
+      return Boolean(store.readProject())
+    } catch {
+      return false
+    }
   }
 
   async assertInitialized(agent) {
@@ -2555,15 +2555,19 @@ export class NovelWriterService {
     const cwd = await this.cwd(agent)
     const paths = [
       this.marker,
-      'story/project.db',
-      'story/project.db-wal',
       'story/premise.json',
       'story/style/contract.json',
-      'story/bible/index.json',
+      'story/style/templates.json',
+      'story/bible/entries.json',
+      'story/bible/relations.json',
+      'story/power.json',
       'story/plot/outline.json',
       'story/state/index.json',
+      'story/materials.json',
+      'story/facts.json',
+      'story/prompt-overrides.json',
+      'story/stats.json',
       'story/chapters',
-      'story/plot',
     ]
     const parts = []
     for (const relative of paths) {
@@ -7919,8 +7923,25 @@ export class NovelWriterService {
         }
       }
     }
-    const dbBytes = await localSize('story/project.db')
-    const walBytes = await localSize('story/project.db-wal')
+    const dbBytes = 0
+    const walBytes = 0
+    let storyBytes = 0
+    for (const relativePath of [
+      this.marker,
+      'story/premise.json',
+      'story/style/contract.json',
+      'story/style/templates.json',
+      'story/bible/entries.json',
+      'story/bible/relations.json',
+      'story/power.json',
+      'story/plot/outline.json',
+      'story/state/index.json',
+      'story/materials.json',
+      'story/facts.json',
+      'story/prompt-overrides.json',
+      'story/stats.json',
+      'story/runs.json',
+    ]) storyBytes += await localSize(relativePath)
     const ftsRows = store.ftsRowCounts()
     const outline = store.readOutline()
     const chapters = (outline?.volumes ?? []).reduce((sum, volume) => sum + (volume.chapters?.length ?? 0), 0)
@@ -7931,9 +7952,10 @@ export class NovelWriterService {
       legacyFiles = false
     }
     return {
-      engine: 'sqlite',
+      engine: 'files',
       dbBytes,
       walBytes,
+      storyBytes,
       ftsRows,
       chapters,
       schemaVersion: store.schemaVersion(),
@@ -8044,17 +8066,9 @@ export class NovelWriterService {
       if (hadStory) await rm(storyPath, { recursive: true, force: true })
       await cp(sourceStory, storyPath, { recursive: true })
       let migration = { migrated: false, counts: null }
-      if (existsSync(sourceDb)) {
-        // 源自带 DB：保留，直接打开即可（reindexAll 会重建 FTS）
-      } else {
-        for (const name of ['project.db', 'project.db-wal', 'project.db-shm']) {
-          await rm(join(storyPath, name), { force: true })
-        }
-        migration = await migrateLegacyProject({
-          projectRoot: cwd,
-          fs: this.legacyFsFor(cwd),
-          resolveHostPath: (relativePath) => join(cwd, relativePath),
-        })
+      if (existsSync(join(storyPath, 'project.db'))) {
+        // 源自带旧库：迁移到文件存储，源库改名保留。
+        migration = migrateProjectDb(cwd)
       }
       const store = await this.storeFor(agent)
       await store.reindexAll()
