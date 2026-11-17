@@ -3881,7 +3881,7 @@ window.__ModuleLoader__.load({
           eyebrow: '04 / 大纲',
           title: '把故事拆成可执行的章节',
           status: state.outline?.status,
-          desc: '左边选章，右边直接改；生成与重生成只影响选中的范围，确认后进入章节写作。',
+          desc: '左侧目录选章，右侧直接改章卡；生成与重生成只影响当前章，确认后进入正文写作。',
           hints: ['生成后 3–6 章', '左侧选章，右侧编辑', '逐章确认或全部确认'],
         }),
         (state?.issues?.items?.length ?? 0) > 0
@@ -4850,7 +4850,7 @@ window.__ModuleLoader__.load({
           eyebrow: '05 / 章节',
           title: '逐章写作与审阅',
           status: (state.stage?.chapters ?? 0) > 0 ? 'confirmed' : 'candidate',
-          desc: '左边选章，右边阅读与操作；审校、修订与定稿都在本页完成。',
+          desc: '左侧目录选章，正文在中间阅读；章卡对照、进度与大纲操作在工具栏和右侧面板。',
           hints: ['生成草稿并自动跑规则质检', '按意见修订，旧稿进历史', '采纳为定稿并写状态快照'],
         }),
         (() => {
