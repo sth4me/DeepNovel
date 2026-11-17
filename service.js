@@ -5533,7 +5533,18 @@ export class NovelWriterService {
       // notes are optional
     }
 
+    const references = []
+    try {
+      const refs = await this.listReferences(agent)
+      for (const item of (refs.sources ?? []).slice(0, 8)) {
+        references.push({ title: item.title, kind: item.kind, tags: item.tags ?? [], note: item.note ?? '' })
+      }
+    } catch {
+      // 资料库可选，读取失败不影响生成
+    }
+
     const storyContext = {
+      references,
       premise: {
         title: chosen.title,
         premise: chosen.premise,
@@ -5571,6 +5582,7 @@ export class NovelWriterService {
         relations: relationList.length,
         timeline: timeline.length,
         notes: notes.length,
+        references: references.length,
         summaryHistory: summaryHistory.length,
         relevantSummaries: relevantSummaries.length,
       },

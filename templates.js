@@ -1234,6 +1234,13 @@ export function buildChapterUserPrompt(input) {
       lines.push('', '【本章章纲要求回收的伏笔（必须落实到正文）】', JSON.stringify(context.foreshadowingDue, null, 2))
       lines.push('这些伏笔必须通过具体事件、物件、对话或人物反应回收，让读者能对应到埋设处；不能只在总结句里带过。')
     }
+    if (context.references?.length) {
+      lines.push(
+        '',
+        '【资料库（按类型使用：original 原作只借世界观与人物，禁止复述原文；prior 我的前作只学用词与节奏；research 研究资料只作事实与细节参考；idea 灵感可自由扩展）】',
+        JSON.stringify(context.references, null, 2),
+      )
+    }
     if (context.timeline?.length) {
       lines.push('', '【时间线】', JSON.stringify(context.timeline, null, 2))
     }
