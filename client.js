@@ -284,7 +284,8 @@ window.__ModuleLoader__.load({
 .nw-model-task{display:flex;gap:6px;align-items:center;font-size:11.5px;min-width:0}
 @media (max-width:900px){.nw-model-row{grid-template-columns:1fr}}
 .nw-filetree{width:200px;flex:0 0 200px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
-.nw-filetree-title{font-size:12px;font-weight:600;opacity:.7;padding:2px 6px 6px}
+.nw-filetree-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:2px 2px 6px}
+.nw-filetree-title{font-size:12px;font-weight:600;opacity:.7}
 .nw-filetree-group{margin-bottom:6px}
 .nw-filetree-volume{font-size:11px;opacity:.7;padding:2px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;width:100%;border-radius:6px}
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -3619,7 +3620,19 @@ window.__ModuleLoader__.load({
           )
         }
         return h('div', { className: 'nw-filetree' },
-          h('div', { className: 'nw-filetree-title' }, '目录'),
+          h('div', { className: 'nw-filetree-head' },
+            h('span', { className: 'nw-filetree-title' }, '目录'),
+            h('button', {
+              type: 'button',
+              className: 'nw-filetree-link',
+              title: '新建卷',
+              onClick: async () => {
+                const title = window.prompt('新卷标题', `第 ${volumes.length + 1} 卷`)
+                if (!title || !String(title).trim()) return
+                run('volume-create', { title: String(title).trim() }, { toast: '已新建卷' })
+              },
+            }, '＋卷'),
+          ),
           volumes.map(volumeGroup),
         )
       })()
@@ -4899,6 +4912,26 @@ window.__ModuleLoader__.load({
                   },
                 }, '定稿本卷')
               : null,
+            h('button', {
+              type: 'button',
+              className: 'nw-btn danger',
+              disabled: busy,
+              title: '从最后一章往前删除若干章（含正文、摘要与状态）',
+              onClick: async () => {
+                const input = window.prompt('删除尾部几章？', '1')
+                const count = Number(input) || 0
+                if (count < 1) return
+                const preview = await run('chapters-delete-tail', { count, dryRun: true }, { silent: true })
+                if (!preview) return
+                if (!(await requestConfirm({
+                  title: '删除尾部章节',
+                  message: `将删除第 ${preview.from}–${preview.to} 章的大纲、正文、摘要与状态，无法恢复。`,
+                  danger: true,
+                  confirmLabel: '删除',
+                }))) return
+                run('chapters-delete-tail', { count }, { toast: '已删除尾部章节' })
+              },
+            }, '删除尾部章节'),
             h('button', {
               type: 'button',
               className: 'nw-btn ghost',
