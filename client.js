@@ -4167,11 +4167,6 @@ window.__ModuleLoader__.load({
               },
             }, regenOpen ? '收起批量重生成' : '批量重生成'),
             h('input', { className: 'nw-input', style: { flex: '1 1 260px', minWidth: '220px' }, value: instruction, placeholder: '生成/重生成要求（会写进章纲）', onChange: (event) => setInstruction(event.target.value), disabled: busy }),
-            h('div', { className: 'nw-viewtoggle' },
-              [['cards', '卡片'], ['table', '表格'], ['graph', '图谱'], ['edit', '编辑']].map(([id, label]) =>
-                h('button', { key: id, type: 'button', className: `nw-viewtoggle-btn${view === id ? ' active' : ''}`, onClick: () => setView(id) }, label),
-              ),
-            ),
           ),
           regenOpen
             ? h('div', { className: 'nw-banner', style: { marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '8px' } },
@@ -4222,13 +4217,7 @@ window.__ModuleLoader__.load({
         ),
         chapters.length === 0
           ? h(EmptyState, { title: '还没有章纲', desc: '先确认构思、文风和设定，然后生成后 3 章。' })
-          : view === 'cards'
-            ? cardsView
-            : view === 'table'
-              ? tableView
-              : view === 'graph'
-                ? h(ChapterGraph, { chapters, onChoose: chooseChapter, setToast })
-                : h('div', { className: 'nw-workbench', ref: workbenchRef },
+          : h('div', { className: 'nw-workbench', ref: workbenchRef },
               h('div', { className: 'nw-list', ref: listRef },
                 chapters.map((item) =>
                   h('button', {
