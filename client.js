@@ -2298,6 +2298,11 @@ window.__ModuleLoader__.load({
       }
 
       const workflow = state?.workflow ?? { next: 'init', blockers: [] }
+      const chapterRows = state?.chapters ?? []
+      const allChaptersWritten = chapterRows.length > 0 && chapterRows.every((item) => item.hasDraft)
+      const nextLabel = allChaptersWritten && workflow.next === 'draft'
+        ? '全部章节已写完，继续修订或导出'
+        : (NEXT_LABELS[workflow.next] ?? workflow.next)
       const stepStatusValue = (id) => stepStatus(state, id)
       const steps = [
         ['project', '项目', '项目与流程'],
@@ -2422,11 +2427,6 @@ window.__ModuleLoader__.load({
                         })
                       : null
 
-      const chapterRows = state?.chapters ?? []
-      const allChaptersWritten = chapterRows.length > 0 && chapterRows.every((item) => item.hasDraft)
-      const nextLabel = allChaptersWritten && workflow.next === 'draft'
-        ? '全部章节已写完，继续修订或导出'
-        : (NEXT_LABELS[workflow.next] ?? workflow.next)
       const nextTab =
         workflow.next === 'draft' || workflow.next === 'outline'
           ? 'chapters'
