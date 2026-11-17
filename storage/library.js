@@ -1,6 +1,6 @@
 /** 素材库与事实库：story/materials.json、story/facts.json。 */
 import { randomUUID } from 'node:crypto'
-import { MATERIAL_KINDS, FACT_KINDS } from '../store.js'
+import { MATERIAL_KINDS, FACT_KINDS } from '../constants.js'
 import { clone, isPlainObject } from './doc-store.js'
 
 const MATERIALS_FILE = 'materials.json'

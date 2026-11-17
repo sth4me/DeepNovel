@@ -6,11 +6,9 @@ import { join, dirname } from 'node:path'
 
 const home = await mkdtemp(join(tmpdir(), 'deepnovel-materials-home-'))
 const project = await mkdtemp(join(tmpdir(), 'deepnovel-materials-project-'))
-const legacyProject = await mkdtemp(join(tmpdir(), 'deepnovel-materials-legacy-'))
 process.env.DSH_HOME = home
 
 const { NovelWriterService } = await import('../service.js')
-const { DatabaseSync } = await import('node:sqlite')
 const abs = (target) => join(target.cwd, target.relativePath)
 const fsCtx = {
   resolve: async (relativePath, { cwd }) => ({ cwd, relativePath }),
@@ -30,32 +28,6 @@ const fsCtx = {
   },
 }
 const service = new NovelWriterService({ fs: fsCtx, sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access' }) } })
-
-// ---------- 1) v2 旧库升级 v4：materials/facts 表可用、旧数据不丢 ----------
-await mkdir(join(legacyProject, 'story'), { recursive: true })
-const legacyDb = new DatabaseSync(join(legacyProject, 'story', 'project.db'))
-legacyDb.exec(`
-CREATE TABLE project (
-  id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER, title TEXT, language TEXT,
-  genre_json TEXT, logline TEXT, writing_notes TEXT, craft_auto INTEGER DEFAULT 1,
-  prompt_json TEXT, automation_json TEXT, extra_json TEXT, created_at TEXT, updated_at TEXT
-);
-CREATE TABLE chapter_meta (
-  number INTEGER PRIMARY KEY, json TEXT, status TEXT, word_count INTEGER,
-  outline_hash TEXT, has_draft INTEGER DEFAULT 0, has_final INTEGER DEFAULT 0, updated_at TEXT
-);
-`)
-legacyDb.prepare('INSERT INTO project (id, schema_version, title, language) VALUES (1, 2, ?, ?)').run('旧项目', 'zh')
-legacyDb.prepare('INSERT INTO chapter_meta (number, json, status) VALUES (1, ?, ?)').run(JSON.stringify({ number: 1, title: '旧章' }), 'drafted')
-legacyDb.exec('PRAGMA user_version = 2')
-legacyDb.close()
-const legacyStore = await service.storeFor(legacyProject)
-assert.equal(legacyStore.schemaVersion(), 5, '旧库应升级到 v4'.replace('v4', 'v5'))
-assert.equal(legacyStore.readProject().title, '旧项目', '旧项目数据应保留')
-assert.equal(legacyStore.readChapterMeta(1).title, '旧章', '旧章节数据应保留')
-const legacyMaterial = legacyStore.saveMaterial({ content: '升级后写入的素材' })
-assert.ok(legacyMaterial.id.startsWith('mat-'), '升级后 materials 表应可用')
-assert.equal(legacyStore.listMaterials().length, 1)
 
 // ---------- 2) CRUD：id 生成、title 兜底、kind 缺省、tags 去重 ----------
 await service.initProject(project, { title: '素材测试' })
@@ -129,5 +101,4 @@ service.disposeStores()
 await new Promise((resolve) => setTimeout(resolve, 80))
 await rm(home, { recursive: true, force: true })
 await rm(project, { recursive: true, force: true })
-await rm(legacyProject, { recursive: true, force: true })
 console.log('materials tests passed')

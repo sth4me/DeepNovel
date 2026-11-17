@@ -55,11 +55,9 @@ function estimateAiFlavor(text) {
     .map((word) => ({ type: '禁用词', word, quote: word }))
   return { level, score, markers, density: Math.round(density * 10) / 10 }
 }
-import { migrateLegacyProject } from './migrate.js'
 import { FileNovelStore } from './file-store.js'
 import * as referencesModule from './storage/references.js'
-import { migrateProjectDb } from './migrate-from-db.js'
-import { FACT_KINDS, MATERIAL_KINDS } from './store.js'
+import { FACT_KINDS, MATERIAL_KINDS } from './constants.js'
 import { renderConstraints, resolveChapterConstraints, validateAgainstFacts } from './constraints.js'
 import { compareStyleProfile, computeStyleProfile, renderStyleProfile } from './style-profile.js'
 import { CAST_LIMITS, CAST_RULES, WRITING_DOCTRINE, composeWritingSystem } from './writing-doctrine.js'
@@ -954,27 +952,10 @@ export class NovelWriterService {
       }
     }
     const fileStoreExists = await exists('story/project.json')
-    const dbExists = await exists('story/project.db')
-    if (!fileStoreExists && !dbExists) {
-      const legacyExists = await exists(this.marker)
-      if (!legacyExists) {
-        const error = new Error('当前目录尚未初始化写作项目，请先调用 novel_init')
-        error.code = 'NOVEL_WRITER_NOT_INITIALIZED'
-        throw error
-      }
-      // 旧版 JSON 项目先迁移到文件存储；没有 SQLite 依赖。
-      await migrateLegacyProject({
-        projectRoot: cwd,
-        fs: this.legacyFsFor(cwd),
-        resolveHostPath: (relativePath) => join(cwd, relativePath),
-      })
-    }
-    if (!this.fileStores.has(cwd) && dbExists) {
-      try {
-        migrateProjectDb(cwd)
-      } catch (error) {
-        this.ctx.logger?.warn?.(`旧数据库迁移失败：${error?.message ?? error}`)
-      }
+    if (!fileStoreExists) {
+      const error = new Error('当前目录尚未初始化写作项目，请先调用 novel_init')
+      error.code = 'NOVEL_WRITER_NOT_INITIALIZED'
+      throw error
     }
     const store = new FileNovelStore(cwd)
     this.fileStores.add(cwd)
@@ -1681,16 +1662,7 @@ export class NovelWriterService {
     // 直接命中缓存，避免每个 service 调用都重复 stat DB 与 legacy 标记。
     if (this.stores.has(cwd)) return true
     const target = await this.ctx.fs.resolve(this.marker, { cwd })
-    if (await this.ctx.fs.stat(target)) return true
-    // 只有旧库、还没有 project.json 的项目：交给 storeFor 做一次性迁移再判断。
-    const dbTarget = await this.ctx.fs.resolve('story/project.db', { cwd })
-    if (!(await this.ctx.fs.stat(dbTarget))) return false
-    try {
-      const store = await this.storeFor(agent)
-      return Boolean(store.readProject())
-    } catch {
-      return false
-    }
+    return Boolean(await this.ctx.fs.stat(target))
   }
 
   async assertInitialized(agent) {
@@ -8100,11 +8072,7 @@ export class NovelWriterService {
     try {
       if (hadStory) await rm(storyPath, { recursive: true, force: true })
       await cp(sourceStory, storyPath, { recursive: true })
-      let migration = { migrated: false, counts: null }
-      if (existsSync(join(storyPath, 'project.db'))) {
-        // 源自带旧库：迁移到文件存储，源库改名保留。
-        migration = migrateProjectDb(cwd)
-      }
+      const migration = { migrated: false, counts: null }
       const store = await this.storeFor(agent)
       await store.reindexAll()
       store.checkpoint()

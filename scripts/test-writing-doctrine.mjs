@@ -6,13 +6,11 @@ import { join, dirname } from 'node:path'
 
 const home = await mkdtemp(join(tmpdir(), 'deepnovel-doctrine-home-'))
 const project = await mkdtemp(join(tmpdir(), 'deepnovel-doctrine-project-'))
-const legacy = await mkdtemp(join(tmpdir(), 'deepnovel-doctrine-legacy-'))
 process.env.DSH_HOME = home
 
 const doctrine = await import('../writing-doctrine.js')
 const templates = await import('../templates.js')
 const { NovelWriterService } = await import('../service.js')
-const { DatabaseSync } = await import('node:sqlite')
 
 // ---------- 1) doctrine 内容 ----------
 assert.ok(doctrine.WRITING_DOCTRINE.includes('本轮用户明确要求优先'), '应含用户要求优先')
@@ -99,41 +97,3 @@ assert.deepEqual(roundTripBible.characters.find((character) => character.name ==
   firstChapter: 1,
   importance: '主角',
 })
-
-// ---------- 5) schema v4 → v5 升级 + meta 往返 ----------
-await mkdir(join(legacy, 'story'), { recursive: true })
-const legacyDb = new DatabaseSync(join(legacy, 'story', 'project.db'))
-legacyDb.exec(`
-CREATE TABLE project (
-  id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER, title TEXT, language TEXT,
-  genre_json TEXT, logline TEXT, writing_notes TEXT, craft_auto INTEGER DEFAULT 1,
-  prompt_json TEXT, automation_json TEXT, extra_json TEXT, created_at TEXT, updated_at TEXT
-);
-CREATE TABLE bible_meta (id INTEGER PRIMARY KEY CHECK (id = 1), status TEXT, extra_json TEXT, updated_at TEXT);
-CREATE TABLE bible_entries (
-  id TEXT PRIMARY KEY, category TEXT NOT NULL, name TEXT, role TEXT, description TEXT,
-  traits_json TEXT, goal TEXT, notes TEXT, sort_order INTEGER, updated_at TEXT
-);
-`)
-legacyDb.prepare('INSERT INTO project (id, schema_version, title, language) VALUES (1, 4, ?, ?)').run('旧项目', 'zh')
-legacyDb.prepare('INSERT INTO bible_meta (id, status, extra_json) VALUES (1, ?, ?)').run('confirmed', '{}')
-legacyDb.prepare('INSERT INTO bible_entries (id, category, name, role, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)').run('characters-01', 'characters', '林昭', '主角', '旧角色', 0)
-legacyDb.exec('PRAGMA user_version = 4')
-legacyDb.close()
-const legacyStore = await service.storeFor(legacy)
-assert.equal(legacyStore.schemaVersion(), 5, 'v4 旧库应升级到 v5')
-const legacyBible = legacyStore.readBible()
-assert.equal(legacyBible.characters.length, 1, '旧角色数据不丢')
-assert.deepEqual(legacyBible.characters[0].meta, {}, '旧行 meta 默认 {}')
-legacyBible.characters[0].meta = { status: '活跃', firstChapter: 3, importance: '核心' }
-legacyStore.writeBible(legacyBible)
-assert.deepEqual(legacyStore.readBible().characters[0].meta, { status: '活跃', firstChapter: 3, importance: '核心' }, 'meta 应可往返')
-const legacyServiceBible = await service.readBible(legacy)
-assert.deepEqual(legacyServiceBible.characters[0].meta, { status: '活跃', firstChapter: 3, importance: '核心' })
-
-service.disposeStores()
-await new Promise((resolve) => setTimeout(resolve, 80))
-await rm(home, { recursive: true, force: true })
-await rm(project, { recursive: true, force: true })
-await rm(legacy, { recursive: true, force: true })
-console.log('writing doctrine tests passed')

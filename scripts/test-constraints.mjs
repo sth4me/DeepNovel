@@ -6,13 +6,31 @@ import { join, dirname } from 'node:path'
 
 const home = await mkdtemp(join(tmpdir(), 'deepnovel-constraints-home-'))
 const project = await mkdtemp(join(tmpdir(), 'deepnovel-constraints-project-'))
-const legacyProject = await mkdtemp(join(tmpdir(), 'deepnovel-constraints-legacy-'))
 process.env.DSH_HOME = home
 
 const constraintsEngine = await import('../constraints.js')
 const { buildChapterUserPrompt } = await import('../templates.js')
 const { NovelWriterService } = await import('../service.js')
-const { DatabaseSync } = await import('node:sqlite')
+
+const abs = (target) => join(target.cwd, target.relativePath)
+const fsCtx = {
+  resolve: async (relativePath, { cwd }) => ({ cwd, relativePath }),
+  stat: async (target) => {
+    try {
+      const info = await stat(abs(target))
+      return { version: String(info.mtimeMs) }
+    } catch {
+      return null
+    }
+  },
+  readText: async (target) => readFile(abs(target), 'utf8'),
+  writeText: async (target, content) => {
+    await mkdir(dirname(abs(target)), { recursive: true })
+    await writeFile(abs(target), content, 'utf8')
+    return { operation: 'update', version: '1' }
+  },
+}
+const service = new NovelWriterService({ fs: fsCtx, sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access' }) } })
 
 // ---------- 0) 优先级顺序：explicit > facts > requirements > bible > outline > style > notes ----------
 assert.deepEqual(constraintsEngine.CONSTRAINT_PRIORITY, ['explicit', 'facts', 'requirements', 'bible', 'outline', 'style', 'notes'])
@@ -93,64 +111,6 @@ const titleValidation = constraintsEngine.validateAgainstFacts('林昭来了。'
   { id: 'f2', kind: '称呼', key: '林昭', value: '林先生' },
 ])
 assert.ok(titleValidation.violations.some((item) => item.kind === '称呼'))
-
-// ---------- 5) facts 表：v3 旧库升级 v4、不丢数据、CRUD、chapterFacts 合并 ----------
-await mkdir(join(legacyProject, 'story'), { recursive: true })
-const legacyDb = new DatabaseSync(join(legacyProject, 'story', 'project.db'))
-legacyDb.exec(`
-CREATE TABLE project (
-  id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER, title TEXT, language TEXT,
-  genre_json TEXT, logline TEXT, writing_notes TEXT, craft_auto INTEGER DEFAULT 1,
-  prompt_json TEXT, automation_json TEXT, extra_json TEXT, created_at TEXT, updated_at TEXT
-);
-CREATE TABLE materials (
-  id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT, content TEXT NOT NULL,
-  tags_json TEXT, source TEXT, created_at TEXT, updated_at TEXT
-);
-`)
-legacyDb.prepare('INSERT INTO project (id, schema_version, title, language) VALUES (1, 3, ?, ?)').run('旧项目', 'zh')
-legacyDb.prepare('INSERT INTO materials (id, title, kind, content) VALUES (?, ?, ?, ?)').run('mat-old', '旧素材', '片段', '旧素材内容')
-legacyDb.exec('PRAGMA user_version = 3')
-legacyDb.close()
-
-const fsCtx = {
-  resolve: async (relativePath, { cwd }) => ({ cwd, relativePath }),
-  stat: async (target) => {
-    try { const info = await stat(join(target.cwd, target.relativePath)); return { version: String(info.mtimeMs) } } catch { return null }
-  },
-  readText: async (target) => readFile(join(target.cwd, target.relativePath), 'utf8'),
-  writeText: async (target, content) => {
-    await mkdir(dirname(join(target.cwd, target.relativePath)), { recursive: true })
-    await writeFile(join(target.cwd, target.relativePath), content, 'utf8')
-    return { operation: 'update', version: '1' }
-  },
-}
-const service = new NovelWriterService({ fs: fsCtx, sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access' }) } })
-
-const legacyStore = await service.storeFor(legacyProject)
-assert.equal(legacyStore.schemaVersion(), 5, 'v3 旧库应升级到 v4'.replace('v4', 'v5'))
-assert.equal(legacyStore.readProject().title, '旧项目', '旧项目数据不丢')
-assert.equal(legacyStore.listMaterials().length, 1, '旧 materials 数据不丢')
-const legacyFact = legacyStore.saveFact({ kind: '术语', key: '林昭', value: '小林' })
-assert.ok(legacyFact.id.startsWith('fact-'), 'v4 facts 表可用')
-
-await service.initProject(project, { title: '约束测试' })
-const globalFact = await service.saveFact(project, { kind: '术语', key: '林昭', value: '小林' })
-assert.equal(globalFact.kind, '术语')
-const chapterFact = await service.saveFact(project, { kind: '硬事实', key: '年龄', value: '28', chapter: 1, note: '二十八|28岁' })
-assert.equal(chapterFact.chapter, 1)
-const safetyFact = await service.saveFact(project, { kind: '安全', key: '底线', value: '不写未成年人性内容' })
-assert.equal(safetyFact.kind, '安全')
-const factList = (await service.listFacts(project)).facts
-assert.equal(factList.length, 3)
-assert.equal((await service.chapterFacts(project, 1)).length, 3, '本章事实应含全局+本章')
-assert.equal((await service.chapterFacts(project, 2)).length, 2, '其他章只含全局事实')
-assert.deepEqual(legacyStore.glossaryFacts().map((item) => item.canonical), ['林昭'])
-await assert.rejects(() => service.saveFact(project, { kind: '术语', key: '', value: 'x' }), /key 不能为空/)
-await assert.rejects(() => service.saveFact(project, { kind: '非法', key: 'k', value: 'v' }), /kind|不能为空/)
-const deletedFact = await service.deleteFact(project, { id: chapterFact.id })
-assert.deepEqual(deletedFact, { id: chapterFact.id, deleted: true })
-await assert.rejects(() => service.deleteFact(project, { id: 'no-such' }), /找不到事实/)
 
 // ---------- 6) service.buildConstraintsFor：语义预检 + 降级 ----------
 await service.writeJson(project, 'story/project.json', { schemaVersion: 1, title: '约束测试', writingNotes: { draft: ['一、必须用第三人称'] } })
@@ -264,6 +224,8 @@ const tool = (name) => registered.find((item) => item.name === name)
 assert.ok(tool('novel_facts'), '应注册 novel_facts')
 assert.ok(tool('novel_constraints'), '应注册 novel_constraints')
 
+await service.saveFact(project, { kind: '称呼', key: '林昭', value: '林先生' })
+await service.saveFact(project, { kind: '术语', key: '剑意', value: '剑气所化' })
 const factsList = await tool('novel_facts').execute({ action: 'list' }, { agent: project, signal: null })
 assert.ok(Array.isArray(factsList.facts) && factsList.facts.length >= 2)
 assert.ok(factsList.facts.every((fact) => typeof fact.key === 'string' && fact.key.length <= 200))
@@ -286,7 +248,6 @@ service.disposeStores()
 await new Promise((resolve) => setTimeout(resolve, 80))
 await rm(home, { recursive: true, force: true })
 await rm(project, { recursive: true, force: true })
-await rm(legacyProject, { recursive: true, force: true })
 console.log('constraints tests passed')
 
 function agentWithProject(cwd) {

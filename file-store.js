@@ -11,7 +11,7 @@ import * as library from './storage/library.js'
 import * as logs from './storage/logs.js'
 import * as searchIndex from './storage/search.js'
 import * as references from './storage/references.js'
-import { MATERIAL_KINDS, FACT_KINDS } from './store.js'
+import { MATERIAL_KINDS, FACT_KINDS } from './constants.js'
 
 export { MATERIAL_KINDS, FACT_KINDS }
 
