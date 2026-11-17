@@ -283,27 +283,28 @@ window.__ModuleLoader__.load({
 .nw-model-head{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);padding-top:2px}
 .nw-model-task{display:flex;gap:6px;align-items:center;font-size:11.5px;min-width:0}
 @media (max-width:900px){.nw-model-row{grid-template-columns:1fr}}
-.nw-filetree{width:200px;flex:0 0 200px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
+.nw-filetree{width:248px;flex:0 0 248px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;max-height:70vh;overflow:auto}
 .nw-filetree-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:2px 2px 6px}
-.nw-filetree-title{font-size:12px;font-weight:600;opacity:.7}
+.nw-filetree-title{font-size:13px;font-weight:600;opacity:.85}
 .nw-filetree-group{margin-bottom:6px}
 .nw-filetree-vol-row{display:flex;align-items:center;gap:2px}
-.nw-filetree-volume{font-size:11px;opacity:.7;padding:2px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;border-radius:6px}
+.nw-filetree-volume{font-size:12px;opacity:.8;padding:4px 6px;border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;flex:1;min-width:0;border-radius:6px}
 .nw-filetree-volume:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:6px}
+.nw-filetree-chapter{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px;border-left:2px solid transparent}
 .nw-filetree-chapter:hover{background:var(--dsw-alias-bg-layer-2)}
-.nw-filetree-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:10px;cursor:pointer;padding:0 2px}
+.nw-filetree-name{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;padding:2px 5px;border-radius:5px}
 .nw-filetree-link:hover{color:var(--dsw-alias-brand-primary)}
 .nw-filetree + div .nw-workbench{grid-template-columns:minmax(0,1fr)}
 .nw-filetree + div .nw-list{display:none}
-.nw-filetree-chapter.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+.nw-filetree-chapter.active{background:var(--dsw-alias-bg-layer-2);border-left-color:var(--dsw-alias-brand-primary);box-shadow:none}
 .nw-filetree-open{border:none;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0}
 .nw-filetree-open:hover{color:var(--dsw-alias-brand-primary)}
 .nw-inspector{width:240px;flex:0 0 240px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:10px;background:var(--dsw-alias-bg-layer-1);position:sticky;top:12px;display:flex;flex-direction:column;gap:6px;font-size:12px;max-height:70vh;overflow:auto}
 .nw-inspector-title{font-size:12px;font-weight:600;opacity:.75}
 .nw-inspector-label{font-size:11px;opacity:.55;margin-top:6px}
-.nw-inspector-row{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.nw-inspector-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;line-height:1.7}
+.nw-inspector-embedded .nw-inspector-row>span:first-child{flex:0 0 auto;opacity:.6}
 .nw-inspector-body{font-size:12px;line-height:1.6;opacity:.85;white-space:pre-wrap;word-break:break-word}
 .nw-inspector-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}
 .nw-inspector-bar-fill{height:100%;background:var(--dsw-alias-brand-primary)}
@@ -3539,6 +3540,7 @@ window.__ModuleLoader__.load({
       const hasFinal = Boolean(detail?.final)
       const words = Number(detail?.wordCount ?? 0) || 0
       const budget = Number(chapter.wordBudget ?? 0) || 0
+      const reached = budget > 0 && words >= budget
       const percent = budget > 0 ? Math.min(100, Math.round((words / budget) * 100)) : 0
       const plant = Array.isArray(chapter.plant) ? chapter.plant : []
       const payoff = Array.isArray(chapter.payoff) ? chapter.payoff : []
@@ -3547,7 +3549,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-inspector-title' }, `第 ${number} 章对照`),
         h('div', { className: 'nw-inspector-row' }, h('span', null, '标题'), h('b', null, chapter.title ?? '未命名')),
         h('div', { className: 'nw-inspector-row' }, h('span', null, '卷'), h('span', null, chapter.volumeTitle ?? '—')),
-        h('div', { className: 'nw-inspector-row' }, h('span', null, '章卡状态'), h('span', null, chapter.status === 'confirmed' ? '已确认' : '待确认')),
+        h('div', { className: 'nw-inspector-row' }, h('span', null, '章卡'), h('span', null, chapter.status === 'confirmed' ? '已确认' : '待确认')),
         mode === 'chapters'
           ? h('div', null,
             h('div', { className: 'nw-inspector-label' }, '章卡要点'),
@@ -3566,7 +3568,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-inspector-label' }, '正文状态'),
             h('div', { className: 'nw-inspector-row' }, h('span', null, '草稿'), h('span', null, loading ? '读取中…' : hasDraft ? '有' : '无')),
             h('div', { className: 'nw-inspector-row' }, h('span', null, '定稿'), h('span', null, hasFinal ? '已定稿' : '未定稿')),
-            h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, `${words}${budget > 0 ? ` / ${budget}（${percent}%）` : ''}`)),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, budget > 0 ? (reached ? `${words} 字 · 已达标` : `${words} / ${budget}`) : `${words} 字`)),
             budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
             h('div', { className: 'nw-inspector-label' }, '本章摘要'),
             h('div', { className: 'nw-inspector-body' }, String(detail?.summary?.summary ?? detail?.summary ?? '').slice(0, 220) || '还没有本章摘要'),
@@ -4910,18 +4912,7 @@ window.__ModuleLoader__.load({
             (state?.outlineAudit?.issues?.length ?? 0) > 0
               ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: `大纲体检发现 ${state.outlineAudit.issues.length} 个问题`, onClick: () => run('outline-repair', {}, { toast: '已修复大纲问题' }) }, `修复大纲（${state.outlineAudit.issues.length}）`)
               : null,
-            h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy, onClick: () => onOpenOutline?.(selected) }, '编辑本章章卡'),
             h('div', { style: { width: '1px', height: '20px', background: 'var(--dsw-alias-border-l1)', margin: '0 4px' } }),
-            h('button', {
-              type: 'button',
-              className: 'nw-btn',
-              disabled: busy,
-              title: '从当前章开始连续写 3 章（跳过已有草稿）',
-              onClick: async () => {
-                if (!(await requestConfirm({ title: '连续写章', message: `从第 ${selected} 章起连续写 3 章？`, confirmLabel: '开始写' }))) return
-                run('chapter-batch', { fromChapter: selected, count: 3 }, { toast: '已开始连续写章' })
-              },
-            }, '连续写 3 章'),
             volumeId
               ? h('button', {
                   type: 'button',
@@ -5106,7 +5097,6 @@ window.__ModuleLoader__.load({
                   ),
                   h('div', { className: 'nw-sticky-actions' },
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || editing, title: '编辑正文（E）', onClick: startEditing }, editing ? '编辑中' : '编辑') : null,
-                    h('button', { type: 'button', className: 'nw-btn ghost', title: '查看/编辑本章章纲', onClick: () => onOpenOutline?.(selected) }, '章纲'),
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方修订要求修订本章', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '按意见修订') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '一次跑规则质检、风格检测与 AI 连续性检查', onClick: runCombinedReview }, '审校') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-autofix', { number: selected })), title: lockMsg('chapter-autofix', { number: selected }) ?? undefined, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
