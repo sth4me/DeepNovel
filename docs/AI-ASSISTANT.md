@@ -7,7 +7,7 @@
 | 工具 | 用途 |
 |---|---|
 | `novel_status` | 项目初始化状态与各阶段产物 |
-| `novel_init` | 初始化当前目录：创建 `story/` 目录骨架与项目数据库（`story/project.db`）；已初始化时只返回现状，不覆盖数据 |
+| `novel_init` | 初始化当前目录：创建 `story/` 目录骨架与项目文件（`story/project.json` 等）；已初始化时只返回现状，不覆盖数据 |
 | `novel_premise` | 构思：生成候选、确认候选、`update`（改标题/构思/主角/题材/篇幅）、`delete`（清空构思）、读取状态 |
 | `novel_style` | 文风：模板列表、套用模板、保存自定义模板、`update`（局部更新契约字段）、`delete`（清空契约）、`delete-template`、确认契约、读取状态；`profile-build`（最近定稿统计风格指纹，只统计不改文）/ `profile-get`（读取已存指纹） |
 | `novel_outline` | 章纲：`generate`（内容由生成模型依据上下文决定；`instruction` 只写必须遵守/禁止/用户明确事实，不写「本章应该发生什么」）/ `regenerate`（仅连续 ≥3 章崩坏 / 整卷崩 / 用户明确要求）；`update`（只用于用户明确指定的局部修改或修正事实/时间线错误；支持 title / synopsis / change / storyQuestion / promise / beats / wordBudget / `time` / `agency` / `device` / `castUsed` / `newNamed`，未知字段报错）；`delete`（只删章纲，有正文需 `force`，无正文时默认重排章号）；`volume-plan`（进入新卷前返回 2–3 个卷目标候选，不写盘）/ `volume-select`（按 `index` 选候选或 `overrides` 修订卷目标后写盘，记录 `whyNow` / `goalRevisedAt`）/ `volume-end`（标记卷收束章）/ `volume-update` / `volume-delete`；`commit` / `status` / `move` / `audit` / `repair`（生成候选修复版本：`applied` / `status` / `versionId` / `diff` / `summary` / `audit` / `candidateAudit`；改进且无新增问题自动应用，否则保留候选不覆盖当前大纲）；`revisions` / `revision`（`revisionId`，看 diff 与前后 audit）/ `apply-revision` / `discard-revision`；`dismiss`（忽略问题：`ids` / `chapter` / `all=true`，写入 `dismissed`，重审不会复活）；生成结果带 `castViolations`；`audit` 返回一致性 `issues`（≤30）与结构 `structureIssues`（≤10，超出截断），问题有稳定 id；**audit 后不自动 repair / regenerate**，等用户确认 |
@@ -15,6 +15,7 @@
 | `novel_chapter` | 章节：`list`（分页）/ `read`（分块）/ `search`（定位片段）/ `draft` / `batch` / `qa` / `audit` / `style-audit` / `revision-learn`（分析草稿→定稿差异、提炼写作偏好，只返回建议、不自动写入）/ `deslop`（去 AI 味改写，可 dryRun 预览）/ `fix` / `autofix` / `revise` / `save` / `patch` / `approve` / `delete` / `delete-tail` |
 | `novel_cast` | 按卷规划焦点名单：`list` / `plan`（cast 建议 6 人左右、最多 12；extras 建议 3 人左右、最多 8；预计复用的新名字建议 2 个左右、最多 6）/ `update`（调整 cast 与 `extras`，名称必须在角色池；超硬上限才报错）/ `delete`（清空本卷焦点名单）；角色池是 `bible`，焦点名单不是出场白名单 |
 | `novel_material` | 素材库：`list` / `save`（新增或按 id 更新 title/kind/content/tags/source）/ `delete`；素材是参考，不会自动成为本书设定 |
+| `novel_reference` | 资料库：list / get / save / delete；类型 original（原作，只借世界观不复述）、prior（前作，学文风）、research（研究资料，只作事实参考）、idea（灵感，可自由发挥） |
 | `novel_state` | 人物状态：`get`（某章结束时处境/欲望/恐惧/知情/关系/物品/伤势/未解冲突/接续点）/ `update`（按该章正文提取并写盘；写下一章前先 get，写完 update） |
 | `novel_issues` | 待处理问题清单：`list`（`limit` 默认 20）；聚合大纲结构/一致性、字数不足、人物状态未更新、选角泄漏；每项含章节号/类型/说明/建议动作（replan / repair / audit / expand / update-state；大纲问题另含 `dismiss` 忽略）；只提示，不改任何内容；结构问题优先建议用 `novel_outline action=update` 改 1–3 章，成规模（连续 ≥3 章 / 整卷）才 generate / regenerate |
 | `novel_facts` | 事实/术语库：`list` / `save` / `delete`；kind 术语/硬事实/安全/称呼，可全局或按章（`chapter`），`must` 表示生成时必须遵守 |
@@ -162,9 +163,9 @@ DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修�
 
 ## 数据层规则
 
-- 结构化数据在 SQLite（`story/project.db`），旧 `story/*.json` 只是**只读存档**。
+- 项目没有数据库：结构化数据全部是 `story/*.json` 文档，正文是 Markdown。
 - 改大纲 / 设定 / 文风 / 构思 / 章纲分别用 `novel_outline` / `novel_bible` / `novel_style` / `novel_premise`；核对数据用 `novel_query`。
-- **不要用文件工具改 `story/*.json` 或数据库文件**：旧 JSON 已不参与读写，改库文件会绕过事务与索引。
+- **改结构化数据用工具，不要直接手改 `story/*.json`**：工具会维护索引、时间戳与跨文档一致性；手改可能让状态、摘要与章纲对不上。
 - 系统提示词里的 `deepnovel:data-layer-rules` 段会向助手说明这些规则。
 
 ## 关系与能力读写
@@ -238,10 +239,10 @@ DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修�
 
 | 数据 | 位置 | 推荐读取方式 |
 |---|---|---|
-| 大纲 / 设定 / 关系 / 能力 / 文风 / 构思 / 状态 / 统计 / 运行记录 / 提示词覆盖 / 构思对话 | SQLite（`story/project.db`） | `novel_query`，或对应 `novel_*` 工具 |
+| 大纲 / 设定 / 关系 / 能力 / 文风 / 构思 / 状态 / 统计 / 运行记录 / 提示词覆盖 / 构思对话 | `story/*.json`（如 `plot/outline.json`、`bible/entries.json`） | `novel_query`，或对应 `novel_*` 工具 |
 | 章节正文（`draft.md` / `final.md` / `revisions/`） | `story/chapters/<章号>/` Markdown | 文件工具可读；改正文推荐 `novel_chapter action=patch` |
 | 灵感历史 / 拆书历史 | `.dsh-writing/inspirations.json`、`.dsh-writing/deconstructions.json` | 文件工具可读，推荐 `novel_query`（`kind=inspirations` / `deconstructions`） |
-| 旧版 `story/*.json` | 迁移后保留 | 只读存档，**改了不生效**，不要修改 |
+| 资料库（原作/前作/研究/灵感） | `story/references/index.json` 与 `story/references/sources/<id>.md` | `novel_reference`；类型决定引用方式 |
 
 ## 为什么用工具查询而不是读全量 JSON
 
@@ -284,7 +285,7 @@ DSH 停止/中断回合时，`exec.signal` 会传入插件工具；诊断、修�
 
 ## 读取与初始化
 
-- `novel_init` 创建 `story/` 与 `story/project.db`；已初始化时只返回现状，不覆盖已有数据。
+- `novel_init` 创建 `story/` 与项目文件（`story/project.json` 等）；已初始化时只返回现状，不覆盖已有数据。
 - `novel_chapter action=read` 返回 `draft` / `final` / `qa` / `summary` / `revisions`、`outlineChanged`，以及 `hasDraft` / `hasFinal` / `wordCount`，助手据此判断能否 `patch` 或需要先 `draft`。
 
 ## 相关
