@@ -380,7 +380,9 @@ window.__ModuleLoader__.load({
 .nw-list-item .nw-list-hover{opacity:0;flex:0 0 auto;font-size:10px;padding:2px 6px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);cursor:pointer;transition:opacity .12s ease}
 .nw-list-item:hover .nw-list-hover,.nw-list-item.active .nw-list-hover{opacity:1}
 .nw-list-item .nw-list-hover:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
-.nw-sticky-jump{max-width:112px;font:inherit;font-size:11px;padding:3px 4px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.nw-page-btn{min-height:30px;padding:4px 12px;font-size:11.5px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
+.nw-page-btn:disabled{opacity:.4}
+.nw-sticky-nav{gap:6px}
 .nw-list-item.active{background:var(--dsw-alias-bg-layer-2);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
 .nw-list-num{font-size:9px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;min-width:18px}
 .nw-list-title{flex:1;min-width:0;font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -4506,15 +4508,21 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                         ? h('span', { className: 'nw-badge bad', style: { marginTop: '3px' } }, '摘要/状态待更新')
                         : null,
                     ),
-                    h('select', {
-                      className: 'nw-sticky-jump',
-                      value: String(selected ?? ''),
-                      title: '跳转章节',
-                      onChange: (event) => setSelected(Number(event.target.value)),
-                    }, allChapters.map((item) => h('option', { key: item.number, value: item.number }, `第 ${item.number} 章`))),
                     h('div', { className: 'nw-sticky-nav' },
-                      previousChapter ? h('button', { type: 'button', className: 'nw-btn ghost icon', title: '上一章（Alt+←）', onClick: () => setSelected(previousChapter.number) }, '‹') : null,
-                      nextChapter ? h('button', { type: 'button', className: 'nw-btn ghost icon', title: '下一章（Alt+→）', onClick: () => setSelected(nextChapter.number) }, '›') : null,
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn nw-page-btn',
+                        title: previousChapter ? `上一章：${previousChapter.title ?? ''}（Alt+←）` : '已经是第一章',
+                        disabled: !previousChapter,
+                        onClick: () => previousChapter && setSelected(previousChapter.number),
+                      }, '← 上一章'),
+                      h('button', {
+                        type: 'button',
+                        className: 'nw-btn nw-page-btn',
+                        title: nextChapter ? `下一章：${nextChapter.title ?? ''}（Alt+→）` : '已经是最后一章',
+                        disabled: !nextChapter,
+                        onClick: () => nextChapter && setSelected(nextChapter.number),
+                      }, '下一章 →'),
                     ),
                   ),
                   h('div', { className: 'nw-sticky-actions' },
