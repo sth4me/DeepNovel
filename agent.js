@@ -759,7 +759,7 @@ export function apply(ctx) {
   registerTool(ctx, {
     name: 'novel_chapter',
     description:
-      '章节工具。正文内容由生成模型依据上下文决定：助手只给约束、禁止和用户明确要求，不要预写情节方案或桥段。action=list 分页列出章节（默认 30 条，带 total/nextOffset）；read 分块读某章正文与元数据（默认 6000 字，带 truncated/nextRange）；search 在某章正文里定位片段（patch 前用）；draft 生成草稿；batch 连续生成；qa 规则质检；audit 审校；style-audit 风格审稿（返回 aiFlavor 等级与 AI 指纹 markers）；revision-learn 分析草稿→定稿差异、提炼写作偏好（只返回建议，不自动写入）；deslop 去 AI 味改写（只改怎么说、不改说什么；带修订备份，可 dryRun 预览；失败不落盘）；fix/autofix 修复；revise 按意见修订；save 手动保存整章正文；patch 只替换一小段正文（find/replace），不生成整章、不调用模型，适合模型输出受限/审查中断时小步修改，改完可再 audit/approve；approve 采纳为定稿；delete 删除某章正文产物（默认保留章纲，可重新生成；removeOutline=true 连章纲删除，renumber 默认把后续章号前移）；delete-tail 删除尾部连续章节（含章纲）。',
+      '章节工具。正文内容由生成模型依据上下文决定：助手只给约束、禁止和用户明确要求，不要预写情节方案或桥段。action=list 分页列出章节（默认 30 条，带 total/nextOffset）；save 不直接改正文，只生成待审提案（proposals 查看、apply-proposal 应用、reject-proposal 拒绝）；read 分块读某章正文与元数据（默认 6000 字，带 truncated/nextRange）；search 在某章正文里定位片段（patch 前用）；draft 生成草稿；batch 连续生成；qa 规则质检；audit 审校；style-audit 风格审稿（返回 aiFlavor 等级与 AI 指纹 markers）；revision-learn 分析草稿→定稿差异、提炼写作偏好（只返回建议，不自动写入）；deslop 去 AI 味改写（只改怎么说、不改说什么；带修订备份，可 dryRun 预览；失败不落盘）；fix/autofix 修复；revise 按意见修订；save 手动保存整章正文；patch 只替换一小段正文（find/replace），不生成整章、不调用模型，适合模型输出受限/审查中断时小步修改，改完可再 audit/approve；approve 采纳为定稿；delete 删除某章正文产物（默认保留章纲，可重新生成；removeOutline=true 连章纲删除，renumber 默认把后续章号前移）；delete-tail 删除尾部连续章节（含章纲）。',
     parameters: {
       type: 'object',
       properties: {
@@ -874,7 +874,8 @@ export function apply(ctx) {
         )
       }
       if (args?.action === 'save') {
-        return service.saveChapterText(exec.agent, { number: args?.number, text: args?.text })
+        // 写盘前审阅：save 只生成提案，用户接受后才落盘。
+        return service.proposeChapterText(exec.agent, { number: args?.number, text: args?.text, source: 'assistant' })
       }
       if (args?.action === 'patch') {
         return service.patchChapterText(exec.agent, {
