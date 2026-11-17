@@ -3512,6 +3512,7 @@ window.__ModuleLoader__.load({
 
     function ChapterInspector({ state, root, mode, focusChapter, setTab }) {
       const [detail, setDetail] = useState(null)
+      const [previous, setPrevious] = useState(null)
       const [loading, setLoading] = useState(false)
       const number = Number(focusChapter)
       const valid = Number.isFinite(number) && number > 0
@@ -3532,11 +3533,14 @@ window.__ModuleLoader__.load({
         }
         let alive = true
         setLoading(true)
-        fetchProjectChapter(root, number).then((value) => {
+        const unwrap = (value) => value?.data ?? value ?? null
+        Promise.all([
+          fetchProjectChapter(root, number).then(unwrap).catch(() => null),
+          number > 1 ? fetchProjectChapter(root, number - 1).then(unwrap).catch(() => null) : Promise.resolve(null),
+        ]).then(([current, prev]) => {
           if (!alive) return
-          setDetail(value?.data ?? value ?? null)
-        }).catch(() => {
-          if (alive) setDetail(null)
+          setDetail(current)
+          setPrevious(prev)
         }).finally(() => {
           if (alive) setLoading(false)
         })
@@ -3583,6 +3587,11 @@ window.__ModuleLoader__.load({
             h('div', { className: 'nw-inspector-row' }, h('span', null, '定稿'), h('span', null, hasFinal ? '已定稿' : '未定稿')),
             h('div', { className: 'nw-inspector-row' }, h('span', null, '字数'), h('span', null, `${words}${budget > 0 ? ` / ${budget}（${percent}%）` : ''}`)),
             budget > 0 ? h('div', { className: 'nw-inspector-bar' }, h('div', { className: 'nw-inspector-bar-fill', style: { width: `${percent}%` } })) : null,
+            h('div', { className: 'nw-inspector-label' }, '上一章交接'),
+            previous
+              ? h('div', { className: 'nw-inspector-body' }, `${previous.title ?? `第 ${number - 1} 章`}：${String(previous.summary?.summary ?? previous.summary ?? '').slice(0, 160) || '无摘要'}`)
+              : h('div', { className: 'nw-muted', style: { fontSize: '12px' } }, number > 1 ? '上一章暂无交接信息' : '这是第一章'),
+            h('div', { className: 'nw-inspector-row' }, h('span', null, '最近修订'), h('span', null, Array.isArray(detail?.revisions) ? `${detail.revisions.length} 个版本` : '—')),
             h('button', { type: 'button', className: 'nw-filetree-link', style: { marginTop: '8px' }, onClick: () => setTab?.('chapters') }, '打开正文 →'),
           ),
       )
