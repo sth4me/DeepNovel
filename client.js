@@ -356,6 +356,11 @@ window.__ModuleLoader__.load({
 .nw-inspector-embedded .nw-input{width:100%;box-sizing:border-box}
 .nw-inspector-embedded .nw-field{width:100%}
 .nw-inspector-embedded .nw-textarea{width:100%}
+.nw-inspector-embedded input.nw-input,
+.nw-inspector-embedded textarea.nw-input{width:100% !important;max-width:none !important;min-width:0 !important;box-sizing:border-box}
+.nw-inspector-embedded textarea.nw-input{min-height:34vh !important;height:34vh}
+.nw-inspector-embedded > div{width:100%}
+.nw-inspector-embedded .nw-field > *{width:100%}
 .nw-insp-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:6;background:transparent}
 .nw-insp-resizer:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 30%,transparent)}
 .nw-insp-tabs{display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid var(--dsw-alias-border-l1);flex:0 0 auto}
@@ -3553,9 +3558,8 @@ window.__ModuleLoader__.load({
                 h('label', { className: 'nw-label' }, '章卡要点'),
                 h('textarea', {
                   className: 'nw-input',
-                  rows: 10,
                   value: cardEdit.synopsis,
-                  style: { resize: 'vertical', fontFamily: 'inherit', minHeight: '160px' },
+                  style: { resize: 'vertical', fontFamily: 'inherit' },
                   onChange: (event) => setCardEdit((value) => ({ ...value, synopsis: event.target.value })),
                 }),
               ),
