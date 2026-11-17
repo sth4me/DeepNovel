@@ -55,9 +55,10 @@ function estimateAiFlavor(text) {
     .map((word) => ({ type: '禁用词', word, quote: word }))
   return { level, score, markers, density: Math.round(density * 10) / 10 }
 }
-import { openDatabase } from './db.js'
 import { migrateLegacyProject } from './migrate.js'
-import { FACT_KINDS, MATERIAL_KINDS, NovelStore } from './store.js'
+import { FileNovelStore } from './file-store.js'
+import { migrateProjectDb } from './migrate-from-db.js'
+import { FACT_KINDS, MATERIAL_KINDS } from './store.js'
 import { renderConstraints, resolveChapterConstraints, validateAgainstFacts } from './constraints.js'
 import { compareStyleProfile, computeStyleProfile, renderStyleProfile } from './style-profile.js'
 import { CAST_LIMITS, CAST_RULES, WRITING_DOCTRINE, composeWritingSystem } from './writing-doctrine.js'
@@ -951,22 +952,31 @@ export class NovelWriterService {
         return false
       }
     }
+    const fileStoreExists = await exists('story/project.json')
     const dbExists = await exists('story/project.db')
-    if (!dbExists) {
+    if (!fileStoreExists && !dbExists) {
       const legacyExists = await exists(this.marker)
       if (!legacyExists) {
         const error = new Error('当前目录尚未初始化写作项目，请先调用 novel_init')
         error.code = 'NOVEL_WRITER_NOT_INITIALIZED'
         throw error
       }
+      // 旧版 JSON 项目先迁移到文件存储；没有 SQLite 依赖。
       await migrateLegacyProject({
         projectRoot: cwd,
         fs: this.legacyFsFor(cwd),
         resolveHostPath: (relativePath) => join(cwd, relativePath),
       })
     }
-    const db = openDatabase(this.dbPathFor(cwd))
-    const store = new NovelStore(db, cwd)
+    if (!this.fileStores.has(cwd) && dbExists) {
+      try {
+        migrateProjectDb(cwd)
+      } catch (error) {
+        this.ctx.logger?.warn?.(`旧数据库迁移失败：${error?.message ?? error}`)
+      }
+    }
+    const store = new FileNovelStore(cwd)
+    this.fileStores.add(cwd)
     this.stores.set(cwd, store)
     while (this.stores.size > 8) {
       const oldestKey = this.stores.keys().next().value
@@ -995,6 +1005,9 @@ export class NovelWriterService {
     }
     return store
   }
+
+  /** 已迁移到文件存储的项目，避免每次打开重复尝试迁移。 */
+  fileStores = new Set()
 
   disposeStores() {
     for (const store of this.stores.values()) {
@@ -2009,10 +2022,10 @@ export class NovelWriterService {
     const createdAt = now()
     const title = options.title?.trim() || basename(cwd)
 
-    // 先建 SQLite 库并放进缓存：下面的 writeJson 会路由到 store，不再写 JSON 文件。
-    const db = openDatabase(this.dbPathFor(cwd))
-    const store = new NovelStore(db, cwd)
+    // 先建文件存储并放进缓存：下面的 writeJson 会路由到 store，不再写零散 JSON。
+    const store = new FileNovelStore(cwd)
     this.stores.set(cwd, store)
+    this.fileStores.add(cwd)
 
     const files = [
       [
@@ -2257,17 +2270,20 @@ export class NovelWriterService {
         return null
       }
     }
-    const metas = new Map()
-    for (const row of store.db.prepare('SELECT number, json FROM chapter_meta').all()) {
-      metas.set(Number(row.number), parse(row.json))
+    const numbers = new Set()
+    for (const number of store.listChapterProseFlags().keys()) numbers.add(Number(number))
+    for (const state of store.listChapterStates()) numbers.add(Number(state.number))
+    for (const chapter of store.readOutline().volumes.flatMap((volume) => volume.chapters)) {
+      if (Number.isFinite(Number(chapter.number))) numbers.add(Number(chapter.number))
     }
+    const metas = new Map()
     const qaMap = new Map()
-    for (const row of store.db.prepare('SELECT number, qa_json, style_qa_json, continuity_json FROM chapter_qa').all()) {
-      qaMap.set(Number(row.number), {
-        qa: parse(row.qa_json),
-        styleQa: parse(row.style_qa_json),
-        continuity: parse(row.continuity_json),
-      })
+    for (const number of numbers) {
+      if (!Number.isFinite(number)) continue
+      const meta = store.readChapterMeta(number)
+      if (meta) metas.set(number, parse(JSON.stringify(meta)))
+      const qa = store.readChapterQa(number)
+      if (qa && (qa.qa || qa.styleQa || qa.continuity)) qaMap.set(number, qa)
     }
     const sums = new Map()
     for (const item of store.listChapterSummaries()) sums.set(Number(item.number), item)
