@@ -1940,6 +1940,20 @@ export class NovelWriterService {
       error.runId = runId
       throw error
     }
+    if (fallbackInfo) {
+      const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
+      await this.writeRun(agent, {
+        runId,
+        kind: 'model.fallback',
+        number: Number(number) || null,
+        createdAt: now(),
+        model: { provider: fallbackInfo.to.split('/')[0], model: fallbackInfo.to.split('/').slice(1).join('/') },
+        messages: [],
+        output: '',
+        fallback: fallbackInfo,
+        durationMs: Date.now() - started,
+      }).catch(() => {})
+    }
     return {
       text: result.text,
       usage: result.usage,

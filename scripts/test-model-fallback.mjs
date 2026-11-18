@@ -65,6 +65,11 @@ assert.equal(result.text, '备用模型输出', '应返回备用模型输出')
 assert.ok(result.fallback, '结果应带降级信息')
 assert.equal(result.fallback.to, 'backup/m2')
 assert.deepEqual(calls, ['primary/m1', 'backup/m2'], '先主后备，各一次')
+const store = await service.storeFor(project)
+const runs = store.listRuns(20)
+const fallbackRun = runs.find((run) => run.kind === 'model.fallback')
+assert.ok(fallbackRun, '降级应写入运行记录')
+assert.equal(fallbackRun.fallback.to, 'backup/m2')
 
 // 没有备用模型时主模型错误直接抛出
 await service.writeJson(project, 'story/project.json', { ...current, models: { draft: { provider: 'primary', model: 'm1' } } })

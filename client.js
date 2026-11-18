@@ -1397,6 +1397,10 @@ window.__ModuleLoader__.load({
           ),
           h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
             `model=${detail.model?.model ?? '—'} · tokens=${detail.usage?.totalTokens ?? 0} · ${detail.durationMs ?? 0}ms${detail.finish?.kind ? ` · finish=${detail.finish.kind}` : ''}`),
+          detail.fallback
+            ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } },
+                `模型降级：${detail.fallback.from} → ${detail.fallback.to}；原因：${detail.fallback.reason ?? '—'}`)
+            : null,
           detail.parseError
             ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } }, `JSON 解析失败：${detail.parseError}`)
             : null,
@@ -5251,6 +5255,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       'outline.audit': '大纲审查',
       'outline.repair': '大纲修复',
       'model.empty': '空响应',
+      'model.fallback': '模型降级',
     }
     const kindLabel = (kind) => KIND_LABELS[kind] ?? kind ?? '—'
 
