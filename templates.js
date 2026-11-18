@@ -1752,13 +1752,12 @@ export function buildVolumePlanUserPrompt(input) {
   }
   if (input.previousVolume) {
     lines.push('上一卷：')
-    lines.push(JSON.stringify({
-      title: input.previousVolume.title,
-      map: input.previousVolume.map,
-      goal: input.previousVolume.goal,
-      exitCriteria: input.previousVolume.exitCriteria,
-      lastChapter: input.previousVolume.lastChapter,
-    }, null, 2))
+    lines.push(`卷名：${input.previousVolume.title || '未命名卷'}；舞台：${input.previousVolume.map || '未设置'}；阶段目标：${input.previousVolume.goal || '未设置'}`)
+    lines.push(`离卷条件：${input.previousVolume.exitCriteria || '未设置'}`)
+    if (input.previousVolume.lastChapter) {
+      const last = input.previousVolume.lastChapter
+      lines.push(`末章：第 ${last.number ?? '?'} 章 ${last.title || ''}；剧情=${last.synopsis || '—'}`)
+    }
   }
   if (input.instruction) lines.push(`额外要求：${input.instruction}`)
   if (input.chapters?.length) {
