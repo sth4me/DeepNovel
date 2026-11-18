@@ -71,8 +71,7 @@ const expected = [
   'unconfirmed-outline',
   'missing-fields',
   'bad-relations',
-  'drafted',
-  'stale-finals',
+  'summary-stale',
   'no-summary',
   'stale-foreshadow',
 ]

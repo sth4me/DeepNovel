@@ -3558,26 +3558,16 @@ export class NovelWriterService {
         numbers: missingFields.map((chapter) => Number(chapter.number)),
       })
     }
-    const drafted = chapterStats.filter((item) => item.hasDraft && !item.hasFinal)
-    if (drafted.length) {
+    // 已取消“定稿”概念：只提示摘要/状态需要同步的章节。
+    const staleSummaries = chapterStats.filter((item) => item.hasDraft && (!String(item.summary ?? '').trim() || item.finalStale))
+    if (staleSummaries.length) {
       issues.push({
-        key: 'drafted',
+        key: 'summary-stale',
         level: 'note',
-        message: `${drafted.length} 章有草稿未定稿`,
+        message: `${staleSummaries.length} 章摘要/状态需要更新`,
         tab: 'chapters',
-        count: drafted.length,
-        numbers: drafted.map((item) => Number(item.number)),
-      })
-    }
-    const staleFinals = chapterStats.filter((item) => item.hasFinal && item.finalStale)
-    if (staleFinals.length) {
-      issues.push({
-        key: 'stale-finals',
-        level: 'note',
-        message: `${staleFinals.length} 章定稿落后于草稿（定稿待更新）`,
-        tab: 'chapters',
-        count: staleFinals.length,
-        numbers: staleFinals.map((item) => Number(item.number)),
+        count: staleSummaries.length,
+        numbers: staleSummaries.map((item) => Number(item.number)),
       })
     }
     const badRelations = relations.filter((relation) => !names.has(relation.from) || !names.has(relation.to))
@@ -3671,7 +3661,8 @@ export class NovelWriterService {
       counts: {
         chapters: chapters.length,
         confirmed: chapters.length - unconfirmed.length,
-        drafted: drafted.length,
+        drafted: 0,
+        summaryStale: staleSummaries.length,
         finals: chapterStats.filter((item) => item.hasFinal).length,
         words: chapterStats.reduce((sum, item) => sum + (Number(item.wordCount) || 0), 0),
       },
