@@ -389,6 +389,12 @@ window.__ModuleLoader__.load({
 .nw-list-item .nw-list-hover:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
 .nw-page-btn{min-height:30px;padding:4px 12px;font-size:11.5px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1)}
 .nw-page-btn:disabled{opacity:.4}
+.nw-tabs{display:flex;gap:4px;align-items:center;overflow-x:auto;margin:0 0 8px;padding-bottom:2px;scrollbar-width:none}
+.nw-tabs::-webkit-scrollbar{display:none}
+.nw-tab{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:var(--dsw-alias-bg-layer-1);font-size:11px;cursor:pointer;white-space:nowrap;color:var(--dsw-alias-label-secondary)}
+.nw-tab.active{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2)}
+.nw-tab-close{border:none;background:transparent;cursor:pointer;color:inherit;opacity:.5;padding:0 2px;font-size:12px}
+.nw-tab-close:hover{opacity:1}
 .nw-next b{display:inline-block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .nw-filetree-head .nw-filetree-link{border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:2px 8px;font-size:11px}
 .nw-filetree-head .nw-filetree-link:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -3882,6 +3888,19 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           ? storedChapter
           : chapters[0]?.number ?? null
       })
+      const [tabs, setTabs] = useState(() => (Number.isFinite(Number(selected)) ? [Number(selected)] : []))
+      useEffect(() => {
+        const value = Number(selected)
+        if (!Number.isFinite(value)) return
+        setTabs((prev) => (prev.includes(value) ? prev : [...prev, value].slice(-8)))
+      }, [selected])
+      const closeTab = (target) => {
+        setTabs((prev) => {
+          const next = prev.filter((item) => Number(item) !== Number(target))
+          if (Number(selected) === Number(target) && next.length > 0) setSelected(next[next.length - 1])
+          return next
+        })
+      }
       const listRef = useRef(null)
       const workbenchRef = useRef(null)
       useEffect(() => {
@@ -4644,7 +4663,23 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         })(),
         chapters.length === 0
           ? h(EmptyState, { title: '还没有可写的章节', desc: '先在大纲里生成并确认章纲。' })
-          : h('div', { className: 'nw-workbench', ref: workbenchRef },
+          : h('div', null,
+        h('div', { className: 'nw-tabs' },
+          tabs.map((numberValue) => h('div', {
+            key: numberValue,
+            className: `nw-tab${Number(selected) === Number(numberValue) ? ' active' : ''}`,
+            onClick: () => setSelected(numberValue),
+          },
+            h('span', null, `第 ${numberValue} 章`),
+            h('button', {
+              type: 'button',
+              className: 'nw-tab-close',
+              title: '关闭标签',
+              onClick: (event) => { event.stopPropagation(); closeTab(numberValue) },
+            }, '×'),
+          )),
+        ),
+        h('div', { className: 'nw-workbench', ref: workbenchRef },
               h('div', { className: 'nw-list', ref: listRef },
                 volumes.length > 1
                   ? h('div', { style: { marginBottom: '8px' } },
@@ -5319,7 +5354,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                         : h('div', { className: 'nw-empty', style: { marginTop: '12px' } }, '还没有正文。点上面的「生成本章草稿」。'),
                 ),
               ),
-            ),
+            )),
       )
     }
 
