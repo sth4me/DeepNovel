@@ -110,7 +110,7 @@ service.closeChapterWatch(project)
 service.ensureChapterWatch(project)
 await waitPrimed()
 const third = `${second}破庙里的钟声响起。`
-await writeFile(join(project, 'story', 'chapters', '001', 'final.md'), third, 'utf8')
+await writeFile(join(project, 'story', 'chapters', '001', 'draft.md'), third, 'utf8')
 for (let index = 0; index < 100 && !(service.chapterWatches.get(project)?.known.size > 0); index += 1) {
   await new Promise((resolve) => setTimeout(resolve, 20))
 }
@@ -123,7 +123,7 @@ for (let index = 0; index < 200; index += 1) {
   }
   await new Promise((resolve) => setTimeout(resolve, 20))
 }
-assert.ok(polled, '轮询定时器应捕获 final.md 的外部变化')
+assert.ok(polled, '轮询定时器应捕获 draft.md 的外部变化（当前正文以 draft 为准）')
 
 // 4) dispose 后监听关闭
 service.disposeStores()

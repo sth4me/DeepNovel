@@ -4818,7 +4818,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                           type: 'button',
                           className: 'nw-btn ghost',
                           onClick: async () => {
-                            const text = detail?.final || detail?.draft || ''
+                            const text = detail?.draft || detail?.final || ''
                             if (!text) return
                             try {
                               await navigator.clipboard.writeText(text)

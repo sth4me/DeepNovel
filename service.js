@@ -1203,8 +1203,8 @@ export class NovelWriterService {
         const lastSelf = Number(selfWrites.get(number) ?? 0)
         if (Date.now() - lastSelf < 500) continue
         const paths = this.chapterPaths(number)
-        let body = await this.readText(cwd, paths.final).catch(() => null)
-        if (body === null) body = await this.readText(cwd, paths.draft).catch(() => null)
+        let body = await this.readText(cwd, paths.draft).catch(() => null)
+        if (body === null) body = await this.readText(cwd, paths.final).catch(() => null)
         if (body === null) body = ''
         store.setChapterProseFlags(number, flagsByNumber.get(number) ?? { hasDraft: false, hasFinal: false })
         store.reindexChapter(number, { title: titles.get(number) ?? '', body })
@@ -4665,9 +4665,10 @@ export class NovelWriterService {
     for (const chapter of chapters) {
       if (texts.length >= count) break
       const paths = this.chapterPaths(Number(chapter.number))
-      const finalText = await this.readText(agent, paths.final).catch(() => null)
-      if (!finalText || !finalText.trim()) continue
-      texts.push(finalText)
+      const currentText = (await this.readText(agent, paths.draft).catch(() => null)) ??
+        (await this.readText(agent, paths.final).catch(() => null))
+      if (!currentText || !currentText.trim()) continue
+      texts.push(currentText)
     }
     if (texts.length === 0) throw new Error('还没有定稿章节，无法统计风格指纹（先用 approve 采纳定稿）')
     const profile = computeStyleProfile(texts)
@@ -6012,8 +6013,8 @@ export class NovelWriterService {
     if (anchorChapter) {
       const anchorSummary = await this.readChapterSummary(agent, anchorChapter.number).catch(() => null)
       const anchorPaths = this.chapterPaths(anchorChapter.number)
-      const anchorText = (await this.readText(agent, anchorPaths.final).catch(() => null)) ??
-        (await this.readText(agent, anchorPaths.draft).catch(() => null)) ??
+      const anchorText = (await this.readText(agent, anchorPaths.draft).catch(() => null)) ??
+        (await this.readText(agent, anchorPaths.final).catch(() => null)) ??
         ''
       previousAnchor = {
         number: anchorChapter.number,
@@ -6477,7 +6478,7 @@ export class NovelWriterService {
     if (lastChapter) {
       summary = await this.readChapterSummary(agent, lastChapter.number).catch(() => null)
       const paths = this.chapterPaths(lastChapter.number)
-      ending = (await this.readText(agent, paths.final).catch(() => null)) ?? (await this.readText(agent, paths.draft).catch(() => null)) ?? null
+      ending = (await this.readText(agent, paths.draft).catch(() => null)) ?? (await this.readText(agent, paths.final).catch(() => null)) ?? null
     }
     const rosterNames = new Set([
       ...(Array.isArray(previousVolume?.cast) ? previousVolume.cast : []).map((item) => String(item.name)),
@@ -6613,8 +6614,8 @@ export class NovelWriterService {
       const input = []
       for (const chapter of batch) {
         const paths = this.chapterPaths(chapter.number)
-        const text = (await this.readText(agent, paths.final).catch(() => null)) ??
-          (await this.readText(agent, paths.draft).catch(() => null)) ??
+        const text = (await this.readText(agent, paths.draft).catch(() => null)) ??
+          (await this.readText(agent, paths.final).catch(() => null)) ??
           ''
         if (text.trim()) input.push({ number: chapter.number, title: chapter.title, text })
       }
@@ -7817,12 +7818,12 @@ export class NovelWriterService {
       const paths = this.chapterPaths(number)
       const title =
         (text.match(/^#\s+(.+)$/m)?.[1] ?? files[index].name.replace(/\.(md|txt)$/i, '')).trim()
-      await this.writeTextFile(agent, paths.final, text)
+      await this.writeTextFile(agent, paths.draft, text)
       const meta = {
         chapterId: `ch-${String(number).padStart(3, '0')}`,
         number,
         title,
-        status: 'approved',
+        status: 'drafted',
         wordCount: countChars(text),
         updatedAt: now(),
         approvedAt: now(),
@@ -7846,7 +7847,7 @@ export class NovelWriterService {
         wordCount: meta.wordCount,
         summary: '',
         approvedAt: meta.approvedAt,
-        finalPath: paths.final,
+        finalPath: paths.draft,
       })
       await this.writeJson(agent, `story/state/${paths.pad}.json`, {
         chapterId: `ch-${String(number).padStart(3, '0')}`,
