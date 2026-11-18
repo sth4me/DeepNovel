@@ -305,6 +305,8 @@ window.__ModuleLoader__.load({
 .nw-filetree-num{flex:0 0 auto;font-size:10.5px;opacity:.5;font-variant-numeric:tabular-nums}
 .nw-filetree-meta{flex:0 0 auto;font-size:10.5px;opacity:.45;white-space:nowrap}
 .nw-filetree-meta.cur{opacity:.7}
+.nw-filetree-move{opacity:0;transition:opacity .12s}
+.nw-filetree-chapter:hover .nw-filetree-move,.nw-filetree-chapter:focus-within .nw-filetree-move{opacity:1}
 .nw-filetree-meta.ok{opacity:.65;color:var(--dsw-alias-state-success-primary)}
 .nw-filetree-name{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nw-filetree-link{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;cursor:pointer;padding:2px 5px;border-radius:5px}
@@ -3727,6 +3729,7 @@ window.__ModuleLoader__.load({
     function ChapterWorkspace({ state, root, run, busy, setToast, focusChapter, mode, setTab, openChapter, openOutline, onSelectChapter, runIssueAction, showIssuesModal }) {
       const [collapsedVolumes, setCollapsedVolumes] = useState({})
       const [volumeDialog, setVolumeDialog] = useState(null)
+      const [moveChapter, setMoveChapter] = useState(null)
       const submitVolumeDialog = (fields = {}) => {
         const title = String(fields.title ?? '').trim()
         if (!title) return
@@ -3767,6 +3770,12 @@ window.__ModuleLoader__.load({
             h('span', { className: `nw-filetree-meta${stat?.hasFinal ? ' ok' : stat?.hasDraft ? ' cur' : ''}` },
               words ? `${words} 字` : '未写',
               stat?.hasFinal ? ' · 已同步' : ''),
+            h('button', {
+              type: 'button',
+              className: 'nw-filetree-link nw-filetree-move',
+              title: '移动章节到其他卷',
+              onClick: (event) => { event.stopPropagation(); setMoveChapter({ number: chapter.number, title: chapter.title ?? '' }) },
+            }, '⇄'),
           )
         }
         const volumeGroup = (volume) => {
@@ -3831,6 +3840,29 @@ window.__ModuleLoader__.load({
           }),
         ),
         ),
+        moveChapter
+          ? h('div', { className: 'nw-modal-backdrop', onClick: () => setMoveChapter(null) },
+              h('div', { className: 'nw-modal', style: { width: 'min(420px, 92vw)' }, onClick: (event) => event.stopPropagation() },
+                h('h3', { className: 'nw-h3' }, `移动第 ${moveChapter.number} 章「${moveChapter.title || '未命名'}」`),
+                h('div', { className: 'nw-muted', style: { marginBottom: '6px' } }, '选择目标卷：'),
+                h('div', { style: { display: 'grid', gap: '6px' } },
+                  (state?.outline?.volumes ?? []).map((volume) => h('button', {
+                    key: volume.id,
+                    type: 'button',
+                    className: 'nw-btn',
+                    style: { justifyContent: 'flex-start' },
+                    onClick: () => {
+                      run('chapter-move', { number: moveChapter.number, volumeId: volume.id }, { toast: `已移动到「${volume.title || '未命名卷'}」` })
+                      setMoveChapter(null)
+                    },
+                  }, `${volume.title || '未命名卷'}（${(volume.chapters ?? []).length} 章）`)),
+                ),
+                h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
+                  h('button', { type: 'button', className: 'nw-btn', onClick: () => setMoveChapter(null) }, '取消'),
+                ),
+              ),
+            )
+          : null,
         volumeDialog
           ? h(VolumeDialog, {
               mode: volumeDialog.kind,
