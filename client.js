@@ -6425,6 +6425,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
     function ReferencesView({ root, setToast, state, run, busy: pageBusy }) {
       const [libTab, setLibTab] = useState('references')
       const [query, setQuery] = useState('')
+      const [kindFilter, setKindFilter] = useState('all')
       const [data, setData] = useState(null)
       const [loading, setLoading] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -6518,11 +6519,12 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
 
       const sources = data?.sources ?? []
       const keyword = String(query ?? '').trim().toLowerCase()
+      const byKind = kindFilter === 'all' ? sources : sources.filter((item) => item.kind === kindFilter)
       const visibleSources = keyword
-        ? sources.filter((item) => [item.title, item.note, ...(Array.isArray(item.tags) ? item.tags : [])]
+        ? byKind.filter((item) => [item.title, item.note, ...(Array.isArray(item.tags) ? item.tags : [])]
             .filter(Boolean)
             .some((text) => String(text).toLowerCase().includes(keyword)))
-        : sources
+        : byKind
       const kinds = data?.kinds ?? []
       const currentKind = kinds.find((item) => item.kind === form.kind)
 
@@ -6560,6 +6562,15 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
           h('div', { className: 'nw-filetree', style: { width: '240px', flex: '0 0 240px' } },
             h('div', { className: 'nw-filetree-title' }, `资料（${visibleSources.length}/${sources.length}）`),
+            h('select', {
+              className: 'nw-input',
+              style: { margin: '0 0 6px', width: '100%' },
+              value: kindFilter,
+              onChange: (event) => setKindFilter(event.target.value),
+            },
+              h('option', { value: 'all' }, `全部类型（${sources.length}）`),
+              kinds.map((kind) => h('option', { key: kind.kind, value: kind.kind }, `${kind.label}（${sources.filter((item) => item.kind === kind.kind).length}）`)),
+            ),
             h('input', {
               className: 'nw-input',
               style: { margin: '0 0 6px', width: '100%' },
