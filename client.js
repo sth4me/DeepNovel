@@ -478,6 +478,8 @@ window.__ModuleLoader__.load({
 .nw-manuscript p{text-indent:2em;text-align:justify;margin:0 0 .62em}
 .nw-manuscript p:last-child{margin-bottom:0}
 .nw-reader-tools{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin:2px 0 6px;font-size:11px;flex-wrap:wrap}
+.nw-context-row{display:flex;gap:10px;font-size:11.5px;line-height:1.7}
+.nw-context-row>span:first-child{flex:0 0 84px;text-align:right;opacity:.6}
 .nw-prop-diff{margin-top:8px;max-height:320px;overflow:auto;background:var(--dsw-alias-bg-layer-1);border-radius:9px;padding:8px 10px;font-size:12px;line-height:1.6}
 .nw-prop-line{white-space:pre-wrap;word-break:break-word;padding:1px 0}
 .nw-prop-line.add{color:var(--dsw-alias-state-success-primary)}
@@ -4975,9 +4977,47 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                         contextPreview.context.meta?.truncated
                           ? h('div', { className: 'nw-banner warn', style: { marginTop: '6px' } }, '上下文超出字符预算，已按优先级裁剪低价值条目。')
                           : null,
-                        h('details', { className: 'nw-qa-details' },
-                          h('summary', { className: 'nw-qa-summary-line' }, '展开完整上下文'),
-                          h('pre', { className: 'nw-pre', style: { maxHeight: '260px' } }, JSON.stringify(contextPreview.context, null, 2)),
+                        (() => {
+                          const ctx = contextPreview.context ?? {}
+                          const bible = ctx.bible ?? {}
+                          const names = (list) => (Array.isArray(list) ? list.map((item) => item?.name).filter(Boolean).join('、') : '')
+                          const rows = []
+                          const row = (label, value) => rows.push(h('div', { key: label, className: 'nw-context-row' },
+                            h('span', { className: 'nw-muted' }, label),
+                            h('span', null, String(value)),
+                          ))
+                          if (ctx.premise?.title) row('故事', `${ctx.premise.title}${ctx.premise.protagonist ? ` · 主角 ${ctx.premise.protagonist}` : ''}`)
+                          if (bible.characters?.length) row('角色', names(bible.characters))
+                          if (bible.locations?.length) row('地点', names(bible.locations))
+                          if (bible.rules?.length) row('规则', `${bible.rules.length} 条`)
+                          if (bible.factions?.length) row('势力', names(bible.factions))
+                          if (bible.items?.length) row('物品', names(bible.items))
+                          if (ctx.relations?.length) row('关系', ctx.relations.map((item) => `${item.from}-${item.to}（${item.type}）`).join('、'))
+                          if (ctx.summaryHistory?.length) row('最近摘要', ctx.summaryHistory.map((item) => `第 ${item.number ?? '?'} 章`).join('、'))
+                          if (ctx.relevantSummaries?.length) row('相关摘要', `${ctx.relevantSummaries.length} 条`)
+                          if (ctx.foreshadowing?.length) row('未回收伏笔', `${ctx.foreshadowing.length} 条`)
+                          if (ctx.foreshadowingDue?.length) row('本章要回收', String(ctx.foreshadowingDue.join('；')).slice(0, 200))
+                          if (ctx.timeline?.length) row('时间线', `${ctx.timeline.length} 条`)
+                          if (ctx.references?.length) row('资料', ctx.references.map((item) => item.title).filter(Boolean).join('、'))
+                          if (ctx.continuity?.previousTail) row('上一章结尾', `${String(ctx.continuity.previousTail).length} 字`)
+                          if (ctx.notes?.length) row('作者备注', `${ctx.notes.length} 条`)
+                          return rows.length > 0
+                            ? h('div', { style: { marginTop: '8px', display: 'grid', gap: '4px' } }, rows)
+                            : h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, '上下文为空')
+                        })(),
+                        h('div', { className: 'nw-actions', style: { marginTop: '6px' } },
+                          h('button', {
+                            type: 'button',
+                            className: 'nw-btn ghost',
+                            onClick: async () => {
+                              try {
+                                await navigator.clipboard.writeText(JSON.stringify(contextPreview.context, null, 2))
+                                setToast('上下文 JSON 已复制')
+                              } catch {
+                                setToast('复制失败')
+                              }
+                            },
+                          }, '复制上下文 JSON'),
                         ),
                       )
                     : null,
