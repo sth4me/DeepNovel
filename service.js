@@ -10258,6 +10258,25 @@ ${sections.join('\n')}
     }
   }
 
+  /** 修订也走提案：生成结果不直接落盘，先给用户看 diff。 */
+  async proposeRevision(agent, options = {}, signal) {
+    const preview = await this.previewRevision(agent, options, signal)
+    const proposal = await this.proposeChapterText(agent, {
+      number: preview.number,
+      text: preview.nextText,
+      source: 'revise',
+    })
+    return {
+      ...proposal,
+      source: 'revise',
+      preview: {
+        wordCount: preview.wordCount,
+        range: preview.range,
+        durationMs: preview.durationMs,
+      },
+    }
+  }
+
   async reviseChapter(agent, options = {}, signal) {
     const plan = await this.buildRevisionPlan(agent, options, signal)
     const {

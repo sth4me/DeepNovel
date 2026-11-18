@@ -4690,7 +4690,13 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   h('div', { className: 'nw-sticky-actions' },
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || editing, title: '编辑正文（E）', onClick: startEditing }, editing ? '编辑中' : '编辑') : null,
                     hasDraft ? h('span', { className: 'nw-sticky-sep' }) : null,
-                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方要求修订本章；润色/扩写/缩写也写在这里', onClick: () => act('chapter-revise', { number: selected, instruction }) }, '修订') : null,
+                    hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || !instruction.trim() || Boolean(lockMsg('chapter-revise', { number: selected })), title: lockMsg('chapter-revise', { number: selected }) ?? '按下方要求修订本章；润色/扩写/缩写也写在这里', onClick: async () => {
+                      const result = await act('chapter-propose-revision', { number: selected, instruction }, { silent: true })
+                      if (result?.id) {
+                        setToast('修订已生成，请在「待审阅改动」里确认')
+                        reloadProposals()
+                      }
+                    } }, '修订') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy, title: '一次跑规则质检、风格检测与 AI 连续性检查', onClick: runCombinedReview }, '审校') : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn', disabled: busy || Boolean(lockMsg('chapter-autofix', { number: selected })), title: lockMsg('chapter-autofix', { number: selected }) ?? undefined, onClick: autoFixQa }, `修复 ${fixRounds} 轮`) : null,
                     hasDraft ? h('button', { type: 'button', className: 'nw-btn ghost', disabled: busy || Boolean(lockMsg('chapter-deslop', { number: selected })), title: lockMsg('chapter-deslop', { number: selected }) ?? '只改表达不改剧情，先预览改写结果', onClick: openDeslop }, '去 AI 味') : null,

@@ -71,8 +71,20 @@ const outline = await service.readJson(project, 'story/plot/outline.json')
 assert.equal(outline.volumes[0].chapters[0].title, '雨夜归铺')
 assert.equal(outline.volumes[0].chapters[0].synopsis, '新要点')
 
+// 修订走提案：预览结果只生成提案，接受后才写盘
+service.previewRevision = async () => ({ number: 1, nextText: '修订后的正文。', wordCount: 7, range: null })
+const reviseProposal = await service.proposeRevision(project, { number: 1, instruction: '更冷硬' })
+assert.equal(reviseProposal.status, 'proposed', '修订应生成提案')
+assert.equal(reviseProposal.source, 'revise')
+const beforeApply = await readFile(join(project, 'story', 'chapters', '001', 'draft.md'), 'utf8')
+assert.ok(!beforeApply.includes('修订后的正文'), '生成提案时不应写盘')
+await service.applyProposal(project, { id: reviseProposal.id })
+const afterApply = await readFile(join(project, 'story', 'chapters', '001', 'draft.md'), 'utf8')
+assert.ok(afterApply.includes('修订后的正文'), '接受后应写盘')
+
 // 无变更不产生提案
-const same = await service.proposeChapterText(project, { number: 1, text: '第一段。\n第三只手改过。' })
+const currentText = await readFile(join(project, 'story', 'chapters', '001', 'draft.md'), 'utf8')
+const same = await service.proposeChapterText(project, { number: 1, text: currentText })
 assert.equal(same.status, 'unchanged')
 
 await rm(home, { recursive: true, force: true })

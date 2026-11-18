@@ -1429,6 +1429,17 @@ export function apply(ctx) {
           },
           signal,
         )
+      case 'chapter-propose-revision':
+        return service.proposeRevision(
+          agent,
+          {
+            number: params.number,
+            instruction: params.instruction,
+            fromParagraph: params.fromParagraph,
+            toParagraph: params.toParagraph,
+          },
+          signal,
+        )
       case 'chapter-restore':
         return service.restoreRevision(agent, { number: params.number, name: params.name })
       case 'chapter-save-text':
