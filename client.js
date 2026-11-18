@@ -4895,66 +4895,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   : null,
                 detail?.outlineChanged
                   ? h('div', { className: 'nw-banner warn', style: { marginBottom: '10px' } },
-                      h('span', { style: { flex: 1 } }, `本章章纲已更新，当前正文基于旧章纲${detail?.meta?.finalStale ? '；定稿也是旧版，重新生成后请重新定稿' : ''}。`),
+                      h('span', { style: { flex: 1 } }, `本章章纲已更新，当前正文基于旧章纲${detail?.meta?.finalStale ? '；摘要/状态也已过期，重新生成后请点「更新摘要/状态」' : ''}。`),
                       h('button', { type: 'button', className: 'nw-btn', disabled: busy || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? undefined, onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '按新章纲重新生成'),
-                    )
-                  : null,
-                rewritePreview
-                  ? h('div', { className: 'nw-modal-backdrop' },
-                      h('div', { className: 'nw-modal' },
-                        h('div', { className: 'nw-row' },
-                          h('div', null,
-                            h('div', { className: 'nw-eyebrow' }, '重写预览'),
-                            h('h3', { className: 'nw-h3', style: { margin: 0 } }, `第 ${selected} 章${rewritePreview.range ? ` · 第 ${rewritePreview.range.fromParagraph}–${rewritePreview.range.toParagraph} 段` : ' · 整章'}`),
-                          ),
-                          h('span', { className: 'nw-muted' }, `${rewritePreview.wordCount ?? 0} 字`),
-                        ),
-                        h('div', { className: 'nw-muted', style: { marginTop: '4px' } }, '这是应用前的差异预览；可以逐块接受或拒绝，取消不会改动正文。'),
-                        (() => {
-                          const { hunks } = buildDiffHunks(rewritePreview.current ?? '', rewritePreview.nextText ?? '')
-                          if (hunks.length === 0) return h('div', { className: 'nw-muted', style: { marginTop: '8px' } }, '没有检测到文本变化。')
-                          return h('div', { className: 'nw-hunks' },
-                            hunks.slice(0, 30).map((hunk) => {
-                              const rejected = rejectedHunks.has(hunk.id)
-                              return h('div', { key: hunk.id, className: `nw-hunk${rejected ? ' rejected' : ''}` },
-                                h('div', { className: 'nw-hunk-head' },
-                                  h('label', { style: { display: 'flex', alignItems: 'center', gap: '5px' } },
-                                    h('input', {
-                                      type: 'checkbox',
-                                      checked: !rejected,
-                                      onChange: () => {
-                                        setRejectedHunks((prev) => {
-                                          const next = new Set(prev)
-                                          if (next.has(hunk.id)) next.delete(hunk.id)
-                                          else next.add(hunk.id)
-                                          return next
-                                        })
-                                      },
-                                    }),
-                                    `修改 ${hunk.id + 1}`,
-                                  ),
-                                  h('span', { className: 'nw-muted' }, `${hunk.del.length} 行删除 · ${hunk.add.length} 行新增`),
-                                ),
-                                h('div', { className: 'nw-hunk-body' },
-                                  hunk.del.slice(0, 24).map((line, index) => h('div', { key: `d${index}`, className: 'nw-diff-line del' }, `- ${line}`)),
-                                  hunk.add.slice(0, 24).map((line, index) => h('div', { key: `a${index}`, className: 'nw-diff-line add' }, `+ ${line}`)),
-                                  hunk.del.length + hunk.add.length > 48 ? h('div', { className: 'nw-muted' }, '…') : null,
-                                ),
-                              )
-                            }),
-                            hunks.length > 30 ? h('div', { className: 'nw-muted' }, `还有 ${hunks.length - 30} 个修改块未显示，应用时仍按选择处理。`) : null,
-                          )
-                        })(),
-                        h('div', { className: 'nw-actions', style: { justifyContent: 'flex-end' } },
-                          h('button', { type: 'button', className: 'nw-btn', disabled: busy, onClick: () => setRewritePreview(null) }, '取消'),
-                          h('button', {
-                            type: 'button',
-                            className: 'nw-btn primary',
-                            disabled: busy || rejectedHunks.size >= (buildDiffHunks(rewritePreview.current ?? '', rewritePreview.nextText ?? '').hunks.length),
-                            onClick: applyRewritePreview,
-                          }, `应用选中修改（${Math.max(0, buildDiffHunks(rewritePreview.current ?? '', rewritePreview.nextText ?? '').hunks.length - rejectedHunks.size)}）`),
-                        ),
-                      ),
                     )
                   : null,
                 deslopOpen
@@ -5042,12 +4984,6 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                   needsReview
                     ? h('div', { className: 'nw-banner warn', style: { marginTop: '10px' } },
                         `${detail?.meta?.keptBest ? '已保留质检分数最高的版本；' : ''}自动修复后仍有 ${remainingIssues.length} 条问题，建议再点「多轮修复」继续，或手动改选中的段落。`,
-                      )
-                    : null,
-                  lastRewrite
-                    ? h('div', { className: 'nw-banner warn', style: { marginTop: '10px' } },
-                        `已应用重写预览${lastRewrite.range ? `（第 ${lastRewrite.range.fromParagraph}–${lastRewrite.range.toParagraph} 段）` : ''}。`,
-                        h('button', { type: 'button', className: 'nw-btn', style: { marginLeft: '8px' }, disabled: busy, onClick: undoRewrite }, '撤销本次重写'),
                       )
                     : null,
                   h('div', { className: 'nw-card nw-qa-card', style: { marginTop: '12px', marginBottom: 0, background: 'var(--dsw-alias-bg-layer-1)' } },
