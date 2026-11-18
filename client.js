@@ -6507,6 +6507,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
 
     function ReferencesView({ root, setToast, state, run, busy: pageBusy }) {
       const [libTab, setLibTab] = useState('references')
+      const [query, setQuery] = useState('')
       const [data, setData] = useState(null)
       const [loading, setLoading] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -6599,6 +6600,12 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       }
 
       const sources = data?.sources ?? []
+      const keyword = String(query ?? '').trim().toLowerCase()
+      const visibleSources = keyword
+        ? sources.filter((item) => [item.title, item.note, ...(Array.isArray(item.tags) ? item.tags : [])]
+            .filter(Boolean)
+            .some((text) => String(text).toLowerCase().includes(keyword)))
+        : sources
       const kinds = data?.kinds ?? []
       const currentKind = kinds.find((item) => item.kind === form.kind)
 
@@ -6635,10 +6642,17 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         ),
         h('div', { style: { display: 'flex', gap: '12px', alignItems: 'flex-start' } },
           h('div', { className: 'nw-filetree', style: { width: '240px', flex: '0 0 240px' } },
-            h('div', { className: 'nw-filetree-title' }, `资料（${sources.length}）`),
-            sources.length === 0
-              ? h('div', { className: 'nw-muted', style: { fontSize: '12px', padding: '4px 6px' } }, '还没有资料。')
-              : sources.map((item) => h('button', {
+            h('div', { className: 'nw-filetree-title' }, `资料（${visibleSources.length}/${sources.length}）`),
+            h('input', {
+              className: 'nw-input',
+              style: { margin: '0 0 6px', width: '100%' },
+              value: query,
+              placeholder: '搜索标题、标签、备注',
+              onChange: (event) => setQuery(event.target.value),
+            }),
+            visibleSources.length === 0
+              ? h('div', { className: 'nw-muted', style: { fontSize: '12px', padding: '4px 6px' } }, sources.length === 0 ? '还没有资料。' : '没有匹配的资料。')
+              : visibleSources.map((item) => h('button', {
                   key: item.id,
                   type: 'button',
                   className: `nw-filetree-chapter${selectedId === item.id ? ' active' : ''}`,
