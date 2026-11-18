@@ -1,0 +1,164 @@
+# 项目数据布局
+
+`story/` 是写作项目的数据目录，由用户在写作台选择的项目目录决定。**它不属于插件仓库**，`.gitignore` 已忽略；用户可以在自己的小说仓库里自行版本化。
+
+结构化数据在 `story/project.db`（SQLite），正文是 Markdown 文件。混合方案与原因见 [DATA-LAYER.md](DATA-LAYER.md)。
+
+```text
+story/
+  project.db                # 结构化数据（SQLite，WAL，唯一真源）
+  prompt.json               # 项目级提示词注入（文件）
+  style/profile.json        # 风格指纹（最近定稿统计，生成时参考、诊断时比对）
+  chapters/
+    001/
+      draft.md              # 当前草稿
+      final.md              # 定稿（approve 后）
+      instruction.json      # 本章修订要求（待用）
+      revisions/            # 草稿/修订/修复/手动版本（Markdown）
+.deepnovel-snapshots/       # 项目快照（手动创建）
+.deepnovel-backup/          # 解除初始化/恢复前的自动备份
+exports/                    # 导出的 md/html/epub/docx（不属于插件仓库）
+.dsh-writing/
+  actions.log               # 动作日志
+  inspirations.json         # 灵感历史（最近 20 条）
+  deconstructions.json      # 拆书历史（最近 10 条，含分区与阶段状态）
+```
+
+其余结构化数据（项目、构思、文风、设定、关系、能力、章纲、章节状态/质检/摘要、统计、运行记录、System 模板覆盖、备注）都在 `project.db` 的表里，见下表与 [DATA-LAYER.md](DATA-LAYER.md)。
+
+旧项目迁移后，原有 JSON（`story/project.json`、`premise.json`、`style/contract.json`、`bible/index.json`、`bible/relations.json`、`prompts/system.json`、`plot/outline.json`、`state/index.json`、`stats.json`、`chapters/NNN/meta.json` 等）保留在原处作为**只读存档**，插件不再读写；`data-status` 的 `legacyFiles` 会标出它们还在。
+
+跨项目资产（不在项目目录里，全局共享）：
+
+```text
+$DSH_HOME/novel-writer/library/
+  characters/*.json         # 角色库
+  craft/*.json              # 已移除：旧版自定义技法卡不再读取，自定义改用导入技能
+```
+
+## project（`project` 表）
+
+项目元数据、模型/自动化/上下文配置存在 `project` 表。等价 JSON（「导出纯文件项目」会写成 `story/project.json`）：
+
+```json
+{
+  "schemaVersion": 1,
+  "layoutVersion": 1,
+  "title": "未命名",
+  "language": "zh",
+  "presetId": "novel-writer",
+  "models": {
+    "draft": { "provider": "deepseek-account", "model": "deepseek-flash", "reasoningEffort": "off" }
+  },
+  "automation": {
+    "autoAudit": false,
+    "autoFix": false,
+    "fixRounds": 2,
+    "stylePassScore": 60,
+    "batchCount": 3,
+    "targetWords": 0
+  },
+  "context": {
+    "recentStateChapters": 1,
+    "maxTailChars": 1200,
+    "maxBibleCharacters": 6,
+    "maxRules": 6,
+    "maxForeshadow": 8,
+    "maxTimeline": 5,
+    "includeForeshadowing": true
+  },
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+## 构思（`premise` 表）
+
+`status` 为 `candidate | confirmed`；`chosen` 保存已确认候选，`chosenHash` 供下游判断 stale。
+
+## 文风（`style_contract` / `style_templates` 表）
+
+`style_contract` 存 `status`、`templateId`、`fields`、`fieldsHash`、`samples`；自定义模板在 `style_templates` 表。
+
+## 设定（`bible_entries` 表）
+
+条目按分类存 `bible_entries`（角色、地点、规则、势力、物品），确认状态与更新时间在 `bible_meta`。角色条目字段：`id / name / role / description / traits / goal`，另有 `meta_json` 存角色生命周期：`status`（未登场 / 活跃 / 退场）、`firstChapter`、`importance`（主角/重要配角/配角/龙套）。bible 是**角色池**，本卷阵容在 `volume.cast`。
+
+## 人物关系（`relations` / `relation_positions` / `relations_meta` 表）
+
+```json
+{
+  "status": "confirmed",
+  "relations": [{ "from": "角色A", "to": "角色B", "type": "敌对", "note": "" }],
+  "positions": { "角色A": { "x": 380, "y": 260 } },
+  "updatedAt": "..."
+}
+```
+
+- `relations` 去重、最多 200 条；`from/to` 必须是角色条目中存在的名字，否则保存时会被丢弃。
+- `positions` 是关系图拖拽后的布局，按角色名存 x/y，存在 `relation_positions`；「重置布局」清空。
+- 章节生成时按本章 `cast` 筛出相关关系进入上下文（最多 12 条）。
+
+## System 模板覆盖（`prompt_overrides` 表）
+
+```json
+{
+  "premise": "",
+  "bible": "",
+  "outline": "",
+  "draft": "",
+  "revise": "",
+  "fix": ""
+}
+```
+
+- 每项为字符串，留空/缺失即使用内置默认。
+- 覆盖只替换基础 system；任务附加规则仍由插件拼接。
+
+## 大纲（`volumes` / `outline_chapters` / `outline_meta` 表）
+
+`volumes` 存卷；`outline_chapters` 每个章纲节点包含：
+
+`id / number / status / title / synopsis / wordBudget / change / storyQuestion / promise / beats / time / inputs / generatedAt / confirmedAt`。
+
+`synopsis` 是主要内容字段；`change`（本章不可逆变化）、`storyQuestion`（读者想知道什么）、`promise`（推进/兑现的承诺）为可选故事字段，`beats`（`[{goal, obstacle, turn, cost}]`，最多 12 条）只是可选脚手架，不要求每章填。`time` 是**隐藏时间锚点**（可选）：`{ day（本章开场，相对本卷开场第几天，0 起或 null）, part（晨/日/暮/夜）, endDay（本章收束，可省略）, endPart（收束时段，可省略）, spanDays（0–30）, mode（linear/flashback/parallel） }`——`time` 是开场，一章可跨时段（如暮→夜）；相邻 `linear` 章 `start` 不得早于上一章 `end`，同场连续戏沿用上一章 `endDay/endPart`，只有明确过夜/赶路/时间跳跃才推进 day；`flashback`/`parallel` 不参与线性顺序；`time` 只存章纲 JSON，不写进 `synopsis`、不写日期代号/时间码。大纲整体的状态与更新时间在 `outline_meta`。
+
+`volumes` 另有本卷**角色焦点名单**（存在 `extra_json`）：`cast`（`[{name, roleInVolume, fromChapter, importance}]`，建议 6 人左右、最多 12，重点写谁，不是出场白名单）、`extras`（`[{name, roleInVolume, fromChapter, note}]`，建议 3 人左右、最多 8，具名配角可推动有铺垫的局部转折）、`castRationale`。角色池内已登记角色都可以具名出场；纯功能路人用身份指代；一次性新名字不要留在正文，预计复用的新名字要登记进角色池。选角用 `cast-plan` / `cast-list` / `cast-update`（助手 `novel_cast`），角色必须来自 bible 角色池；不强制每卷换阵容。
+
+## 章节（`chapters/NNN/` + `chapter_*` 表）
+
+- `draft.md`：当前可编辑稿。
+- `final.md`：定稿。
+- `revisions/`：所有旧版本（Markdown）。
+- `instruction.json`：本章修订要求，修订成功后清除。
+- 章节状态与字数在 `chapter_meta`（`status`：`drafted / revised / manual / needs-review / approved`、字数、最近 run、inputs）。
+- 质检结果在 `chapter_qa`（旧版 `qa.json` / `style-qa.json` 已迁入该表）；手动编辑会清空。
+- 自动连续性摘要在 `chapter_summary`，定稿时生成，可补全。
+
+## 状态（`chapter_state` / `state_meta` 表）
+
+`state_meta` 是已定稿章节索引；`chapter_state` 存本章结束时的人物状态快照：`scene{location,time}` + `characters[{name, situation, desire, fear, knowledge{knows,unknown}, relationships, items, injuries, unresolved, nextHook}]` + `summary`（整体 JSON，写盘时阵容外角色会被剔除并 warning）。
+
+## 素材（`materials` 表）
+
+`materials` 存参考素材：`id / title / kind / content / tags_json / source / created_at / updated_at`。
+
+- 类型 `kind`：片段 / 资料 / 桥段 / 引用 / 其他（缺省「其他」）。
+- `tags` 最多 10 个（去重，单个 ≤40 字）；`title` 缺省取内容首行（≤120 字），否则「未命名素材」。
+- 素材不会自动注入写作提示词，由助手用 `novel_query kind=materials` 按需查询；导出纯文件项目时写成 `story/materials.json`，快照含 `project.db` 自然包含。
+
+## 事实包（`facts` 表）
+
+`facts` 存约束事实：`id / chapter / kind / key / value / must / note / updated_at`。
+
+- `kind`：术语（`key` 为规范写法，`value` 为别名/写法说明）、硬事实（人名/地名/时间/伤势/持有物等固定事实）、安全（内容底线）、称呼（`key` → `value` 统一称呼）。
+- `chapter` 为 NULL 表示全局事实，否则只对指定章生效。
+- 生成正文前作为硬约束进入提示词；生成后可用 `validateAgainstFacts` 检查违规（只报告、不自动改）。
+- 管理：助手 `novel_facts`（list / save / delete）或 project-action `facts-list` / `fact-save` / `fact-delete`；锁资源 `facts`。
+
+## 写安全
+
+- 结构化写入走 SQLite 事务（`BEGIN IMMEDIATE`，失败回滚）；多窗口冲突由 WAL 与 `busy_timeout` 兜底。
+- 正文写入走 DSH 文件服务，项目根模式使用 `workspace-write` policy。
+- 旧稿先归档到 `revisions/`，不静默覆盖。
+- 数据库文件不提交 git；需要版本化时提交正文 Markdown。
