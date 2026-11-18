@@ -9567,7 +9567,7 @@ export class NovelWriterService {
       const paths = this.chapterPaths(chapter.number)
       const final = await this.readText(agent, paths.final).catch(() => null)
       const draft = await this.readText(agent, paths.draft).catch(() => null)
-      const text = final ?? draft
+      const text = draft ?? final
       if (!text) continue
       words += countChars(text)
       collected.push({ number: Number(chapter.number), title: chapter.title || '', text: text.trim() })
