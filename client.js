@@ -6426,6 +6426,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const [libTab, setLibTab] = useState('references')
       const [query, setQuery] = useState('')
       const [kindFilter, setKindFilter] = useState('all')
+      const [selectedIds, setSelectedIds] = useState([])
+      const toggleSelected = (id) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
       const [data, setData] = useState(null)
       const [loading, setLoading] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -6490,6 +6492,34 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           await load()
         } catch (error) {
           setToast?.(`保存失败：${String(error?.message ?? error)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const removeSelected = async () => {
+        if (!root || selectedIds.length === 0) return
+        if (!(await requestConfirm({
+          title: '批量删除资料',
+          message: `删除选中的 ${selectedIds.length} 条资料？`,
+          danger: true,
+          confirmLabel: '删除',
+        }))) return
+        setBusy(true)
+        try {
+          for (const id of selectedIds) {
+            await fetch('/novel-writer/reference', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectRoot: root, op: 'delete', id }),
+            })
+          }
+          setSelectedIds([])
+          setSelectedId(null)
+          await load()
+          setToast?.(`已删除 ${selectedIds.length} 条资料`)
+        } catch (error) {
+          setToast?.(`批量删除失败：${String(error?.message ?? error)}`)
         } finally {
           setBusy(false)
         }
@@ -6578,15 +6608,37 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
               placeholder: '搜索标题、标签、备注',
               onChange: (event) => setQuery(event.target.value),
             }),
+            h('div', { className: 'nw-row', style: { margin: '0 0 6px', gap: '6px' } },
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' } },
+                h('input', {
+                  type: 'checkbox',
+                  checked: visibleSources.length > 0 && visibleSources.every((item) => selectedIds.includes(item.id)),
+                  onChange: (event) => setSelectedIds(event.target.checked ? visibleSources.map((item) => item.id) : []),
+                }),
+                '全选',
+              ),
+              h('button', {
+                type: 'button',
+                className: 'nw-btn danger',
+                style: { marginLeft: 'auto', fontSize: '11px' },
+                disabled: busy || selectedIds.length === 0,
+                onClick: removeSelected,
+              }, `删除选中（${selectedIds.length}）`),
+            ),
             visibleSources.length === 0
               ? h('div', { className: 'nw-muted', style: { fontSize: '12px', padding: '4px 6px' } }, sources.length === 0 ? '还没有资料。' : '没有匹配的资料。')
-              : visibleSources.map((item) => h('button', {
+              : visibleSources.map((item) => h('div', {
                   key: item.id,
-                  type: 'button',
                   className: `nw-filetree-chapter${selectedId === item.id ? ' active' : ''}`,
-                  style: { width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer' },
+                  style: { cursor: 'pointer' },
                   onClick: () => select(item),
                 },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: selectedIds.includes(item.id),
+                    onClick: (event) => event.stopPropagation(),
+                    onChange: () => toggleSelected(item.id),
+                  }),
                   h('span', { className: 'nw-filetree-name' }, item.title),
                   h('span', { className: 'nw-muted', style: { fontSize: '10px' } }, kinds.find((kind) => kind.kind === item.kind)?.label ?? item.kind),
                 )),
