@@ -807,10 +807,10 @@ export function buildPremiseUserPrompt(input) {
   if (input.audience) lines.push(`目标读者：${input.audience}`)
   if (input.intent) lines.push('【对话意图摘要（优先级高于最后一句的字面要求）】', String(input.intent))
   if (input.chosen) {
-    lines.push(`当前已选构思（避免重复）：${JSON.stringify(input.chosen)}`)
+    lines.push('当前已选构思（避免重复）：', renderPremiseCandidateMarkdown(input.chosen))
   }
   if (input.reference) {
-    lines.push(`【本轮基准候选（保留其未被要求修改的部分）】${JSON.stringify(input.reference)}`)
+    lines.push('【本轮基准候选（保留其未被要求修改的部分）】', renderPremiseCandidateMarkdown(input.reference))
   }
   if (input.history?.length) {
     lines.push('【本轮之前的构思对话（按时间顺序，提取用户意图，不要逐字复述）】')
@@ -937,7 +937,7 @@ export function buildOutlineUserPrompt(input) {
   lines.push(
     `全书预计章节数：${input.totalChapters || '未定'}`,
     `单章目标字数：${input.wordBudget}`,
-    `已确认构思：${JSON.stringify(input.premise)}`,
+    `已确认构思：\n${renderPremiseMarkdown(input.premise)}`,
     `文风契约：\n${formatStyleFields(input.styleFields, { skipNotes: true })}`,
   )
   // 通用机制：把文风 notes 原文单独展示，避免被长 JSON 淹没。
@@ -974,10 +974,10 @@ export function buildOutlineUserPrompt(input) {
     lines.push('承接落点但承接≠原地续写：该转场就转场、该跳时间就跳时间；若上一章结束时主线未推进，本章必须先推进主线，或写清为何被迫/主动选择。不要为了衔接把人物困在上一章的场景里，也不要重复上一章已经写完的过程。')
   }
   if (input.bible) {
-    lines.push('【既有设定（必须遵守）】', JSON.stringify(input.bible))
+    lines.push('【既有设定（必须遵守）】', renderBibleMarkdown(input.bible))
   }
   if (input.power) {
-    lines.push('【能力体系与当前战力（必须遵守，不得无铺垫跨级）】', JSON.stringify(input.power))
+    lines.push('【能力体系与当前战力（必须遵守，不得无铺垫跨级）】', renderPowerMarkdown(input.power))
   }
   if (input.contextChapters?.length) {
     lines.push('相邻/已有章节摘要（保持衔接）：')
@@ -1016,7 +1016,7 @@ export function buildBibleUserPrompt(input) {
     lines.push('', formatWritingNotes(input.writingNotes))
   }
   lines.push(
-    `已确认构思：${JSON.stringify(input.premise)}`,
+    `已确认构思：\n${renderPremiseMarkdown(input.premise)}`,
     `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   )
   if (input.outlineChapters?.length) {
@@ -1051,7 +1051,7 @@ export function buildBibleCharactersUserPrompt(input) {
     lines.push('', formatWritingNotes(input.writingNotes))
   }
   lines.push(
-    `已确认构思：${JSON.stringify(input.premise)}`,
+    `已确认构思：\n${renderPremiseMarkdown(input.premise)}`,
     `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   )
   if (input.outlineChapters?.length) {
@@ -1085,7 +1085,7 @@ export function buildBibleWorldUserPrompt(input) {
     lines.push('', formatWritingNotes(input.writingNotes))
   }
   lines.push(
-    `已确认构思：${JSON.stringify(input.premise)}`,
+    `已确认构思：\n${renderPremiseMarkdown(input.premise)}`,
     `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   )
   if (input.outlineChapters?.length) {
@@ -1169,7 +1169,7 @@ function asList(value) {
   return Array.isArray(value) ? value.map((item) => String(item ?? '').trim()).filter(Boolean) : []
 }
 
-function renderChapterCardMarkdown(chapter = {}) {
+export function renderChapterCardMarkdown(chapter = {}) {
   const lines = [`### 第 ${chapter.number ?? '?'} 章 ${chapter.title ?? ''}`.trim()]
   if (chapter.synopsis) lines.push('', `剧情梗概：${chapter.synopsis}`)
   const budget = Number(chapter.wordBudget)
@@ -1200,7 +1200,7 @@ function renderChapterCardMarkdown(chapter = {}) {
   return lines.join('\n')
 }
 
-function renderPremiseMarkdown(premise = {}) {
+export function renderPremiseMarkdown(premise = {}) {
   const lines = []
   if (premise.title) lines.push(`故事标题：${premise.title}`)
   if (premise.premise) lines.push(`故事核心：${premise.premise}`)
@@ -1210,7 +1210,7 @@ function renderPremiseMarkdown(premise = {}) {
   return lines.join('\n')
 }
 
-function renderBibleMarkdown(bible = {}) {
+export function renderBibleMarkdown(bible = {}) {
   const sections = []
   const pushGroup = (label, entries, fields) => {
     if (!Array.isArray(entries) || entries.length === 0) return
@@ -1239,7 +1239,7 @@ function renderBibleMarkdown(bible = {}) {
   return sections.join('\n\n')
 }
 
-function renderRelationsMarkdown(relations) {
+export function renderRelationsMarkdown(relations) {
   const list = Array.isArray(relations) ? relations : []
   if (list.length === 0) return ''
   return list
@@ -1247,7 +1247,7 @@ function renderRelationsMarkdown(relations) {
     .join('\n')
 }
 
-function renderForeshadowMarkdown(list, { due = false } = {}) {
+export function renderForeshadowMarkdown(list, { due = false } = {}) {
   const items = Array.isArray(list) ? list : []
   if (items.length === 0) return ''
   return items
@@ -1263,7 +1263,7 @@ function renderForeshadowMarkdown(list, { due = false } = {}) {
     .join('\n')
 }
 
-function renderContinuityMarkdown(continuity = {}) {
+export function renderContinuityMarkdown(continuity = {}) {
   const lines = []
   const recent = Array.isArray(continuity.recent) ? continuity.recent : []
   if (recent.length) {
@@ -1278,7 +1278,7 @@ function renderContinuityMarkdown(continuity = {}) {
   return lines.join('\n')
 }
 
-function renderStateMarkdown(state) {
+export function renderStateMarkdown(state) {
   if (!state || typeof state !== 'object') return ''
   const lines = []
   for (const [key, value] of Object.entries(state)) {
@@ -1295,7 +1295,7 @@ function renderStateMarkdown(state) {
   return lines.join('\n')
 }
 
-function renderTimelineMarkdown(timeline) {
+export function renderTimelineMarkdown(timeline) {
   const list = Array.isArray(timeline) ? timeline : []
   if (list.length === 0) return ''
   return list
@@ -1311,7 +1311,62 @@ function renderTimelineMarkdown(timeline) {
     .join('\n')
 }
 
-function renderReferencesMarkdown(list) {
+export function renderPremiseCandidateMarkdown(candidate = {}) {
+  const lines = []
+  if (candidate.title) lines.push(`标题：${candidate.title}`)
+  if (candidate.premise) lines.push(`故事核心：${candidate.premise}`)
+  if (candidate.protagonist) lines.push(`主角：${candidate.protagonist}`)
+  const genre = asList(candidate.genre)
+  if (genre.length) lines.push(`题材：${genre.join('、')}`)
+  const chapters = candidate.length?.chapters
+  const words = candidate.length?.wordsPerChapter
+  if (chapters || words) lines.push(`篇幅：约 ${chapters ?? '—'} 章 · 每章 ${words ?? '—'} 字`)
+  return lines.join('\n')
+}
+
+export function renderPowerMarkdown(power = {}) {
+  if (!power || typeof power !== 'object') return ''
+  const lines = []
+  const system = power.system ?? {}
+  if (system.name) lines.push(`体系：${system.name}`)
+  if (system.summary) lines.push(`概述：${system.summary}`)
+  const tiers = Array.isArray(system.tiers) ? system.tiers : []
+  if (tiers.length) {
+    lines.push('层级（由低到高）：')
+    tiers
+      .slice()
+      .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0))
+      .forEach((tier) => lines.push(`- ${tier.name ?? '未命名'}${tier.description ? `：${tier.description}` : ''}`))
+  }
+  const characters = Array.isArray(power.characters) ? power.characters : []
+  const named = characters.filter((item) => item.name && (item.tierName || item.stage))
+  if (named.length) {
+    lines.push('角色当前战力：')
+    named.forEach((item) => {
+      const parts = []
+      if (item.tierName) parts.push(item.tierName)
+      if (item.stage) parts.push(item.stage)
+      if (item.note) parts.push(item.note)
+      lines.push(`- ${item.name}：${parts.join(' · ') || '—'}`)
+    })
+  }
+  return lines.join('\n')
+}
+
+export function renderRosterMarkdown(list) {
+  const items = Array.isArray(list) ? list : []
+  if (items.length === 0) return ''
+  return items
+    .map((item) => {
+      const name = item.name ?? ''
+      const parts = [item.role, item.status, item.state].filter(Boolean)
+      return name ? `- ${name}${parts.length ? `（${parts.join(' · ')}）` : ''}` : ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+export function renderReferencesMarkdown(list) {
   const items = Array.isArray(list) ? list : []
   if (items.length === 0) return ''
   const label = { original: '原作', prior: '我的前作', research: '研究资料', idea: '灵感' }
@@ -1320,7 +1375,7 @@ function renderReferencesMarkdown(list) {
     .join('\n')
 }
 
-function renderNotesMarkdown(notes) {
+export function renderNotesMarkdown(notes) {
   const list = Array.isArray(notes) ? notes : []
   if (list.length === 0) return ''
   return list
@@ -1679,21 +1734,21 @@ export function buildVolumePlanUserPrompt(input) {
     lines.push('', formatWritingNotes(input.writingNotes))
   }
   lines.push(
-    `已确认构思：${JSON.stringify(input.premise)}`,
+    `已确认构思：\n${renderPremiseMarkdown(input.premise)}`,
     `文风契约：\n${formatStyleFields(input.styleFields ?? {})}`,
   )
   if (input.previousEndState) {
     const endState = input.previousEndState
     lines.push('上一卷结束时的人物状态与局势（卷目标必须从这里推导）：')
     if (endState.states?.length) {
-      lines.push('人物状态（末 3 章）：', JSON.stringify(endState.states, null, 2))
+      lines.push('人物状态（末 3 章）：', Array.isArray(endState.states) ? endState.states.map((state) => renderStateMarkdown(state)).filter(Boolean).join('\n') : renderStateMarkdown(endState.states))
     }
     if (endState.summary) lines.push('末章摘要：', String(endState.summary).slice(0, 1200))
     if (endState.ending) lines.push('末章正文结尾（最后约 600 字）：', String(endState.ending).slice(-600))
-    if (endState.unresolved?.length) lines.push('未解冲突/承诺：', JSON.stringify(endState.unresolved))
+    if (endState.unresolved?.length) lines.push('未解冲突/承诺：', endState.unresolved.map((item) => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('\n'))
   }
   if (input.roster?.length) {
-    lines.push('角色池/本卷阵容（可参考，不要凭空新增）：', JSON.stringify(input.roster.map((item) => ({ name: item.name, role: item.role, status: item.status ?? null }))))
+    lines.push('角色池/本卷阵容（可参考，不要凭空新增）：', renderRosterMarkdown(input.roster.map((item) => ({ name: item.name, role: item.role, status: item.status ?? null }))))
   }
   if (input.previousVolume) {
     lines.push('上一卷：')

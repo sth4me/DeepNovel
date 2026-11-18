@@ -100,6 +100,12 @@ import {
   buildReverseOutlineUserPrompt,
   buildVolumePlanUserPrompt,
   buildChapterUserPrompt,
+  renderPremiseCandidateMarkdown,
+  renderPremiseMarkdown,
+  renderBibleMarkdown,
+  renderPowerMarkdown,
+  renderRosterMarkdown,
+  renderStateMarkdown,
   formatCraftCards,
   formatStyleFields,
   buildOutlineUserPrompt,
@@ -3212,15 +3218,11 @@ export class NovelWriterService {
     const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, POWER_SYSTEM_PROMPT)
     const userText = [
       `项目：${project?.title ?? ''}`,
-      `已确认构思：${JSON.stringify(premise.chosen, null, 2)}`,
-      `文风契约：${JSON.stringify(style?.fields ?? {}, null, 2)}`,
-      `角色池：${JSON.stringify((bible.characters ?? []).map((item) => ({ name: item.name, role: item.role, description: String(item.description ?? '').slice(0, 200), meta: item.meta })), null, 2)}`,
-      `世界规则/势力/物品：${JSON.stringify({
-        rules: (bible.rules ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
-        factions: (bible.factions ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
-        items: (bible.items ?? []).map((item) => ({ name: item.name, description: String(item.description ?? '').slice(0, 160) })),
-      }, null, 2)}`,
-      `当前体系（如已有可参考，不要照抄默认词）：${JSON.stringify({ name: current.system?.name, summary: current.system?.summary, tiers: current.system?.tiers?.map((tier) => tier.name) })}`,
+      `已确认构思：\n${renderPremiseCandidateMarkdown(premise.chosen)}`,
+      `文风契约：\n${formatStyleFields(style?.fields ?? {}, { skipNotes: true })}`,
+      `角色池：\n${renderBibleMarkdown({ characters: bible.characters ?? [] })}`,
+      `世界规则/势力/物品：\n${renderBibleMarkdown({ rules: bible.rules ?? [], factions: bible.factions ?? [], items: bible.items ?? [] })}`,
+      `当前体系（如已有可参考，不要照抄默认词）：\n${renderPowerMarkdown(current)}`,
       this.writingNotesFor(project, 'bible') ? renderWritingNotesBlock(this.writingNotesFor(project, 'bible')) : '',
       '只输出 JSON。',
     ].filter(Boolean).join('\n\n')
@@ -3807,7 +3809,7 @@ export class NovelWriterService {
         type: 'text',
         text: [
           `项目：${premise?.chosen?.premise ?? ''}`,
-          `已有章纲：${JSON.stringify(chapters.slice(-6).map((chapter) => ({ number: chapter.number, title: chapter.title, synopsis: chapter.synopsis })))}`,
+          `已有章纲：\n${chapters.slice(-6).map((chapter) => `- 第${chapter.number}章 ${chapter.title || ''}：${chapter.synopsis || '—'}`).join('\n')}`,
           `文风要点：${String(style?.fields?.notes ?? '').slice(0, 600)}`,
           topic ? `本次主题/要求：${topic}` : '',
           Array.isArray(options.history) && options.history.length
@@ -4099,7 +4101,7 @@ export class NovelWriterService {
     ].join('\n')
     const userText = [
       `本轮指令：${instruction || '无'}`,
-      `文风契约：${JSON.stringify(styleFields ?? {})}`,
+      `文风契约：\n${formatStyleFields(styleFields ?? {})}`,
       `写作要求：${writingNotes || '无'}`,
       `作者备注：${notes.length ? notes.join('\n') : '无'}`,
     ].join('\n')
@@ -4158,9 +4160,9 @@ export class NovelWriterService {
     const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, POWER_UPDATE_SYSTEM_PROMPT)
     const userText = [
       `第 ${number} 章《${detail.chapter?.title || '未命名'}》`,
-      `现有体系：${JSON.stringify({ name: power.system.name, tiers: power.system.tiers.map((tier) => ({ name: tier.name, order: tier.order, description: tier.description })) })}`,
-      `角色当前层级：${JSON.stringify(power.characters.map((character) => ({ name: character.name, tierName: character.tierName, stage: character.stage, current: character.current, notes: character.notes })))}`,
-      `本章阵容：${JSON.stringify([...rosterNames])}`,
+      `现有体系：\n${renderPowerMarkdown({ system: power.system })}`,
+      `角色当前层级：\n${renderPowerMarkdown({ characters: power.characters })}`,
+      `本章阵容：${[...rosterNames].join('、')}`,
       `当前正文：\n${text}`,
       '只输出 JSON。',
     ].join('\n\n')
@@ -4233,8 +4235,8 @@ export class NovelWriterService {
     const system = composeWritingSystem(`${WRITING_DOCTRINE}\n\n${CAST_RULES}`, CHARACTER_STATE_SYSTEM_PROMPT)
     const userText = [
       `第 ${number} 章《${detail.chapter.title || '未命名'}》`,
-      `角色池（已登记，可出场；未登记名字不要写入状态）：${JSON.stringify(castCharacters.map((character) => ({ name: character.name, role: character.role, description: String(character.description ?? '').slice(0, 160), meta: character.meta })))}`,
-      previousState ? `上一章人物状态：${JSON.stringify(previousState)}` : '上一章人物状态：无（第一章）',
+      `角色池（已登记，可出场；未登记名字不要写入状态）：\n${renderBibleMarkdown({ characters: castCharacters })}`,
+      previousState ? `上一章人物状态：\n${renderStateMarkdown(previousState)}` : '上一章人物状态：无（第一章）',
       `当前正文：\n${text}`,
       '只输出 JSON。',
     ].join('\n\n')
@@ -4798,7 +4800,7 @@ export class NovelWriterService {
           role: 'user',
           content: [{
             type: 'text',
-            text: `只补全这些分类：${missing.join('、')}。仍然只输出 JSON，每类至少 2 条，描述 1–3 句。已确认构思：${JSON.stringify(premise.chosen)}`,
+            text: `只补全这些分类：${missing.join('、')}。仍然只输出 JSON，每类至少 2 条，描述 1–3 句。已确认构思：\n${renderPremiseCandidateMarkdown(premise.chosen)}`,
           }],
         }],
         signal,
@@ -8757,7 +8759,7 @@ export class NovelWriterService {
           `文风契约：${JSON.stringify(inputs.styleFields ?? {})}`,
           `当前章纲：${JSON.stringify(detail.chapter)}`,
           `前文摘要：${JSON.stringify(previous)}`,
-          `设定：${JSON.stringify(bible?.characters ?? [])}`,
+          `设定：\n${renderBibleMarkdown({ characters: bible?.characters ?? [] })}`,
           `当前正文：\n${text}`,
         ].join('\n\n'),
       }],
@@ -8894,7 +8896,7 @@ export class NovelWriterService {
       `文风契约：${JSON.stringify(inputs.styleFields ?? {})}`,
       `当前章纲：${JSON.stringify(detail.chapter)}`,
       `前文摘要：${JSON.stringify(previous)}`,
-      `设定：${JSON.stringify(bible?.characters ?? [])}`,
+      `设定：\n${renderBibleMarkdown({ characters: bible?.characters ?? [] })}`,
       `本卷焦点名单（不是出场白名单；焦点外但在角色池内的角色也可具名出场）：${JSON.stringify({ cast: (diagnosisRoster.cast ?? []).map((item) => item.name), extras: (diagnosisRoster.extras ?? []).map((item) => item.name) })}`,
       `角色池已登记：${JSON.stringify((bible?.characters ?? []).map((character) => character.name))}`,
       `项目事实：${JSON.stringify(facts.map((fact) => ({ kind: fact.kind, key: fact.key, value: fact.value })))}`,
@@ -11056,7 +11058,7 @@ ${sections.join('\n')}
           `当前章：第 ${number} 章`,
           `章纲：${JSON.stringify(detail.chapter)}`,
           `前文摘要：${JSON.stringify(previous)}`,
-          `设定：${JSON.stringify(bible?.characters ?? [])}`,
+          `设定：\n${renderBibleMarkdown({ characters: bible?.characters ?? [] })}`,
         ].join('\n\n'),
       }],
     }]
@@ -11208,7 +11210,7 @@ ${sections.join('\n')}
           `角色：${JSON.stringify((bible.characters ?? []).map((entry) => ({ name: entry.name, role: entry.role, description: entry.description })))}`,
           `规则：${JSON.stringify((bible.rules ?? []).map((entry) => ({ name: entry.name, description: entry.description })))}`,
           `地点：${JSON.stringify((bible.locations ?? []).map((entry) => ({ name: entry.name, description: entry.description })))}`,
-          `能力体系：${JSON.stringify(power ? { system: power.system, characters: power.characters, chapterChanges: power.chapterChanges } : null)}`,
+          `能力体系：\n${power ? renderPowerMarkdown({ system: power.system, characters: power.characters }) : '无'}`,
           `本卷焦点名单（不是出场白名单；焦点外但在角色池内的角色也可具名出场）：${JSON.stringify({ cast: (roster.cast ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })), extras: (roster.extras ?? []).map((item) => ({ name: item.name, role: item.roleInVolume })) })}`,
           `【时间线（章纲 time 锚点，只用于检查一致性）】${JSON.stringify([...chapters, ...context].map((chapter) => ({ number: chapter.number, time: chapter.time ?? null })))}`,
           `章纲（JSON）：${JSON.stringify([...chapters, ...context].map(slim))}`,
@@ -11613,7 +11615,7 @@ ${sections.join('\n')}
           userRequirement ? `用户本次额外要求（不得违背）：${userRequirement}` : '',
           `角色设定：${JSON.stringify((bible.characters ?? []).map((entry) => ({ name: entry.name, role: entry.role, description: entry.description })))}`,
           `规则：${JSON.stringify((bible.rules ?? []).map((entry) => ({ name: entry.name, description: entry.description })))}`,
-          `能力体系：${JSON.stringify(power ? { system: power.system, characters: power.characters, chapterChanges: power.chapterChanges } : null)}`,
+          `能力体系：\n${power ? renderPowerMarkdown({ system: power.system, characters: power.characters }) : '无'}`,
         ].filter(Boolean).join('\n\n'),
       }],
     }]
