@@ -1,3 +1,7 @@
+## 0.1.54（2026-11-18）
+
+- **修复打包缺文件**：`package.json` 的 `files` 白名单仍按 SQLite 时期维护，缺少 `file-store.js`、`constants.js`、`storage/`，导致从 GitHub 安装后 `service.js` 导入 `file-store.js` 失败、界面不显示。已补齐并移除已删除的 `db.js` / `store.js` / `migrate.js` 条目。
+
 ## 0.1.53（2026-11-18）
 
 - **导出修复**：小说导出改为优先使用当前正文（draft），修复手动编辑后导出旧 final 的问题；新增导出回归测试。
