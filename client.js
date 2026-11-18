@@ -698,24 +698,7 @@ window.__ModuleLoader__.load({
     const ROOT_KEY = 'dsh.novelWriter.projectRoot'
     const RECENT_KEY = 'dsh.novelWriter.recentRoots'
     const TAB_KEY = 'dsh.novelWriter.tab'
-    const MOUSE_SELECTION_KEY = 'dsh.novelWriter.mouseSelection'
-
-    function readMouseSelection() {
-      try {
-        return localStorage.getItem(MOUSE_SELECTION_KEY) === '1'
-      } catch {
-        return false
-      }
-    }
-
-    function storeMouseSelection(enabled) {
-      try {
-        localStorage.setItem(MOUSE_SELECTION_KEY, enabled ? '1' : '0')
-      } catch {
-        // storage unavailable
-      }
-    }
-
+    
     function readStoredTab() {
       try {
         return localStorage.getItem(TAB_KEY) || null
@@ -3945,12 +3928,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const [detailLoading, setDetailLoading] = useState(false)
       const [detailError, setDetailError] = useState(null)
       const [instruction, setInstruction] = usePersistedInput(state?.cwd, `chapterInstruction:${selected ?? 0}`)
-      const [fromParagraph, setFromParagraph] = usePersistedInput(state?.cwd, 'chapterFromParagraph')
-      const [toParagraph, setToParagraph] = usePersistedInput(state?.cwd, 'chapterToParagraph')
       const [revisionDetail, setRevisionDetail] = useState(null)
       const [revisionLoading, setRevisionLoading] = useState(false)
-      const [selStart, setSelStart] = useState(null)
-      const [selEnd, setSelEnd] = useState(null)
       const [contextPreview, setContextPreview] = useState(null)
       const [contextLoading, setContextLoading] = useState(false)
       const [editing, setEditing] = useState(false)
@@ -3978,32 +3957,20 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const readerLineHeight = ({ tight: 1.7, normal: 1.95, loose: 2.25 })[reader.lh || 'normal']
       const readerStyle = { fontSize: `${readerFontSize}px`, fontFamily: readerFontFamily, lineHeight: readerLineHeight }
 
-      const [rewritePreview, setRewritePreview] = useState(null)
-      const [rejectedHunks, setRejectedHunks] = useState(() => new Set())
-      const [previewLoading, setPreviewLoading] = useState(false)
       const [deslopOpen, setDeslopOpen] = useState(false)
       const [deslopLoading, setDeslopLoading] = useState(false)
       const [deslopPreview, setDeslopPreview] = useState(null)
       const [deslopApplying, setDeslopApplying] = useState(false)
       const [deslopError, setDeslopError] = useState('')
-      const [lastRewrite, setLastRewrite] = useState(null)
       const [continuity, setContinuity] = useState(null)
       const [continuitySelected, setContinuitySelected] = useState([])
-      const [mouseSelection, setMouseSelection] = useState(false)
       const paneRef = useRef(null)
       const scrollPositions = useRef({})
 
       useEffect(() => {
         setRevisionDetail(null)
-        setFromParagraph('')
-        setToParagraph('')
-        setSelStart(null)
-        setSelEnd(null)
         setContextPreview(null)
         setEditing(false)
-        setRewritePreview(null)
-        setRejectedHunks(new Set())
-        setLastRewrite(null)
         setDeslopOpen(false)
         setDeslopPreview(null)
         setDeslopLoading(false)
@@ -4102,42 +4069,6 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const batchChapter = chapters.find((item) => Number(item.number) === Number(batchStart))
       const batchReady = batchChapter?.outlineStatus === 'confirmed'
 
-      const selectParagraph = (index) => {
-        if (!mouseSelection) return
-        if (selStart == null) {
-          setSelStart(index)
-          setSelEnd(index)
-          setFromParagraph(String(index + 1))
-          setToParagraph(String(index + 1))
-        } else if (selEnd === selStart) {
-          const start = Math.min(selStart, index)
-          const end = Math.max(selStart, index)
-          setSelStart(start)
-          setSelEnd(end)
-          setFromParagraph(String(start + 1))
-          setToParagraph(String(end + 1))
-        } else {
-          setSelStart(index)
-          setSelEnd(index)
-          setFromParagraph(String(index + 1))
-          setToParagraph(String(index + 1))
-        }
-      }
-
-      const clearSelection = () => {
-        setSelStart(null)
-        setSelEnd(null)
-        setFromParagraph('')
-        setToParagraph('')
-      }
-
-      const toggleMouseSelection = () => {
-        const next = !mouseSelection
-        setMouseSelection(next)
-        storeMouseSelection(next)
-        if (!next) clearSelection()
-      }
-
       const jumpToParagraph = (paragraph) => {
         const index = Number(paragraph)
         if (!Number.isFinite(index)) return
@@ -4146,64 +4077,6 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         target.scrollIntoView({ block: 'center', behavior: 'smooth' })
         target.classList.add('nw-flash')
         setTimeout(() => target.classList.remove('nw-flash'), 1600)
-      }
-
-      const rangeStart = selStart == null ? null : Math.min(selStart, selEnd ?? selStart)
-      const rangeEnd = selStart == null ? null : Math.max(selStart, selEnd ?? selStart)
-
-      const rewriteSelection = async () => {
-        if (rangeStart == null) return
-        setPreviewLoading(true)
-        try {
-          const result = await run('chapter-rewrite-preview', {
-            number: selected,
-            instruction: instruction.trim() || '只重写选中的段落，保持情节、事实、人物关系与前后衔接不变。',
-            fromParagraph: rangeStart + 1,
-            toParagraph: rangeEnd + 1,
-          }, { silent: true })
-          if (result?.nextText) {
-            setRewritePreview(result)
-            setRejectedHunks(new Set())
-          }
-        } finally {
-          setPreviewLoading(false)
-        }
-      }
-
-      const applyRewritePreview = async () => {
-        if (!rewritePreview) return
-        const { ops, hunks } = buildDiffHunks(rewritePreview.current ?? '', rewritePreview.nextText ?? '')
-        if (hunks.length === 0) {
-          window.alert('没有检测到文本变化，不需要应用。')
-          return
-        }
-        const proposedText = applyDiffHunks(ops, rejectedHunks)
-        if (proposedText === (rewritePreview.current ?? '')) {
-          window.alert('所有修改都被取消了，没有可应用的内容。')
-          return
-        }
-        const result = await run('chapter-revise', {
-          number: selected,
-          instruction: instruction.trim() || '只重写选中的段落，保持情节、事实、人物关系与前后衔接不变。',
-          fromParagraph: rangeStart + 1,
-          toParagraph: rangeEnd + 1,
-          proposedText,
-        }, { silent: true })
-        if (result?.revisionPath) {
-          setLastRewrite({
-            number: selected,
-            name: String(result.revisionPath).split('/').pop(),
-            range: rewritePreview.range,
-          })
-          setRewritePreview(null)
-          clearSelection()
-        }
-      }
-
-      const undoRewrite = async () => {
-        if (!lastRewrite) return
-        await run('chapter-restore', { number: lastRewrite.number, name: lastRewrite.name }, { toast: '已恢复重写前版本' })
-        setLastRewrite(null)
       }
 
       const openDeslop = () => {
@@ -4283,8 +4156,7 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       useEffect(() => {
         const onKeyDown = (event) => {
           if (isTypingTarget(event.target)) return
-          if (rewritePreview || previewLoading) return
-          if (event.altKey && event.key === 'ArrowLeft' && previousChapter) {
+            if (event.altKey && event.key === 'ArrowLeft' && previousChapter) {
             event.preventDefault()
             setSelected(previousChapter.number)
             return
@@ -4302,14 +4174,11 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           } else if (key === 'a' && !busy) {
             event.preventDefault()
             runAudit()
-          } else if (key === 'escape' && rangeStart != null) {
-            event.preventDefault()
-            clearSelection()
           }
         }
         window.addEventListener('keydown', onKeyDown)
         return () => window.removeEventListener('keydown', onKeyDown)
-      }, [selected, previousChapter?.number, nextChapter?.number, hasDraft, busy, editing, rangeStart, rewritePreview, previewLoading])
+      }, [selected, previousChapter?.number, nextChapter?.number, hasDraft, busy, editing])
 
       const saveManual = async () => {
         if (!draftText.trim()) return
