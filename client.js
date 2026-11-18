@@ -4764,12 +4764,6 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                       h('button', { type: 'button', className: 'nw-btn primary', disabled: busy || Boolean(lockMsg('outline-commit', { fromChapter: selected, toChapter: selected })), title: lockMsg('outline-commit', { fromChapter: selected, toChapter: selected }) ?? undefined, onClick: () => act('outline-commit', { fromChapter: selected, toChapter: selected }, { toast: '已确认本章章纲' }) }, '确认本章章纲'),
                     )
                   : null,
-                detail?.outlineChanged
-                  ? h('div', { className: 'nw-banner warn', style: { marginBottom: '10px' } },
-                      h('span', { style: { flex: 1 } }, `本章章纲已更新，当前正文基于旧章纲${detail?.meta?.finalStale ? '；摘要/状态也已过期，重新生成后请点「更新摘要/状态」' : ''}。`),
-                      h('button', { type: 'button', className: 'nw-btn', disabled: busy || detail?.chapter?.status !== 'confirmed' || Boolean(lockMsg('chapter-draft', { number: selected })), title: lockMsg('chapter-draft', { number: selected }) ?? undefined, onClick: () => act('chapter-draft', { number: selected, instruction: instruction || undefined }) }, '按新章纲重新生成'),
-                    )
-                  : null,
                 deslopOpen
                   ? h('div', { className: 'nw-modal-backdrop', onClick: closeDeslop },
                       h('div', { className: 'nw-modal', style: { maxWidth: '760px' }, onClick: (event) => event.stopPropagation() },
