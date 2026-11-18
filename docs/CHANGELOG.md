@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.52（2026-11-18）
 
 ### 存储
 - 移除 SQLite，全部结构化数据改为文件文档（`story/*.json`），正文保持 Markdown。
