@@ -7570,6 +7570,34 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                     ),
                   )
                 }),
+                h('div', { className: 'nw-model-row-wrap' },
+                  h('div', { className: 'nw-model-group' }, '容错'),
+                  h('div', { className: 'nw-model-row' },
+                    h('div', { className: 'nw-model-task' }, '备用模型'),
+                    h('select', {
+                      className: 'nw-select',
+                      value: models.fallback?.provider && models.fallback?.model ? `${models.fallback.provider}::${models.fallback.model}` : '',
+                      disabled: busy,
+                      onChange: (event) => {
+                        const key = event.target.value
+                        setModels((prev) => {
+                          const next = { ...prev }
+                          if (!key) {
+                            delete next.fallback
+                            return next
+                          }
+                          const [provider, model] = key.split('::')
+                          next.fallback = { provider, model }
+                          return next
+                        })
+                      },
+                    },
+                      h('option', { value: '' }, '不启用'),
+                      modelOptions.map((option) => h('option', { key: option.key, value: option.key }, option.label)),
+                    ),
+                    h('span', { className: 'nw-model-effective' }, '主模型失败或返回空响应时自动降级一次（不截断输出）'),
+                  ),
+                ),
                 h('div', { className: 'nw-muted', style: { marginTop: '6px' } },
                   `正文当前：${draftTask.provider || '—'} / ${draftTask.model || '—'} · 思考 ${effortLabel(draftEffort) || '自动（低）'}`,
                 ),

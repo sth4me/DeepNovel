@@ -1806,19 +1806,19 @@ export class NovelWriterService {
     const effectiveSystem = await this.injectedSystemFor(agent, system, task)
     const sessionId = await this.llmSessionId(agent)
     const started = Date.now()
-    const runOnce = async () => {
+    const runOnce = async (runModel, runEffort) => {
       let text = ''
       let reasoning = ''
       let usage = null
       let finish = null
       const iterator = this.ctx.llm.stream({
-        provider: model.provider,
-        model: model.model,
+        provider: runModel.provider,
+        model: runModel.model,
         system: effectiveSystem,
         messages,
         ...(configuredMaxTokens ? { maxTokens: configuredMaxTokens } : {}),
         temperature,
-        ...(effort ? { reasoningEffort: effort } : {}),
+        ...(runEffort ? { reasoningEffort: runEffort } : {}),
         sessionId,
         signal,
       })[Symbol.asyncIterator]()
@@ -1871,12 +1871,47 @@ export class NovelWriterService {
       }
       return { text, usage, finish, reasoning }
     }
-    let result = await runOnce()
-    if (result.text.trim().length === 0) {
-      // 瞬时空响应：按原参数重试一次（不改预算、不改思考等级）。
-      result = await runOnce()
+    let result = null
+    let fallbackInfo = null
+    let primaryError = null
+    try {
+      result = await runOnce(model, effort)
+    } catch (error) {
+      if (error?.code === 'NOVEL_WRITER_CANCELLED') throw error
+      primaryError = error
     }
-    if (result.text.trim().length === 0) {
+    if (!primaryError && result && result.text.trim().length === 0) {
+      // 瞬时空响应：按原参数重试一次（不改预算、不改思考等级）。
+      try {
+        result = await runOnce(model, effort)
+      } catch (error) {
+        if (error?.code === 'NOVEL_WRITER_CANCELLED') throw error
+        primaryError = error
+      }
+    }
+    if (primaryError || !result || result.text.trim().length === 0) {
+      const fallback = await this.fallbackModel(agent, model)
+      if (fallback) {
+        const reason = primaryError?.message ?? '主模型未返回正文'
+        try {
+          const fallbackResult = await runOnce(fallback, undefined)
+          if (fallbackResult.text.trim().length > 0) {
+            result = fallbackResult
+            fallbackInfo = {
+              from: `${model.provider}/${model.model}`,
+              to: `${fallback.provider}/${fallback.model}`,
+              reason: String(reason).slice(0, 300),
+            }
+            primaryError = null
+          }
+        } catch (fallbackError) {
+          if (fallbackError?.code === 'NOVEL_WRITER_CANCELLED') throw fallbackError
+          // 降级也失败时保留主模型的错误
+        }
+      }
+    }
+    if (primaryError) throw primaryError
+    if (!result || result.text.trim().length === 0) {
       const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`
       await this.writeRun(agent, {
         runId,
@@ -1912,7 +1947,18 @@ export class NovelWriterService {
       model,
       durationMs: Date.now() - started,
       system: effectiveSystem,
+      fallback: fallbackInfo,
     }
+  }
+
+  /** 项目级备用模型：主模型失败时自动降级一次（不涉及输出上限）。 */
+  async fallbackModel(agent, primary) {
+    const project = await this.readJson(agent, this.marker).catch(() => null)
+    const entry = project?.models?.fallback
+    if (!entry || typeof entry !== 'object') return null
+    if (typeof entry.provider !== 'string' || typeof entry.model !== 'string') return null
+    if (primary && entry.provider === primary.provider && entry.model === primary.model) return null
+    return { provider: entry.provider, model: entry.model }
   }
 
   /** 项目级 token 上限配置（默认不设置 → undefined，表示用模型默认最大值）。 */
