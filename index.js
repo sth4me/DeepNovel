@@ -933,7 +933,18 @@ export function apply(ctx) {
 
   /* --------------------------- 写作台 UI 的 Host 数据通道 --------------------------- */
 
+  // 项目状态缓存：同一签名下 900ms 内复用，避免多端轮询重复全量构建。
+  const projectStateCache = new Map()
+
   const stateFor = async (target) => {
+    const cacheRoot = typeof target === 'string' ? target : null
+    if (cacheRoot) {
+      const cached = projectStateCache.get(cacheRoot)
+      if (cached && Date.now() - cached.at < 900) {
+        const signature = await service.projectSignature(cacheRoot).catch(() => null)
+        if (signature && signature === cached.signature) return JSON.parse(JSON.stringify(cached.data))
+      }
+    }
     // 一次性批量读取（DB 聚合 + 一次目录扫描），后续所有视图复用，避免逐章 IO。
     let snapshot = null
     try {
@@ -994,7 +1005,7 @@ export function apply(ctx) {
       chapters: chapters.length,
       approved: chapters.filter((chapter) => chapter.hasFinal).length,
     }
-    return {
+    const result = {
       ...data,
       premise,
       style,
@@ -1010,6 +1021,21 @@ export function apply(ctx) {
       effectiveModels: await service.effectiveModels(target).catch(() => null),
       recentRuns,
     }
+    if (cacheRoot) {
+      const signature = await service.projectSignature(cacheRoot).catch(() => null)
+      if (signature) {
+        projectStateCache.set(cacheRoot, {
+          at: Date.now(),
+          signature,
+          data: JSON.parse(JSON.stringify(result)),
+        })
+        while (projectStateCache.size > 8) {
+          const oldestKey = projectStateCache.keys().next().value
+          projectStateCache.delete(oldestKey)
+        }
+      }
+    }
+    return result
   }
 
   const dispatchAction = async (agent, action, params, signal) => {
