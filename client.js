@@ -1386,6 +1386,32 @@ window.__ModuleLoader__.load({
       return uiWorkspaceService
     }
 
+    /** 从写作台打开/新建一个 DSH 会话，预填讨论上下文（不自动发送）。 */
+    async function openWritingConversation({ prompt, projectRoot }) {
+      const uiWorkspace = resolveUiWorkspace()
+      if (!uiWorkspace?.startSession) throw new Error('当前 DSH 版本不支持打开会话')
+      let workspaces = null
+      try {
+        workspaces = clientScope?.get?.('workspaces') ?? null
+      } catch {
+        workspaces = null
+      }
+      let workspaceId = null
+      if (projectRoot && workspaces?.create) {
+        try {
+          const view = await workspaces.create({ path: projectRoot })
+          workspaceId = view?.id ?? view?.workspaceId ?? null
+        } catch {
+          workspaceId = null
+        }
+      }
+      uiWorkspace.startSession(workspaceId ?? undefined, {
+        prompt,
+        agentPreset: 'novel-writer',
+        whenDraftExists: 'append',
+      })
+    }
+
     function RunDetailModal({ detail, onClose, setToast }) {
       if (!detail) return null
       return h('div', { className: 'nw-modal-backdrop', onClick: onClose },
@@ -2588,7 +2614,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'nw-insp-body' },
           (tab === 'outline' || tab === 'chapters')
             ? h('div', { className: 'nw-insp-section' },
-                h(ChapterInspector, { state, focusChapter, embedded: true, run }),
+                h(ChapterInspector, { state, focusChapter, embedded: true, run, root, setToast }),
                 h('div', { className: 'nw-insp-divider' }),
               )
             : null,
@@ -3619,7 +3645,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ChapterInspector({ state, focusChapter, embedded, run }) {
+    function ChapterInspector({ state, focusChapter, embedded, run, root, setToast }) {
       const [cardEdit, setCardEdit] = useState(null)
       const number = Number(focusChapter)
       const valid = Number.isFinite(number) && number > 0
@@ -3702,6 +3728,25 @@ window.__ModuleLoader__.load({
                 }),
               ),
               h('div', { className: 'nw-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'nw-btn',
+                  title: '打开一个 DSH 会话，带上本章上下文（预填不自动发送）',
+                  onClick: async () => {
+                    const prompt = [
+                      `我想讨论《${state?.project?.title ?? '当前项目'}》第 ${number} 章「${chapter.title ?? '未命名'}」。`,
+                      `项目根目录：${root}`,
+                      `本章章卡要点：${String(chapter.synopsis ?? '').slice(0, 300) || '（无）'}`,
+                      '请先调用 novel_state 读取项目现状再回答；如果要改正文或章卡，请用工具生成提案，等我确认后再落盘。',
+                    ].join('\n')
+                    try {
+                      await openWritingConversation({ prompt, projectRoot: root })
+                      setToast?.('已在对话中打开本章上下文（未自动发送）')
+                    } catch (error) {
+                      setToast?.(`打开对话失败：${String(error?.message ?? error)}`)
+                    }
+                  },
+                }, '在对话中讨论'),
                 h('button', {
                   type: 'button',
                   className: 'nw-btn primary',
