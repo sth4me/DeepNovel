@@ -1386,26 +1386,33 @@ window.__ModuleLoader__.load({
       return uiWorkspaceService
     }
 
-    /** 从写作台打开/新建一个 DSH 会话，预填讨论上下文（不自动发送）。 */
+    /**
+     * 从写作台打开一个绑定到项目目录的 DSH 会话，并发送讨论上下文。
+     * 优先 sessions.create({cwd})，保证会话工作目录就是项目根目录（novel_* 工具才能读写正确项目）；
+     * 客户端不支持时退回“打开空白会话 + 预填草稿”。
+     */
     async function openWritingConversation({ prompt, projectRoot }) {
       const uiWorkspace = resolveUiWorkspace()
-      if (!uiWorkspace?.startSession) throw new Error('当前 DSH 版本不支持打开会话')
-      let workspaces = null
+      let sessions = null
       try {
-        workspaces = clientScope?.get?.('workspaces') ?? null
+        sessions = clientScope?.get?.('sessions') ?? null
       } catch {
-        workspaces = null
+        sessions = null
       }
-      let workspaceId = null
-      if (projectRoot && workspaces?.create) {
+      if (projectRoot && sessions?.create && uiWorkspace?.openSession) {
+        const sessionId = await sessions.create({ cwd: projectRoot, agentPreset: 'novel-writer' })
+        uiWorkspace.openSession(sessionId)
         try {
-          const view = await workspaces.create({ path: projectRoot })
-          workspaceId = view?.id ?? view?.workspaceId ?? null
+          await sessions.using(sessionId, { source: 'controllerOperation' }, async (reference) => {
+            await reference.binding.session.prompt([{ type: 'text', text: prompt }], 'queue')
+          })
         } catch {
-          workspaceId = null
+          // 会话已打开；即使首条消息发送失败，用户也能手动粘贴
         }
+        return
       }
-      uiWorkspace.startSession(workspaceId ?? undefined, {
+      if (!uiWorkspace?.startSession) throw new Error('当前 DSH 版本不支持打开会话')
+      uiWorkspace.startSession(undefined, {
         prompt,
         agentPreset: 'novel-writer',
         whenDraftExists: 'append',
@@ -3731,7 +3738,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: 'nw-btn',
-                  title: '打开一个 DSH 会话，带上本章上下文（预填不自动发送）',
+                  title: '打开一个绑定当前项目的 DSH 会话，并发送本章上下文',
                   onClick: async () => {
                     const prompt = [
                       `我想讨论《${state?.project?.title ?? '当前项目'}》第 ${number} 章「${chapter.title ?? '未命名'}」。`,
@@ -3741,7 +3748,7 @@ window.__ModuleLoader__.load({
                     ].join('\n')
                     try {
                       await openWritingConversation({ prompt, projectRoot: root })
-                      setToast?.('已在对话中打开本章上下文（未自动发送）')
+                      setToast?.('已打开对话并发送本章上下文')
                     } catch (error) {
                       setToast?.(`打开对话失败：${String(error?.message ?? error)}`)
                     }
