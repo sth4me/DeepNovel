@@ -922,7 +922,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'save', 'delete', 'delete-many'] },
+        action: { type: 'string', enum: ['list', 'save', 'delete'] },
         id: { type: 'string', description: 'delete 时的事实 id；save 带 id 则更新' },
         chapter: { type: 'number', description: '仅本章生效的事实的章号；省略为全局事实' },
         kind: { type: 'string', enum: ['术语', '硬事实', '安全', '称呼'], description: 'save 时的事实类型' },
@@ -975,8 +975,9 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        action: { type: 'string', enum: ['list', 'save', 'delete', 'delete-many'] },
         id: { type: 'string', description: 'save 带 id 则更新；delete 时必填' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'delete-many 时的素材 id 列表' },
         title: { type: 'string', description: 'save 时的标题（可空，取内容首行）' },
         kind: { type: 'string', enum: ['片段', '资料', '桥段', '引用', '其他'], description: 'save 时的素材类型' },
         content: { type: 'string', description: 'save 时的素材内容' },
@@ -1018,6 +1019,7 @@ export function apply(ctx) {
       properties: {
         action: { type: 'string', enum: ['list', 'get', 'save', 'delete', 'delete-many'] },
         id: { type: 'string', description: 'get/delete 必填；save 带 id 则更新' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'delete-many 时的资料 id 列表' },
         title: { type: 'string', description: 'save 时的标题' },
         kind: { type: 'string', enum: ['original', 'prior', 'research', 'idea'], description: '资料类型，决定引用方式' },
         tags: { type: 'array', items: { type: 'string' }, description: 'save 时的标签（最多 10 个）' },
