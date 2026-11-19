@@ -6192,6 +6192,12 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
                 const expanded = preview?.key === `${scopeOf(skill)}:${skill?.name}`
                 return h('div', { key: skill?.name, className: 'nw-field', style: { margin: 0, padding: '8px 10px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '10px' } },
                   h('div', { className: 'nw-row' },
+                    h('input', {
+                      type: 'checkbox',
+                      onClick: (event) => event.stopPropagation(),
+                      checked: selectedIds.includes(item?.id),
+                      onChange: () => toggleSelected(item?.id),
+                    }),
                     h('div', { style: { minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
                       h('span', { style: { fontSize: '12px', fontWeight: 600 } }, skill?.name ?? '未命名技能'),
                       scopeBadge(skill),
@@ -6310,6 +6316,8 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
       const [form, setForm] = useState({ title: '', kind: '片段', content: '', tags: '' })
       const [saving, setSaving] = useState(false)
       const [dialogError, setDialogError] = useState('')
+      const [selectedIds, setSelectedIds] = useState([])
+      const toggleSelected = (id) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
       const refreshMaterials = async (showToast = false) => {
         setLoading(true)
         try {
@@ -6385,6 +6393,24 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           setToast?.(String(error?.message ?? error))
         }
       }
+      const removeSelected = async () => {
+        if (selectedIds.length === 0) return
+        if (!(await requestConfirm({
+          title: '批量删除素材',
+          message: `删除选中的 ${selectedIds.length} 条素材？删除后无法恢复。`,
+          danger: true,
+          confirmLabel: '删除',
+        }))) return
+        try {
+          await run('material-delete-batch', { ids: selectedIds }, { silent: true, throwOnError: true })
+          setSelectedIds([])
+          setExpandedId(null)
+          setToast?.(`已删除 ${selectedIds.length} 条素材`)
+          await refreshMaterials(false)
+        } catch (error) {
+          setToast?.(String(error?.message ?? error))
+        }
+      }
       const summaryOf = (content) => {
         const text = String(content ?? '').replace(/\s+/g, ' ').trim()
         return text.length > 120 ? `${text.slice(0, 120)}…` : text
@@ -6403,6 +6429,25 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
           ),
         ),
         h('p', { className: 'nw-muted' }, '助手可通过查询读取素材；素材不会自动注入提示词。'),
+        materials.length > 0
+          ? h('div', { className: 'nw-row', style: { margin: '4px 0 6px', gap: '6px' } },
+              h('label', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' } },
+                h('input', {
+                  type: 'checkbox',
+                  checked: selectedIds.length === materials.length && materials.length > 0,
+                  onChange: (event) => setSelectedIds(event.target.checked ? materials.map((item) => item.id) : []),
+                }),
+                '全选',
+              ),
+              h('button', {
+                type: 'button',
+                className: 'nw-btn danger',
+                style: { marginLeft: 'auto', fontSize: '11px' },
+                disabled: busy || selectedIds.length === 0,
+                onClick: removeSelected,
+              }, `删除选中（${selectedIds.length}）`),
+            )
+          : null,
         materials.length === 0
           ? h('div', { className: 'nw-muted', style: { marginTop: '6px' } }, loading ? '正在读取素材库…' : '还没有素材。可以存参考片段、资料、桥段或引用。')
           : h('div', { style: { marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' } },
