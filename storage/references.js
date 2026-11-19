@@ -130,3 +130,19 @@ export function deleteReference(store, id) {
   if (existsSync(path)) rmSync(path, { force: true })
   return { deleted: true }
 }
+
+/** 批量删除：一次写索引，逐个删正文文件；返回删除数量。 */
+export function deleteReferences(store, ids = []) {
+  const keys = new Set(ids.map((id) => String(id ?? '')))
+  if (keys.size === 0) return { deleted: 0 }
+  const { sources } = readIndex(store)
+  const kept = sources.filter((item) => !keys.has(item.id))
+  const deleted = sources.length - kept.length
+  if (deleted === 0) return { deleted: 0 }
+  writeIndex(store, kept)
+  for (const id of keys) {
+    const path = store.path(sourcePath(id))
+    if (existsSync(path)) rmSync(path, { force: true })
+  }
+  return { deleted }
+}

@@ -4074,6 +4074,69 @@ export class NovelWriterService {
     return { id, deleted: true }
   }
 
+  /** 批量删除素材（单事务，失败不落盘）。 */
+  async deleteMaterials(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const ids = Array.isArray(options.ids) ? options.ids.map((id) => String(id ?? '')) : []
+    if (ids.length === 0) return { deleted: 0 }
+    const store = await this.storeFor(agent)
+    let deleted = 0
+    store.tx(() => {
+      for (const id of ids) {
+        if (store.deleteMaterial(id)) deleted += 1
+      }
+    })
+    return { deleted }
+  }
+
+  /** 批量删除资料（一次写索引，逐个删文件）。 */
+  async deleteReferences(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const ids = Array.isArray(options.ids) ? options.ids : []
+    const store = await this.storeFor(agent)
+    return referencesModule.deleteReferences(store.docs, ids)
+  }
+
+  /** 关系单边新增/更新（from + to + type 唯一）。 */
+  async upsertRelation(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const from = String(options.from ?? '').trim()
+    const to = String(options.to ?? '').trim()
+    const type = String(options.type ?? '').trim()
+    if (!from || !to || !type) throw new Error('关系需要 from / to / type')
+    const bible = await this.readBible(agent)
+    const names = new Set((bible.characters ?? []).map((entry) => String(entry.name ?? '')))
+    if (!names.has(from) || !names.has(to)) throw new Error('关系两端必须是已登记角色')
+    const current = await this.readRelations(agent)
+    const note = String(options.note ?? '').slice(0, 200)
+    const relations = [...(current.relations ?? [])]
+    const index = relations.findIndex((item) => item.from === from && item.to === to && item.type === type)
+    if (index >= 0) relations[index] = { ...relations[index], note }
+    else relations.push({ from, to, type, note })
+    await this.saveRelations(agent, { relations, positions: current.positions ?? {} })
+    return { relations }
+  }
+
+  /** 删除一条关系（from 必填；to / type 可选用于精确匹配）。 */
+  async removeRelation(agent, options = {}) {
+    await this.assertInitialized(agent)
+    const from = String(options.from ?? '').trim()
+    if (!from) throw new Error('removeRelation 需要 from')
+    const to = options.to == null ? null : String(options.to).trim()
+    const type = options.type == null ? null : String(options.type).trim()
+    const current = await this.readRelations(agent)
+    const before = (current.relations ?? []).length
+    const relations = (current.relations ?? []).filter((item) => {
+      if (item.from !== from) return true
+      if (to != null && item.to !== to) return true
+      if (type != null && item.type !== type) return true
+      return false
+    })
+    if (relations.length === before) return { removed: 0 }
+    await this.saveRelations(agent, { relations, positions: current.positions ?? {} })
+    return { removed: before - relations.length, relations }
+  }
+
   /* ------------------------------ 事实包 / 约束引擎 ------------------------------ */
 
   async listFacts(agent, options = {}) {
@@ -4922,12 +4985,42 @@ export class NovelWriterService {
     if (!BIBLE_CATEGORIES.includes(category)) throw new Error(`未知设定分类：${category}`)
     const bible = await this.readBible(agent)
     const before = bible[category].length
+    const removedEntry = bible[category].find((item) => item.id === options.id) ?? null
     bible[category] = bible[category].filter((item) => item.id !== options.id)
     if (bible[category].length === before) throw new Error(`找不到设定条目：${options.id}`)
     bible.status = 'candidate'
     bible.updatedAt = now()
     await this.writeJson(agent, 'story/bible/index.json', bible)
-    return { deleted: options.id }
+    let cleanup = null
+    if (options.cleanup === true && removedEntry) {
+      const name = String(removedEntry.name ?? '').trim()
+      cleanup = { relations: 0, facts: 0 }
+      if (name) {
+        try {
+          const current = await this.readRelations(agent)
+          const kept = (current.relations ?? []).filter((item) => item.from !== name && item.to !== name)
+          cleanup.relations = (current.relations ?? []).length - kept.length
+          if (cleanup.relations > 0) await this.saveRelations(agent, { relations: kept, positions: current.positions ?? {} })
+        } catch {
+          cleanup.relations = 0
+        }
+        try {
+          const list = await this.listFacts(agent)
+          const facts = Array.isArray(list?.facts) ? list.facts : []
+          for (const fact of facts) {
+            const glossary = fact.kind === '术语' || fact.kind === '称呼'
+            if (!glossary) continue
+            if (String(fact.key ?? '') === name || String(fact.value ?? '').split(/[,，、\s]+/).includes(name)) {
+              await this.deleteFact(agent, { id: fact.id })
+              cleanup.facts += 1
+            }
+          }
+        } catch {
+          cleanup.facts = 0
+        }
+      }
+    }
+    return { deleted: options.id, cleanup }
   }
 
   async commitBible(agent) {
@@ -6978,10 +7071,23 @@ export class NovelWriterService {
 
   async deleteOutlineVolume(agent, options = {}) {
     await this.assertInitialized(agent)
-    const outline = await this.readJson(agent, 'story/plot/outline.json')
+    let outline = await this.readJson(agent, 'story/plot/outline.json')
     const volume = (outline?.volumes ?? []).find((item) => item.id === options.volumeId)
     if (!volume) throw new Error('找不到卷')
-    if ((volume.chapters ?? []).length > 0) throw new Error('卷内还有章节，先把章节移到其他卷再删除')
+    const chapterNumbers = (volume.chapters ?? []).map((item) => Number(item.number)).filter((number) => Number.isFinite(number))
+    if (chapterNumbers.length > 0 && options.cascade !== true) {
+      throw new Error('卷内还有章节；先移动章节，或传 cascade=true 连同正文一起删除')
+    }
+    let snapshot = null
+    const removedChapters = []
+    if (chapterNumbers.length > 0) {
+      snapshot = options.snapshot === false ? null : await this.createProjectSnapshot(agent)
+      for (const number of chapterNumbers) {
+        await this.deleteChapter(agent, { number, snapshot: false, removeOutline: false, renumber: false })
+        removedChapters.push(number)
+      }
+      outline = await this.readJson(agent, 'story/plot/outline.json')
+    }
     outline.volumes = (outline.volumes ?? []).filter((item) => item.id !== options.volumeId)
     if (outline.volumes.length === 0) {
       outline.volumes = [{ id: 'vol-1', title: '第一卷', goal: '', chapters: [] }]
@@ -6989,7 +7095,7 @@ export class NovelWriterService {
     outline.updatedAt = now()
     await this.writeJson(agent, 'story/plot/outline.json', outline)
     await this.pruneOutlineAudit(agent).catch(() => {})
-    return { deleted: options.volumeId }
+    return { deleted: options.volumeId, removedChapters, snapshot }
   }
 
   async moveOutlineChapter(agent, options = {}) {
@@ -7219,8 +7325,9 @@ export class NovelWriterService {
       store.writeStateMeta(now())
     })
     store.checkpoint()
+    const proposals = await this.rejectProposalsForChapters(agent, tail).catch(() => ({ rejected: 0 }))
     await this.pruneOutlineAudit(agent).catch(() => {})
-    return { ...preview, removed, snapshot }
+    return { ...preview, removed, snapshot, proposalsRejected: proposals.rejected }
   }
 
   /**
@@ -7446,11 +7553,15 @@ export class NovelWriterService {
       store.writeStateMeta(now())
     })
     store.checkpoint()
+    const proposals = await this.rejectProposalsForChapters(agent, [number], {
+      renumberAbove: renumbered ? number : null,
+    }).catch(() => ({ rejected: 0 }))
     await this.pruneOutlineAudit(agent).catch(() => {})
     return {
       ...preview,
       removed,
       snapshot,
+      proposalsRejected: proposals.rejected,
       outlineKept: Boolean(chapter) && !outlineRemoved,
       outlineRemoved,
       renumbered,
@@ -10555,6 +10666,32 @@ ${sections.join('\n')}
     proposal.rejectedAt = now()
     await this.writeProposalDoc(agent, doc)
     return { rejected: true, id }
+  }
+
+  /** 章节删除后清理相关待审提案；renumberAbove 之后的提案号整体前移。 */
+  async rejectProposalsForChapters(agent, numbers = [], { renumberAbove = null } = {}) {
+    const targets = new Set(numbers.map((number) => Number(number)))
+    const doc = await this.readProposalDoc(agent)
+    let changed = false
+    let rejected = 0
+    for (const proposal of doc.proposals) {
+      if (proposal.status !== 'pending') continue
+      const number = Number(proposal.number)
+      if (targets.has(number)) {
+        proposal.status = 'rejected'
+        proposal.rejectedAt = now()
+        proposal.reason = 'chapter-deleted'
+        changed = true
+        rejected += 1
+        continue
+      }
+      if (renumberAbove != null && number > renumberAbove) {
+        proposal.number = number - 1
+        changed = true
+      }
+    }
+    if (changed) await this.writeProposalDoc(agent, doc)
+    return { rejected }
   }
 
   async saveChapterText(agent, options = {}) {

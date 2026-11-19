@@ -2,6 +2,12 @@
 
 - **写作台 → 对话入口**：章卡面板新增「在对话中讨论」。点击后用 `sessions.create({ cwd: 项目根目录, agentPreset: 'novel-writer' })` 建立会话并打开，随后自动发送一条带项目路径、章节与章卡要点的上下文消息，保证会话工作目录就是项目目录（`novel_*` 工具作用于正确项目）。
 - **预设工具收敛**：`novel-writer` 预设移除通用文件与命令工具（`tool-fs`、`tool-fs-search`、`tool-pwsh`、`tool-bash`、`tool-jobs`），项目资源的增删改查统一走 `novel_*` 插件 API，避免对话直接用文件/命令工具绕过审阅与锁；保留联网检索、技能读取与提问工具。
+- **资源级联与批量接口**：
+  - 删除章节/尾章时自动拒绝相关待审提案，并把后续章号的提案整体前移；返回 `proposalsRejected`。
+  - 删除设定条目支持 `cleanup=true`：同时清理涉及该角色的关系与同名的术语/称呼事实（工具与 UI 默认开启）。
+  - 删除卷支持 `cascade=true`：连同卷内正文、修订、状态一起删除（默认仍拒绝，必须先移章；UI 删除卷时自动传 cascade 并二次确认、先建快照）。
+  - 新增批量接口：`deleteMaterials(ids)`（单事务）、`deleteReferences(ids)`（一次写索引 + 删正文文件），工具与资料页批量删除已接入。
+  - 新增关系单边接口：`upsertRelation(from,to,type,note)` / `removeRelation(from,to?,type?)`，工具 `novel_bible action=relations-upsert|relations-remove`。
 
 ## 0.1.55（2026-11-19）
 

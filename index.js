@@ -1173,6 +1173,8 @@ export function apply(ctx) {
         })
       case 'material-delete':
         return service.materialDelete(agent, { id: params.id })
+      case 'material-delete-batch':
+        return service.deleteMaterials(agent, { ids: params.ids })
       case 'facts-list':
         return service.listFacts(agent, { chapter: params.chapter })
       case 'fact-save': {
@@ -1215,11 +1217,15 @@ export function apply(ctx) {
           fields: params.fields,
         })
       case 'bible-delete':
-        return service.deleteBibleEntry(agent, { category: params.category, id: params.id })
+        return service.deleteBibleEntry(agent, { category: params.category, id: params.id, cleanup: params.cleanup === true })
       case 'bible-commit':
         return service.commitBible(agent)
       case 'relations-save':
         return service.saveRelations(agent, { relations: params.relations, positions: params.positions })
+      case 'relations-upsert':
+        return service.upsertRelation(agent, { from: params.from, to: params.to, type: params.type, note: params.note })
+      case 'relations-remove':
+        return service.removeRelation(agent, { from: params.from, to: params.to, type: params.type })
       case 'character-card-export':
         return service.exportCharacterCard(agent, { name: params.name })
       case 'character-card-import':
@@ -1350,7 +1356,7 @@ export function apply(ctx) {
       case 'outline-revision-discard':
         return service.discardOutlineRevision(agent, { id: params.revisionId ?? params.id })
       case 'volume-delete':
-        return service.deleteOutlineVolume(agent, { volumeId: params.volumeId })
+        return service.deleteOutlineVolume(agent, { volumeId: params.volumeId, cascade: params.cascade === true, snapshot: params.snapshot })
       case 'chapter-move':
         return service.moveOutlineChapter(agent, { number: params.number, volumeId: params.volumeId })
       case 'summarize-chapter':
@@ -1894,6 +1900,9 @@ export function apply(ctx) {
           if (!root) return jsonResponse(res, 400, { ok: false, error: { message: 'invalid projectRoot' } })
           if (body.op === 'delete') {
             return jsonResponse(res, 200, { ok: true, data: lossless(await service.deleteReference(root, body.id)) })
+          }
+          if (body.op === 'delete-many') {
+            return jsonResponse(res, 200, { ok: true, data: lossless(await service.deleteReferences(root, { ids: Array.isArray(body.ids) ? body.ids : [] })) })
           }
           if (body.op === 'get') {
             return jsonResponse(res, 200, { ok: true, data: lossless(await service.readReference(root, body.id)) })

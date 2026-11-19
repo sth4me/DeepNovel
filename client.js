@@ -3567,8 +3567,12 @@ window.__ModuleLoader__.load({
             className: 'nw-btn danger',
             disabled: busy,
             onClick: async () => {
-              if (!(await requestConfirm({ title: '删除设定', message: `删除「${entry.name || entry.id}」？`, danger: true }))) return
-              run('bible-delete', { category, id: entry.id }, { toast: '条目已删除' })
+              if (!(await requestConfirm({
+                title: '删除设定',
+                message: `删除「${entry.name || entry.id}」？相关人物关系与同名的术语/称呼事实会一起清理。`,
+                danger: true,
+              }))) return
+              run('bible-delete', { category, id: entry.id, cleanup: true }, { toast: '条目已删除，相关关系与术语已清理' })
             },
           }, '删除'),
         ),
@@ -3851,8 +3855,16 @@ window.__ModuleLoader__.load({
                 className: 'nw-filetree-link',
                 title: '删除卷',
                 onClick: async () => {
-                  if (!(await requestConfirm({ title: '删除卷', message: `删除「${volume.title || '未命名卷'}」及其章纲？`, danger: true, confirmLabel: '删除' }))) return
-                  run('volume-delete', { volumeId: volume.id }, { toast: '已删除卷' })
+                  const chapterCount = (volume.chapters ?? []).length
+                  if (!(await requestConfirm({
+                    title: '删除卷',
+                    message: chapterCount > 0
+                      ? `删除「${volume.title || '未命名卷'}」及其 ${chapterCount} 章？正文、修订、摘要与状态会一起删除，无法恢复（会先创建项目快照）。`
+                      : `删除「${volume.title || '未命名卷'}」？`,
+                    danger: true,
+                    confirmLabel: '删除',
+                  }))) return
+                  run('volume-delete', { volumeId: volume.id, cascade: chapterCount > 0 }, { toast: '已删除卷' })
                 },
               }, '×'),
             ),
@@ -6559,13 +6571,13 @@ function ChaptersWorkbench({ state, root, run, busy, setToast, focusChapter, onO
         }))) return
         setBusy(true)
         try {
-          for (const id of selectedIds) {
-            await fetch('/novel-writer/reference', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ projectRoot: root, op: 'delete', id }),
-            })
-          }
+          const response = await fetch('/novel-writer/reference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectRoot: root, op: 'delete-many', ids: selectedIds }),
+          })
+          const body = await response.json()
+          if (!body?.ok) throw new Error(body?.error?.message ?? '批量删除失败')
           setSelectedIds([])
           setSelectedId(null)
           await load()

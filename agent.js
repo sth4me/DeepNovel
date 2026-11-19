@@ -685,7 +685,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'generate', 'update', 'delete', 'commit', 'relations', 'relations-save', 'power', 'power-save', 'power-generate'] },
+        action: { type: 'string', enum: ['list', 'generate', 'update', 'delete', 'commit', 'relations', 'relations-save', 'relations-upsert', 'relations-remove', 'power', 'power-save', 'power-generate'] },
         category: { type: 'string', enum: ['characters', 'locations', 'rules', 'factions', 'items'] },
         id: { type: 'string', description: 'update/delete 时的条目 id' },
         fields: {
@@ -700,6 +700,10 @@ export function apply(ctx) {
           items: { type: 'object', additionalProperties: true },
         },
         positions: { type: 'object', additionalProperties: true, description: 'relations-save 时的角色站位表（可选）' },
+        from: { type: 'string', description: 'relations-upsert / relations-remove 的一端角色名' },
+        to: { type: 'string', description: 'relations-upsert / relations-remove 的另一端角色名' },
+        type: { type: 'string', description: 'relations-upsert / relations-remove 的关系类型' },
+        cleanup: { type: 'boolean', description: 'delete 设定条目时是否清理相关关系与术语/称呼事实' },
         power: { type: 'object', additionalProperties: true, description: 'power-save 时的力量体系对象（shape 同 novel_query kind=power 的 tiers/characters 等）' },
       },
       required: ['action'],
@@ -720,7 +724,13 @@ export function apply(ctx) {
         })
       }
       if (args?.action === 'delete') {
-        return service.deleteBibleEntry(exec.agent, { category: args?.category, id: args?.id })
+        return service.deleteBibleEntry(exec.agent, { category: args?.category, id: args?.id, cleanup: args?.cleanup === true })
+      }
+      if (args?.action === 'relations-upsert') {
+        return service.upsertRelation(exec.agent, { from: args?.from, to: args?.to, type: args?.type, note: args?.note })
+      }
+      if (args?.action === 'relations-remove') {
+        return service.removeRelation(exec.agent, { from: args?.from, to: args?.to, type: args?.type })
       }
       if (args?.action === 'commit') return service.commitBible(exec.agent)
       if (args?.action === 'relations') return service.readRelations(exec.agent)
@@ -912,7 +922,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        action: { type: 'string', enum: ['list', 'save', 'delete', 'delete-many'] },
         id: { type: 'string', description: 'delete 时的事实 id；save 带 id 则更新' },
         chapter: { type: 'number', description: '仅本章生效的事实的章号；省略为全局事实' },
         kind: { type: 'string', enum: ['术语', '硬事实', '安全', '称呼'], description: 'save 时的事实类型' },
@@ -983,6 +993,9 @@ export function apply(ctx) {
         if (!String(args?.id ?? '').trim()) throw new Error('delete 需要 id')
         return service.materialDelete(exec.agent, { id: args.id })
       }
+      if (args?.action === 'delete-many') {
+        return service.deleteMaterials(exec.agent, { ids: Array.isArray(args?.ids) ? args.ids : [] })
+      }
       if (args?.action === 'save') {
         return service.materialSave(exec.agent, {
           id: args?.id,
@@ -1003,7 +1016,7 @@ export function apply(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'get', 'save', 'delete'] },
+        action: { type: 'string', enum: ['list', 'get', 'save', 'delete', 'delete-many'] },
         id: { type: 'string', description: 'get/delete 必填；save 带 id 则更新' },
         title: { type: 'string', description: 'save 时的标题' },
         kind: { type: 'string', enum: ['original', 'prior', 'research', 'idea'], description: '资料类型，决定引用方式' },
@@ -1021,6 +1034,9 @@ export function apply(ctx) {
       if (args?.action === 'delete') {
         if (!String(args?.id ?? '').trim()) throw new Error('delete 需要 id')
         return service.deleteReference(exec.agent, args.id)
+      }
+      if (args?.action === 'delete-many') {
+        return service.deleteReferences(exec.agent, { ids: Array.isArray(args?.ids) ? args.ids : [] })
       }
       if (args?.action === 'get') {
         if (!String(args?.id ?? '').trim()) throw new Error('get 需要 id')
